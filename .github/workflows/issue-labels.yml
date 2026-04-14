@@ -16,18 +16,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const result = await github.rest.issues.listLabelsOnIssue({
+            const labels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              per_page: 100,
             })
-            const labels = result.data.map((label) => label.name)
-            const hasNeeds = labels.some((label) => label.startsWith('needs'))
+            const labelNames = labels.map((label) => label.name)
+            const hasNeeds = labelNames.some((label) => label.toLowerCase().startsWith('needs '))
 
             if (!hasNeeds) {
               console.log('This issue is not labeled with a "needs __" label, add the "triage-needed" label.')
 
-              github.rest.issues.addLabels({
+              await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,

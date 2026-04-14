@@ -8,6 +8,13 @@ on:
       - 'release/*'
       - 'release-*'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: push-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: "22.17.0"
   PYTHON_VERSION: "3.10"
