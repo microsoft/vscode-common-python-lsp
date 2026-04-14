@@ -8,6 +8,9 @@ on:
       - 'unlabeled'
       - 'synchronize'
 
+permissions:
+  pull-requests: read
+
 jobs:
   add-pr-label:
     name: 'Ensure Required Labels'
