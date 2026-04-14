@@ -1,0 +1,53 @@
+{
+    "name": "vscode-common-python-lsp",
+    "version": "0.1.0",
+    "description": "Shared TypeScript utilities for VS Code Python tool extensions",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist/"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc --watch",
+        "lint": "eslint src --ext ts",
+        "format-check": "prettier --check 'src/**/*.ts'",
+        "fix-format": "prettier --write 'src/**/*.ts'",
+        "pretest": "npm run build",
+        "test": "mocha out/tests/**/*.test.js --timeout 10000"
+    },
+    "engines": {
+        "node": ">=18.0.0",
+        "vscode": "^1.74.0"
+    },
+    "dependencies": {
+        "@vscode/python-environments": "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/@vscode/python-environments/-/python-environments-1.0.0.tgz",
+        "@vscode/python-extension": "^1.0.6",
+        "dotenv": "^17.4.1",
+        "fs-extra": "^11.3.4",
+        "semver": "^7.7.4",
+        "vscode-languageclient": "^8.1.0"
+    },
+    "devDependencies": {
+        "@types/chai": "^5.2.3",
+        "@types/fs-extra": "^11.0.4",
+        "@types/mocha": "^10.0.10",
+        "@types/node": "22.x",
+        "@types/semver": "^7.7.1",
+        "@types/sinon": "^21.0.0",
+        "@types/vscode": "^1.74.0",
+        "@typescript-eslint/eslint-plugin": "^7.18.0",
+        "@typescript-eslint/parser": "^7.18.0",
+        "chai": "^6.2.2",
+        "eslint": "^8.57.1",
+        "mocha": "^11.7.5",
+        "prettier": "^3.8.1",
+        "sinon": "^21.0.2",
+        "typescript": "^5.9.3"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/microsoft/vscode-common-python-lsp.git"
+    }
+}
