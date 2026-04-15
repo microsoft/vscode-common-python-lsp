@@ -8,13 +8,17 @@ from .context import change_cwd, redirect_io, substitute_attr
 from .paths import (
     CWD_LOCK,
     SERVER_CWD,
+    PythonFileKind,
     as_list,
+    classify_python_file,
     get_extensions_dir,
     get_relative_path,
     get_sys_config_paths,
     is_current_interpreter,
     is_match,
+    is_python_library_file,
     is_same_path,
+    is_site_packages_file,
     is_stdlib_file,
     normalize_path,
 )
@@ -32,6 +36,10 @@ __all__ = [
     "is_same_path",
     "is_current_interpreter",
     "is_stdlib_file",
+    "is_python_library_file",
+    "is_site_packages_file",
+    "classify_python_file",
+    "PythonFileKind",
     "is_match",
     # context
     "substitute_attr",

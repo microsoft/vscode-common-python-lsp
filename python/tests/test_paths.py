@@ -3,14 +3,24 @@
 """Tests for paths module."""
 
 import os
+import site
 import sys
+import sysconfig
+import tempfile
+from unittest.mock import patch
+
+import pytest
 
 from vscode_common_python_lsp.paths import (
+    PythonFileKind,
     as_list,
+    classify_python_file,
     get_relative_path,
     is_current_interpreter,
     is_match,
+    is_python_library_file,
     is_same_path,
+    is_site_packages_file,
     is_stdlib_file,
     normalize_path,
 )
@@ -51,6 +61,56 @@ class TestIsSamePath:
     def test_different_paths(self, tmp_path):
         assert not is_same_path(str(tmp_path / "a"), str(tmp_path / "b"))
 
+    @pytest.mark.skipif(
+        not hasattr(os, "symlink"),
+        reason="os.symlink not available on this platform",
+    )
+    def test_symlink_without_resolve(self, tmp_path):
+        """Without resolve_symlinks, symlinked paths compare as different."""
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        real_file = real_dir / "test.py"
+        real_file.write_text("# test", encoding="utf-8")
+
+        link_dir = tmp_path / "link"
+        try:
+            link_dir.symlink_to(real_dir)
+        except OSError:
+            pytest.skip("Unable to create symlink (requires elevated privileges)")
+
+        real_path = str(real_dir / "test.py")
+        link_path = str(link_dir / "test.py")
+        assert not is_same_path(real_path, link_path)
+
+    @pytest.mark.skipif(
+        not hasattr(os, "symlink"),
+        reason="os.symlink not available on this platform",
+    )
+    def test_symlink_with_resolve(self, tmp_path):
+        """With resolve_symlinks=True, symlinked paths compare as equal."""
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        real_file = real_dir / "test.py"
+        real_file.write_text("# test", encoding="utf-8")
+
+        link_dir = tmp_path / "link"
+        try:
+            link_dir.symlink_to(real_dir)
+        except OSError:
+            pytest.skip("Unable to create symlink (requires elevated privileges)")
+
+        real_path = str(real_dir / "test.py")
+        link_path = str(link_dir / "test.py")
+        assert is_same_path(real_path, link_path, resolve_symlinks=True)
+        assert is_same_path(link_path, real_path, resolve_symlinks=True)
+
+    def test_resolve_falls_back_on_oserror(self, tmp_path):
+        """resolve_symlinks=True falls back to lexical when paths don't exist."""
+        a = str(tmp_path / "nonexistent_a")
+        b = str(tmp_path / "nonexistent_b")
+        assert not is_same_path(a, b, resolve_symlinks=True)
+        assert is_same_path(a, a, resolve_symlinks=True)
+
 
 class TestIsCurrentInterpreter:
     def test_current_executable(self):
@@ -60,8 +120,108 @@ class TestIsCurrentInterpreter:
         assert not is_current_interpreter("/nonexistent/python")
 
 
+# ---------------------------------------------------------------------------
+# Classifier tests (mirrors flake8 test_stdlib_detection.py)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyPythonFile:
+    """Tests for classify_python_file() — the core classifier."""
+
+    def test_stdlib_module_os(self):
+        """os module should be classified as STDLIB."""
+        assert classify_python_file(os.__file__) == PythonFileKind.STDLIB
+
+    def test_stdlib_module_json(self):
+        """json module should be classified as STDLIB."""
+        import json
+
+        assert classify_python_file(json.__file__) == PythonFileKind.STDLIB
+
+    def test_stdlib_module_sys(self):
+        """sys module file (if it has one) should be STDLIB."""
+        if hasattr(sys, "__file__") and sys.__file__:
+            assert classify_python_file(sys.__file__) == PythonFileKind.STDLIB
+
+    def test_system_site_packages(self):
+        """Files in system site-packages should be SYSTEM_SITE."""
+        for site_pkg_dir in site.getsitepackages():
+            test_file = os.path.join(site_pkg_dir, "pytest", "__init__.py")
+            kind = classify_python_file(test_file)
+            assert kind == PythonFileKind.SYSTEM_SITE, (
+                f"File in site-packages {test_file} should be SYSTEM_SITE, "
+                f"got {kind}"
+            )
+
+    def test_user_site_packages(self):
+        """Files in user site-packages should be USER_SITE."""
+        user_site = site.getusersitepackages()
+        if not user_site:
+            pytest.skip("User site-packages not available")
+        test_file = os.path.join(user_site, "some_package", "__init__.py")
+        assert classify_python_file(test_file) == PythonFileKind.USER_SITE
+
+    def test_user_site_not_system(self):
+        """User site-packages should NOT classify as SYSTEM_SITE."""
+        user_site = site.getusersitepackages()
+        if not user_site:
+            pytest.skip("User site-packages not available")
+        test_file = os.path.join(user_site, "some_package", "__init__.py")
+        assert classify_python_file(test_file) != PythonFileKind.SYSTEM_SITE
+
+    def test_system_site_not_user(self):
+        """System site-packages should NOT classify as USER_SITE."""
+        pkgs = site.getsitepackages()
+        if not pkgs:
+            pytest.skip("No system site-packages")
+        test_file = os.path.join(pkgs[0], "pytest", "__init__.py")
+        assert classify_python_file(test_file) != PythonFileKind.USER_SITE
+
+    def test_random_temp_file(self, tmp_path):
+        """A temporary file should not classify as any Python kind."""
+        with tempfile.NamedTemporaryFile(
+            suffix=".py", dir=str(tmp_path), delete=False
+        ) as tmp:
+            tmp_file = tmp.name
+        try:
+            assert classify_python_file(tmp_file) is None
+        finally:
+            os.unlink(tmp_file)
+
+    def test_site_packages_under_stdlib_excluded(self):
+        """site-packages inside a stdlib root should NOT be STDLIB."""
+        stdlib_path = sysconfig.get_path("stdlib")
+        if not stdlib_path:
+            pytest.skip("stdlib path not available")
+        test_file = os.path.join(stdlib_path, "site-packages", "mod.py")
+        kind = classify_python_file(test_file)
+        assert kind != PythonFileKind.STDLIB
+
+    def test_site_packages_backup_not_excluded(self):
+        """'site-packages-backup' is NOT 'site-packages' — should be STDLIB."""
+        stdlib_path = sysconfig.get_path("stdlib")
+        if not stdlib_path:
+            pytest.skip("stdlib path not available")
+        test_file = os.path.join(stdlib_path, "site-packages-backup", "mod.py")
+        assert classify_python_file(test_file) == PythonFileKind.STDLIB
+
+    def test_user_site_none_handling(self):
+        """When user site-packages is None, should not crash."""
+        with patch(
+            "vscode_common_python_lsp.paths._get_user_site_root",
+            return_value=None,
+        ):
+            # Should still work — just won't classify as USER_SITE
+            assert classify_python_file("/some/random/file.py") is None
+
+
 class TestIsStdlibFile:
+    """Tests for is_stdlib_file() — strict stdlib only."""
+
     def test_stdlib_module(self):
+        assert is_stdlib_file(os.__file__)
+
+    def test_json_module_is_stdlib(self):
         import json
 
         assert is_stdlib_file(json.__file__)
@@ -71,16 +231,12 @@ class TestIsStdlibFile:
 
     def test_site_packages_not_stdlib(self):
         """Files in site-packages should NOT be identified as stdlib."""
-        import site
-
         for site_pkg_dir in site.getsitepackages():
             test_file = os.path.join(site_pkg_dir, "pytest", "__init__.py")
             assert not is_stdlib_file(test_file)
 
     def test_user_site_packages_not_stdlib(self):
         """Files in user site-packages should NOT be identified as stdlib."""
-        import site
-
         user_site = site.getusersitepackages()
         if user_site:
             test_file = os.path.join(user_site, "some_package", "__init__.py")
@@ -88,8 +244,6 @@ class TestIsStdlibFile:
 
     def test_random_temp_file_not_stdlib(self, tmp_path):
         """A temporary file is definitely not stdlib."""
-        import tempfile
-
         with tempfile.NamedTemporaryFile(
             suffix=".py", dir=str(tmp_path), delete=False
         ) as tmp:
@@ -101,8 +255,6 @@ class TestIsStdlibFile:
 
     def test_false_positive_site_packages_in_name(self):
         """'site-packages-backup' as a directory name should NOT match."""
-        import sysconfig
-
         stdlib_path = sysconfig.get_path("stdlib")
         if stdlib_path:
             # A file under site-packages (path segment) should be excluded
@@ -113,9 +265,68 @@ class TestIsStdlibFile:
             not_excluded = os.path.join(stdlib_path, "site-packages-backup", "mod.py")
             assert is_stdlib_file(not_excluded)
 
-    def test_os_module_is_stdlib(self):
-        """os module should always be detected as stdlib."""
-        assert is_stdlib_file(os.__file__)
+
+class TestIsPythonLibraryFile:
+    """Tests for is_python_library_file() — stdlib + site-packages.
+
+    This is the function 4/5 repos should use (replaces old is_stdlib_file()
+    that lumped everything together). Returns True for any file managed by
+    the Python runtime, not user/workspace code.
+    """
+
+    def test_stdlib_is_library(self):
+        assert is_python_library_file(os.__file__)
+
+    def test_site_packages_is_library(self):
+        """site-packages files ARE library files."""
+        for site_pkg_dir in site.getsitepackages():
+            test_file = os.path.join(site_pkg_dir, "pytest", "__init__.py")
+            assert is_python_library_file(test_file)
+
+    def test_user_site_is_library(self):
+        """user site-packages files ARE library files."""
+        user_site = site.getusersitepackages()
+        if not user_site:
+            pytest.skip("User site-packages not available")
+        test_file = os.path.join(user_site, "some_package", "__init__.py")
+        assert is_python_library_file(test_file)
+
+    def test_temp_file_not_library(self, tmp_path):
+        assert not is_python_library_file(str(tmp_path / "test.py"))
+
+
+class TestIsSitePackagesFile:
+    """Tests for is_site_packages_file() wrapper."""
+
+    def test_system_site_packages(self):
+        pkgs = site.getsitepackages()
+        if not pkgs:
+            pytest.skip("No system site-packages")
+        test_file = os.path.join(pkgs[0], "pytest", "__init__.py")
+        assert is_site_packages_file(test_file)
+
+    def test_user_site_packages(self):
+        user_site = site.getusersitepackages()
+        if not user_site:
+            pytest.skip("User site-packages not available")
+        test_file = os.path.join(user_site, "some_package", "__init__.py")
+        assert is_site_packages_file(test_file)
+
+    def test_stdlib_not_site_packages(self):
+        assert not is_site_packages_file(os.__file__)
+
+    def test_temp_file_not_site_packages(self, tmp_path):
+        assert not is_site_packages_file(str(tmp_path / "test.py"))
+
+    def test_regular_site_not_user_site(self):
+        """System site-packages should NOT be classified as user site."""
+        pkgs = site.getsitepackages()
+        user_site = site.getusersitepackages()
+        if not pkgs or not user_site:
+            pytest.skip("Site packages not available")
+        test_file = os.path.join(pkgs[0], "pytest", "__init__.py")
+        kind = classify_python_file(test_file)
+        assert kind == PythonFileKind.SYSTEM_SITE
 
 
 class TestGetRelativePath:

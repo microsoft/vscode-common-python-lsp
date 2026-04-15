@@ -5,13 +5,16 @@
 from __future__ import annotations
 
 import fnmatch
+import functools
 import os
 import os.path
 import pathlib
+import site
 import sys
 import sysconfig
 import threading
-from typing import Any, List, Tuple, Union
+from enum import Enum
+from typing import Any, List, Optional, Set, Tuple, Union
 
 # Save the working directory used when loading this module
 SERVER_CWD = os.getcwd()
@@ -26,11 +29,16 @@ def as_list(content: Union[Any, List[Any], Tuple[Any]]) -> List[Any]:
 
 
 def get_sys_config_paths() -> List[str]:
-    """Returns actual Python standard library paths from sysconfig.get_paths()."""
+    """Returns Python installation paths from sysconfig.get_paths().
+
+    Uses the broader filter (not in data/platdata/scripts) to match
+    black, isort, mypy, and pylint. Includes stdlib, platstdlib,
+    purelib, platlib, include, and platinclude.
+    """
     return [
         path
         for group, path in sysconfig.get_paths().items()
-        if group in ["stdlib", "platstdlib"]
+        if group not in ["data", "platdata", "scripts"]
     ]
 
 
@@ -48,15 +56,186 @@ def get_extensions_dir() -> List[str]:
     return []
 
 
-_stdlib_paths = set(
-    str(pathlib.Path(p).resolve())
-    for p in (get_sys_config_paths() + get_extensions_dir())
-)
+# ---------------------------------------------------------------------------
+# Path classification (lazy, cached)
+# ---------------------------------------------------------------------------
 
 
-def is_same_path(file_path1: str, file_path2: str) -> bool:
-    """Returns true if two paths are the same."""
-    return pathlib.Path(file_path1) == pathlib.Path(file_path2)
+class PythonFileKind(Enum):
+    """Classification of a Python file by its location in the environment."""
+
+    STDLIB = "stdlib"
+    USER_SITE = "user_site"
+    SYSTEM_SITE = "system_site"
+
+
+@functools.lru_cache(maxsize=1)
+def _get_stdlib_roots() -> Set[pathlib.Path]:
+    """Resolved stdlib and platstdlib paths plus VS Code extensions dir.
+
+    Uses only the strict stdlib/platstdlib sysconfig groups so that
+    purelib/platlib (which point to site-packages) are excluded.
+    """
+    roots: Set[pathlib.Path] = set()
+    for group in ("stdlib", "platstdlib"):
+        p = sysconfig.get_path(group)
+        if p:
+            try:
+                roots.add(pathlib.Path(p).resolve())
+            except OSError:
+                pass
+    for p in get_extensions_dir():
+        try:
+            roots.add(pathlib.Path(p).resolve())
+        except OSError:
+            pass
+    return roots
+
+
+@functools.lru_cache(maxsize=1)
+def _get_user_site_root() -> Optional[pathlib.Path]:
+    """Resolved user site-packages path, or None."""
+    try:
+        raw = site.getusersitepackages()
+    except Exception:
+        return None
+    if raw:
+        try:
+            return pathlib.Path(raw).resolve()
+        except OSError:
+            pass
+    return None
+
+
+@functools.lru_cache(maxsize=1)
+def _get_system_site_roots() -> Set[pathlib.Path]:
+    """All system site-packages roots.
+
+    Includes purelib/platlib from sysconfig plus every entry from
+    ``site.getsitepackages()``.  On Windows Store Python the latter
+    includes the base installation directory, which is a *parent* of
+    the stdlib root — the classifier handles this by checking stdlib
+    first.
+    """
+    roots: Set[pathlib.Path] = set()
+    for group in ("purelib", "platlib"):
+        p = sysconfig.get_path(group)
+        if p:
+            try:
+                roots.add(pathlib.Path(p).resolve())
+            except OSError:
+                pass
+    try:
+        for p in as_list(site.getsitepackages()):
+            try:
+                roots.add(pathlib.Path(p).resolve())
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return roots
+
+
+def _is_relative_to(child: pathlib.Path, parent: pathlib.Path) -> bool:
+    """Check if *child* is under *parent* (cross-version compatible).
+
+    Uses Path.is_relative_to on Python 3.9+, falls back to try/except
+    for older versions.
+    """
+    if hasattr(child, "is_relative_to"):
+        return child.is_relative_to(parent)
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def classify_python_file(file_path: str) -> Optional[PythonFileKind]:
+    """Classify a file as stdlib, user site-packages, or system site-packages.
+
+    Returns None if the file does not belong to any known Python
+    installation path.  Resolution order:
+
+    1. User site-packages (most specific user path).
+    2. Stdlib roots *excluding* ``site-packages``/``dist-packages``
+       subdirectories — checked before system site-packages because on
+       some platforms (Windows Store Python) ``site.getsitepackages()``
+       includes the base installation directory, which is a parent of
+       the stdlib root.
+    3. System site-packages (purelib, platlib, broad base roots).
+    """
+    try:
+        resolved = pathlib.Path(file_path).resolve()
+    except OSError:
+        return None
+
+    # 1. User site-packages (most specific)
+    user_site = _get_user_site_root()
+    if user_site and _is_relative_to(resolved, user_site):
+        return PythonFileKind.USER_SITE
+
+    parts = resolved.parts
+    has_site_packages = "site-packages" in parts or "dist-packages" in parts
+
+    # 2. Stdlib (only if the path does NOT traverse a site-packages dir)
+    if not has_site_packages:
+        for root in _get_stdlib_roots():
+            if _is_relative_to(resolved, root):
+                return PythonFileKind.STDLIB
+
+    # 3. System site-packages (includes broad roots like the base dir)
+    for root in _get_system_site_roots():
+        if _is_relative_to(resolved, root):
+            return PythonFileKind.SYSTEM_SITE
+
+    return None
+
+
+def is_stdlib_file(file_path: str) -> bool:
+    """Return True if the file belongs to the standard library only."""
+    return classify_python_file(file_path) == PythonFileKind.STDLIB
+
+
+def is_python_library_file(file_path: str) -> bool:
+    """Return True if the file belongs to any part of the Python installation.
+
+    "Library file" means stdlib OR site-packages (user or system) — i.e.
+    any file managed by the Python runtime, not user/workspace code.
+    Use this to decide whether a file should be skipped by a linter or
+    formatter.
+    """
+    return classify_python_file(file_path) is not None
+
+
+def is_site_packages_file(file_path: str) -> bool:
+    """Return True if the file is in site-packages (user or system)."""
+    kind = classify_python_file(file_path)
+    return kind in (PythonFileKind.USER_SITE, PythonFileKind.SYSTEM_SITE)
+
+
+# ---------------------------------------------------------------------------
+# Path comparison and normalization
+# ---------------------------------------------------------------------------
+
+
+def is_same_path(
+    file_path1: str, file_path2: str, resolve_symlinks: bool = False
+) -> bool:
+    """Returns true if two paths are the same.
+
+    When *resolve_symlinks* is True, both paths are resolved through the
+    filesystem first so that symlinked paths compare equal (mirrors the
+    behaviour required by mypy).  Falls back to lexical comparison on
+    OSError (e.g. the file does not exist yet).
+    """
+    p1, p2 = pathlib.Path(file_path1), pathlib.Path(file_path2)
+    if resolve_symlinks:
+        try:
+            return p1.resolve() == p2.resolve()
+        except OSError:
+            pass
+    return p1 == p2
 
 
 def normalize_path(file_path: str, resolve_symlinks: bool = True) -> str:
@@ -70,23 +249,6 @@ def normalize_path(file_path: str, resolve_symlinks: bool = True) -> str:
 def is_current_interpreter(executable: str) -> bool:
     """Returns true if the executable path is same as the current interpreter."""
     return is_same_path(executable, sys.executable)
-
-
-def is_stdlib_file(file_path: str) -> bool:
-    """Return True if the file belongs to the standard library.
-
-    Excludes third-party packages in site-packages/dist-packages by checking
-    path components, and compares against known stdlib + extensions paths.
-    """
-    normalized_path = normalize_path(file_path, resolve_symlinks=True)
-
-    # Exclude site-packages and dist-packages directories which contain
-    # third-party packages. Use PurePath.parts for cross-platform compat.
-    path_parts = pathlib.PurePath(normalized_path).parts
-    if "site-packages" in path_parts or "dist-packages" in path_parts:
-        return False
-
-    return any(normalized_path.startswith(path) for path in _stdlib_paths)
 
 
 def get_relative_path(file_path: str, workspace_root: str) -> str:
