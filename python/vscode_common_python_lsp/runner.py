@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-import contextlib
 import io
 import os
 import runpy
 import subprocess
 import sys
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional, Sequence, Union
 
 from .context import change_cwd, redirect_io, substitute_attr
 from .paths import CWD_LOCK, is_same_path

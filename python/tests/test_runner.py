@@ -4,8 +4,6 @@
 
 import sys
 
-import pytest
-
 from vscode_common_python_lsp.runner import CustomIO, RunResult, run_path
 
 

@@ -80,8 +80,8 @@ def is_stdlib_file(file_path: str) -> bool:
     """
     normalized_path = normalize_path(file_path, resolve_symlinks=True)
 
-    # Exclude site-packages and dist-packages directories which contain third-party packages
-    # Use pathlib.PurePath.parts for cross-platform compatibility (handles forward/backward slashes)
+    # Exclude site-packages and dist-packages directories which contain
+    # third-party packages. Use PurePath.parts for cross-platform compat.
     path_parts = pathlib.PurePath(normalized_path).parts
     if "site-packages" in path_parts or "dist-packages" in path_parts:
         return False

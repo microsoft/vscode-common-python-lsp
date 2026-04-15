@@ -5,8 +5,6 @@
 import os
 import sys
 
-import pytest
-
 from vscode_common_python_lsp.paths import (
     as_list,
     get_relative_path,

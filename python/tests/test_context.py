@@ -6,8 +6,6 @@ import io
 import os
 import sys
 
-import pytest
-
 from vscode_common_python_lsp.context import change_cwd, redirect_io, substitute_attr
 
 
