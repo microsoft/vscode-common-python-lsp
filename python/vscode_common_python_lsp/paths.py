@@ -146,21 +146,6 @@ def _get_system_site_roots() -> Set[pathlib.Path]:
     return roots
 
 
-def _is_relative_to(child: pathlib.Path, parent: pathlib.Path) -> bool:
-    """Check if *child* is under *parent* (cross-version compatible).
-
-    Uses Path.is_relative_to on Python 3.9+, falls back to try/except
-    for older versions.
-    """
-    if hasattr(child, "is_relative_to"):
-        return child.is_relative_to(parent)
-    try:
-        child.relative_to(parent)
-        return True
-    except ValueError:
-        return False
-
-
 def classify_python_file(file_path: str) -> Optional[PythonFileKind]:
     """Classify a file as stdlib, user site-packages, or system site-packages.
 
@@ -182,7 +167,7 @@ def classify_python_file(file_path: str) -> Optional[PythonFileKind]:
 
     # 1. User site-packages (most specific)
     user_site = _get_user_site_root()
-    if user_site and _is_relative_to(resolved, user_site):
+    if user_site and resolved.is_relative_to(user_site):
         return PythonFileKind.USER_SITE
 
     parts = resolved.parts
@@ -191,12 +176,12 @@ def classify_python_file(file_path: str) -> Optional[PythonFileKind]:
     # 2. Stdlib (only if the path does NOT traverse a site-packages dir)
     if not has_site_packages:
         for root in _get_stdlib_roots():
-            if _is_relative_to(resolved, root):
+            if resolved.is_relative_to(root):
                 return PythonFileKind.STDLIB
 
     # 3. System site-packages (includes broad roots like the base dir)
     for root in _get_system_site_roots():
-        if _is_relative_to(resolved, root):
+        if resolved.is_relative_to(root):
             return PythonFileKind.SYSTEM_SITE
 
     return None
