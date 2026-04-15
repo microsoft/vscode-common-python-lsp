@@ -21,4 +21,4 @@ jobs:
         with:
           mode: minimum
           count: 1
-          labels: 'bug, debt, feature-request, no-changelog'
+          labels: 'bug, debt, dependencies, feature-request, no-changelog'
