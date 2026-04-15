@@ -75,6 +75,9 @@ def _get_stdlib_roots() -> Set[pathlib.Path]:
 
     Uses only the strict stdlib/platstdlib sysconfig groups so that
     purelib/platlib (which point to site-packages) are excluded.
+
+    The result is computed lazily on the first call, then cached for
+    the lifetime of the process (paths do not change at runtime).
     """
     roots: Set[pathlib.Path] = set()
     for group in ("stdlib", "platstdlib"):
@@ -94,7 +97,11 @@ def _get_stdlib_roots() -> Set[pathlib.Path]:
 
 @functools.lru_cache(maxsize=1)
 def _get_user_site_root() -> Optional[pathlib.Path]:
-    """Resolved user site-packages path, or None."""
+    """Resolved user site-packages path, or None.
+
+    The result is computed lazily on the first call, then cached for
+    the lifetime of the process.
+    """
     try:
         raw = site.getusersitepackages()
     except Exception:
@@ -116,6 +123,9 @@ def _get_system_site_roots() -> Set[pathlib.Path]:
     includes the base installation directory, which is a *parent* of
     the stdlib root — the classifier handles this by checking stdlib
     first.
+
+    The result is computed lazily on the first call, then cached for
+    the lifetime of the process.
     """
     roots: Set[pathlib.Path] = set()
     for group in ("purelib", "platlib"):
