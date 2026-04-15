@@ -21,6 +21,14 @@ SERVER_CWD = os.getcwd()
 CWD_LOCK = threading.Lock()
 
 
+class PythonFileKind(Enum):
+    """Classification of a Python file by its location in the environment."""
+
+    STDLIB = "stdlib"
+    USER_SITE = "user_site"
+    SYSTEM_SITE = "system_site"
+
+
 def as_list(content: Union[Any, List[Any], Tuple[Any]]) -> List[Any]:
     """Ensures we always get a list."""
     if isinstance(content, (list, tuple)):
@@ -59,14 +67,6 @@ def get_extensions_dir() -> List[str]:
 # ---------------------------------------------------------------------------
 # Path classification (lazy, cached)
 # ---------------------------------------------------------------------------
-
-
-class PythonFileKind(Enum):
-    """Classification of a Python file by its location in the environment."""
-
-    STDLIB = "stdlib"
-    USER_SITE = "user_site"
-    SYSTEM_SITE = "system_site"
 
 
 @functools.lru_cache(maxsize=1)
