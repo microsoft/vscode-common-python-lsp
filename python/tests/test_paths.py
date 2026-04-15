@@ -69,6 +69,54 @@ class TestIsStdlibFile:
     def test_non_stdlib_file(self, tmp_path):
         assert not is_stdlib_file(str(tmp_path / "test.py"))
 
+    def test_site_packages_not_stdlib(self):
+        """Files in site-packages should NOT be identified as stdlib."""
+        import site
+
+        for site_pkg_dir in site.getsitepackages():
+            test_file = os.path.join(site_pkg_dir, "pytest", "__init__.py")
+            assert not is_stdlib_file(test_file)
+
+    def test_user_site_packages_not_stdlib(self):
+        """Files in user site-packages should NOT be identified as stdlib."""
+        import site
+
+        user_site = site.getusersitepackages()
+        if user_site:
+            test_file = os.path.join(user_site, "some_package", "__init__.py")
+            assert not is_stdlib_file(test_file)
+
+    def test_random_temp_file_not_stdlib(self, tmp_path):
+        """A temporary file is definitely not stdlib."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".py", dir=str(tmp_path), delete=False
+        ) as tmp:
+            tmp_file = tmp.name
+        try:
+            assert not is_stdlib_file(tmp_file)
+        finally:
+            os.unlink(tmp_file)
+
+    def test_false_positive_site_packages_in_name(self):
+        """'site-packages-backup' as a directory name should NOT match."""
+        import sysconfig
+
+        stdlib_path = sysconfig.get_path("stdlib")
+        if stdlib_path:
+            # A file under site-packages (path segment) should be excluded
+            excluded = os.path.join(stdlib_path, "site-packages", "mod.py")
+            assert not is_stdlib_file(excluded)
+
+            # But 'site-packages-backup' is not the same segment
+            not_excluded = os.path.join(stdlib_path, "site-packages-backup", "mod.py")
+            assert is_stdlib_file(not_excluded)
+
+    def test_os_module_is_stdlib(self):
+        """os module should always be detected as stdlib."""
+        assert is_stdlib_file(os.__file__)
+
 
 class TestGetRelativePath:
     def test_relative_to_workspace(self, tmp_path):
