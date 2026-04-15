@@ -202,28 +202,6 @@ def classify_python_file(file_path: str) -> Optional[PythonFileKind]:
     return None
 
 
-def is_stdlib_file(file_path: str) -> bool:
-    """Return True if the file belongs to the standard library only."""
-    return classify_python_file(file_path) == PythonFileKind.STDLIB
-
-
-def is_python_library_file(file_path: str) -> bool:
-    """Return True if the file belongs to any part of the Python installation.
-
-    "Library file" means stdlib OR site-packages (user or system) — i.e.
-    any file managed by the Python runtime, not user/workspace code.
-    Use this to decide whether a file should be skipped by a linter or
-    formatter.
-    """
-    return classify_python_file(file_path) is not None
-
-
-def is_site_packages_file(file_path: str) -> bool:
-    """Return True if the file is in site-packages (user or system)."""
-    kind = classify_python_file(file_path)
-    return kind in (PythonFileKind.USER_SITE, PythonFileKind.SYSTEM_SITE)
-
-
 # ---------------------------------------------------------------------------
 # Path comparison and normalization
 # ---------------------------------------------------------------------------

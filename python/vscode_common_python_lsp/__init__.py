@@ -16,10 +16,7 @@ from .paths import (
     get_sys_config_paths,
     is_current_interpreter,
     is_match,
-    is_python_library_file,
     is_same_path,
-    is_site_packages_file,
-    is_stdlib_file,
     normalize_path,
 )
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
@@ -35,9 +32,6 @@ __all__ = [
     "normalize_path",
     "is_same_path",
     "is_current_interpreter",
-    "is_stdlib_file",
-    "is_python_library_file",
-    "is_site_packages_file",
     "classify_python_file",
     "PythonFileKind",
     "is_match",
