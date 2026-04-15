@@ -108,11 +108,15 @@ class TestIsSamePath:
 
 
 class TestIsCurrentInterpreter:
-    def test_current_executable(self):
-        assert is_current_interpreter(sys.executable)
-
-    def test_different_executable(self):
-        assert not is_current_interpreter("/nonexistent/python")
+    @pytest.mark.parametrize(
+        "path, expected",
+        [
+            (sys.executable, True),
+            ("/nonexistent/python", False),
+        ],
+    )
+    def test_is_current_interpreter(self, path, expected):
+        assert is_current_interpreter(path) == expected
 
 
 # ---------------------------------------------------------------------------

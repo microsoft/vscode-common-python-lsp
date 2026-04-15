@@ -4,6 +4,8 @@
 
 import sys
 
+import pytest
+
 from vscode_common_python_lsp.runner import (
     CustomIO,
     RunResult,
@@ -14,15 +16,18 @@ from vscode_common_python_lsp.runner import (
 
 
 class TestRunResult:
-    def test_basic(self):
-        r = RunResult("out", "err")
+    @pytest.mark.parametrize(
+        "args, expected_exit_code",
+        [
+            (("out", "err"), None),
+            (("out", "err", 1), 1),
+        ],
+    )
+    def test_fields(self, args, expected_exit_code):
+        r = RunResult(*args)
         assert r.stdout == "out"
         assert r.stderr == "err"
-        assert r.exit_code is None
-
-    def test_with_exit_code(self):
-        r = RunResult("out", "err", 1)
-        assert r.exit_code == 1
+        assert r.exit_code == expected_exit_code
 
 
 class TestCustomIO:
