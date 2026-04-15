@@ -108,7 +108,11 @@ def run_path(
             cwd=cwd,
             env=env,
         ) as process:
-            stdout, stderr = process.communicate(input=source, timeout=timeout)
+            try:
+                stdout, stderr = process.communicate(input=source, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
             return RunResult(stdout, stderr, process.returncode)
     else:
         result = subprocess.run(

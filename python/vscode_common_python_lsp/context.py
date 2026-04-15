@@ -18,8 +18,10 @@ def substitute_attr(obj: Any, attribute: str, new_value: Any):
     """Manage object attributes context when using runpy.run_module()."""
     old_value = getattr(obj, attribute)
     setattr(obj, attribute, new_value)
-    yield
-    setattr(obj, attribute, old_value)
+    try:
+        yield
+    finally:
+        setattr(obj, attribute, old_value)
 
 
 @contextlib.contextmanager
@@ -27,8 +29,10 @@ def redirect_io(stream: str, new_stream):
     """Redirect stdio streams to a custom stream."""
     old_stream = getattr(sys, stream)
     setattr(sys, stream, new_stream)
-    yield
-    setattr(sys, stream, old_stream)
+    try:
+        yield
+    finally:
+        setattr(sys, stream, old_stream)
 
 
 @contextlib.contextmanager

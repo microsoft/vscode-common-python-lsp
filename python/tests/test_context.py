@@ -8,6 +8,8 @@ import os
 import sys
 from unittest.mock import patch
 
+import pytest
+
 from vscode_common_python_lsp.context import change_cwd, redirect_io, substitute_attr
 
 
@@ -27,6 +29,14 @@ class TestSubstituteAttr:
             assert sys.argv == ["test", "--flag"]
         assert sys.argv is original_argv
 
+    def test_restores_on_exception(self):
+        """Attribute is restored even when the body raises."""
+        original_argv = sys.argv
+        with pytest.raises(RuntimeError):
+            with substitute_attr(sys, "argv", ["test"]):
+                raise RuntimeError("boom")
+        assert sys.argv is original_argv
+
 
 class TestRedirectIo:
     def test_redirect_stdout(self):
@@ -40,6 +50,15 @@ class TestRedirectIo:
         buf = io.StringIO()
         with redirect_io("stdout", buf):
             pass
+        assert sys.stdout is original
+
+    def test_restores_on_exception(self):
+        """Stream is restored even when the body raises."""
+        original = sys.stdout
+        buf = io.StringIO()
+        with pytest.raises(RuntimeError):
+            with redirect_io("stdout", buf):
+                raise RuntimeError("boom")
         assert sys.stdout is original
 
 
