@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import os
 import runpy
@@ -45,13 +46,15 @@ class CustomIO(io.TextIOWrapper):
         return self.read()
 
 
-def _with_cwd_lock(func, cwd, *args, **kwargs) -> RunResult:
-    """Run a function under CWD_LOCK, changing directory if needed."""
+@contextlib.contextmanager
+def _cwd_lock(cwd):
+    """Acquire CWD_LOCK and optionally change directory."""
     with CWD_LOCK:
         if is_same_path(os.getcwd(), cwd):
-            return func(*args, **kwargs)
-        with change_cwd(cwd):
-            return func(*args, **kwargs)
+            yield
+        else:
+            with change_cwd(cwd):
+                yield
 
 
 def run_module(
@@ -61,8 +64,7 @@ def run_module(
 
     Captures stdout, stderr, and SystemExit exit codes.
     """
-
-    def _run() -> RunResult:
+    with _cwd_lock(cwd):
         str_output = CustomIO("<stdout>", encoding="utf-8")
         str_error = CustomIO("<stderr>", encoding="utf-8")
 
@@ -85,8 +87,6 @@ def run_module(
             exit_code = e.code
 
         return RunResult(str_output.get_value(), str_error.get_value(), exit_code)
-
-    return _with_cwd_lock(_run, cwd)
 
 
 def run_path(
@@ -135,8 +135,7 @@ def run_api(
 
     Captures stdout, stderr, and SystemExit exit codes.
     """
-
-    def _run() -> RunResult:
+    with _cwd_lock(cwd):
         str_output = CustomIO("<stdout>", encoding="utf-8")
         str_error = CustomIO("<stderr>", encoding="utf-8")
 
@@ -159,5 +158,3 @@ def run_api(
             exit_code = e.code
 
         return RunResult(str_output.get_value(), str_error.get_value(), exit_code)
-
-    return _with_cwd_lock(_run, cwd)
