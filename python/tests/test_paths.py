@@ -24,20 +24,18 @@ from vscode_common_python_lsp.paths import (
 
 
 class TestAsList:
-    def test_list_input(self):
-        assert as_list([1, 2, 3]) == [1, 2, 3]
-
-    def test_tuple_input(self):
-        assert as_list((1, 2)) == [1, 2]
-
-    def test_single_value(self):
-        assert as_list(42) == [42]
-
-    def test_string_value(self):
-        assert as_list("hello") == ["hello"]
-
-    def test_none_value(self):
-        assert as_list(None) == [None]
+    @pytest.mark.parametrize(
+        "input_val, expected",
+        [
+            ([1, 2, 3], [1, 2, 3]),
+            ((1, 2), [1, 2]),
+            (42, [42]),
+            ("hello", ["hello"]),
+            (None, [None]),
+        ],
+    )
+    def test_as_list(self, input_val, expected):
+        assert as_list(input_val) == expected
 
 
 class TestNormalizePath:
@@ -249,18 +247,18 @@ class TestGetRelativePath:
 
 
 class TestIsMatch:
-    def test_empty_patterns(self):
-        assert not is_match([], "test.py")
-
-    def test_matching_pattern(self):
-        assert is_match(["*.py"], "test.py")
-
-    def test_non_matching_pattern(self):
-        assert not is_match(["*.js"], "test.py")
+    @pytest.mark.parametrize(
+        "patterns, file_path, expected",
+        [
+            ([], "test.py", False),
+            (["*.py"], "test.py", True),
+            (["*.js"], "test.py", False),
+            (["test.py"], "/some/path/test.py", True),
+        ],
+    )
+    def test_pattern_matching(self, patterns, file_path, expected):
+        assert is_match(patterns, file_path) == expected
 
     def test_with_workspace_root(self, tmp_path):
         fp = str(tmp_path / "src" / "test.py")
         assert is_match(["src/*.py"], fp, str(tmp_path))
-
-    def test_filename_match_without_slash(self):
-        assert is_match(["test.py"], "/some/path/test.py")
