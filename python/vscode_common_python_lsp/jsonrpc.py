@@ -191,12 +191,10 @@ class ProcessManager:
                 # (a replacement may have been started under the same key).
                 if self._processes.get(workspace) is not proc:
                     return
-                try:
-                    del self._processes[workspace]
-                    rpc = self._rpc.pop(workspace)
+                self._processes.pop(workspace, None)
+                rpc = self._rpc.pop(workspace, None)
+                if rpc:
                     rpc.close()
-                except Exception:
-                    pass
 
         self._thread_pool.submit(_monitor_process)
 
