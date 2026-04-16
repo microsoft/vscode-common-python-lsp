@@ -8,6 +8,7 @@
  * replacements in user-configurable string settings.
  */
 
+import * as os from 'os';
 import * as path from 'path';
 import { WorkspaceFolder } from 'vscode';
 
@@ -22,15 +23,11 @@ export function resolveWorkspaceFolder(value: string, workspace: WorkspaceFolder
  * Expands a leading `~` to the user's home directory.
  */
 export function expandTilde(value: string): string {
-    const home = process.env.HOME || process.env.USERPROFILE;
-    if (!home) {
-        return value;
-    }
     if (value === '~') {
-        return home;
+        return os.homedir();
     }
     if (value.startsWith('~/') || value.startsWith('~\\')) {
-        return path.join(home, value.slice(2));
+        return path.join(os.homedir(), value.slice(2));
     }
     return value;
 }

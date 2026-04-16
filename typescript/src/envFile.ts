@@ -4,7 +4,7 @@
 import * as dotenv from 'dotenv';
 import * as fsapi from 'fs-extra';
 import { WorkspaceFolder } from 'vscode';
-import { traceInfo, traceWarn } from './logging';
+import { traceLog, traceWarn } from './logging';
 import { resolvePathSetting } from './variables';
 import { getConfiguration } from './vscodeapi';
 
@@ -24,7 +24,7 @@ export async function getEnvFileVars(workspace: WorkspaceFolder): Promise<Record
             const environmentVariables = dotenv.parse(content);
             const count = Object.keys(environmentVariables).length;
             if (count > 0) {
-                traceInfo(`Loaded ${count} environment variable(s) from ${envFilePath}`);
+                traceLog(`Loaded ${count} environment variable(s) from ${envFilePath}`);
             }
             return environmentVariables;
         }
