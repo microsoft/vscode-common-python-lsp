@@ -3,6 +3,19 @@
 """Shared Python utilities for VS Code Python tool extensions."""
 
 from .context import change_cwd, redirect_io, substitute_attr
+from .debug import setup_debugpy
+from .jsonrpc import (
+    JsonReader,
+    JsonRpc,
+    JsonWriter,
+    ProcessManager,
+    RpcRunResult,
+    StreamClosedException,
+    create_json_rpc,
+    get_or_start_json_rpc,
+    run_over_json_rpc,
+    shutdown_json_rpc,
+)
 from .paths import (
     CWD_LOCK,
     SERVER_CWD,
@@ -17,21 +30,8 @@ from .paths import (
     is_same_path,
     normalize_path,
 )
-from .runner import CustomIO, RunResult, run_api, run_module, run_path
-from .jsonrpc import (
-    JsonReader,
-    JsonRpc,
-    JsonWriter,
-    ProcessManager,
-    RpcRunResult,
-    StreamClosedException,
-    create_json_rpc,
-    get_or_start_json_rpc,
-    run_over_json_rpc,
-    shutdown_json_rpc,
-)
 from .process_runner import run_message_loop, update_sys_path
-from .debug import setup_debugpy
+from .runner import CustomIO, RunResult, run_api, run_module, run_path
 
 __all__ = [
     # paths

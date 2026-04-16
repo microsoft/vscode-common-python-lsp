@@ -8,10 +8,7 @@ import unittest
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
-from vscode_common_python_lsp.process_runner import (
-    run_message_loop,
-    update_sys_path,
-)
+from vscode_common_python_lsp.process_runner import run_message_loop, update_sys_path
 
 
 class TestUpdateSysPath(unittest.TestCase):
