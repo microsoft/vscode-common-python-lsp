@@ -69,7 +69,7 @@ def get_extensions_dir() -> List[str]:
 
 
 @functools.lru_cache(maxsize=1)
-def _get_stdlib_roots() -> Set[pathlib.Path]:
+def _get_stdlib_roots() -> frozenset[pathlib.Path]:
     """Resolved stdlib and platstdlib paths plus VS Code extensions dir.
 
     Uses only the strict stdlib/platstdlib sysconfig groups so that
@@ -91,7 +91,7 @@ def _get_stdlib_roots() -> Set[pathlib.Path]:
             roots.add(pathlib.Path(p).resolve())
         except OSError:
             pass
-    return roots
+    return frozenset(roots)
 
 
 @functools.lru_cache(maxsize=1)
@@ -114,7 +114,7 @@ def _get_user_site_root() -> Optional[pathlib.Path]:
 
 
 @functools.lru_cache(maxsize=1)
-def _get_system_site_roots() -> Set[pathlib.Path]:
+def _get_system_site_roots() -> frozenset[pathlib.Path]:
     """All system site-packages roots.
 
     Includes purelib/platlib from sysconfig plus every entry from
@@ -142,7 +142,7 @@ def _get_system_site_roots() -> Set[pathlib.Path]:
                 pass
     except Exception:
         pass
-    return roots
+    return frozenset(roots)
 
 
 def classify_python_file(file_path: str) -> Optional[PythonFileKind]:

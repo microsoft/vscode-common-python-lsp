@@ -117,16 +117,19 @@ def run_path(
                 stdout, stderr = process.communicate()
             return RunResult(stdout, stderr, process.returncode)
     else:
-        result = subprocess.run(
-            argv,
-            encoding="utf-8",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                argv,
+                encoding="utf-8",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            return RunResult(e.stdout or "", e.stderr or "", None)
         return RunResult(result.stdout, result.stderr, result.returncode)
 
 
