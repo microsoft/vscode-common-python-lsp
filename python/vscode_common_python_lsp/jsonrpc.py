@@ -22,6 +22,8 @@ CONTENT_LENGTH = "Content-Length: "
 class StreamClosedException(Exception):
     """JSON RPC stream is closed."""
 
+    pass
+
 
 class JsonWriter:
     """Manages writing JSON-RPC messages to the writer stream."""

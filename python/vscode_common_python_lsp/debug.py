@@ -15,17 +15,25 @@ def _update_sys_path(path_to_add: str) -> None:
         sys.path.append(path_to_add)
 
 
-def setup_debugpy(port: int = 5678) -> None:
-    """Conditionally attach debugpy if ``USE_DEBUGPY`` is set.
+def setup_debugpy(port: int = 5678, *, require_opt_in: bool = True) -> None:
+    """Conditionally attach debugpy if the environment is configured.
 
-    Checks the ``USE_DEBUGPY`` environment variable and, when enabled,
-    loads debugpy from ``DEBUGPY_PATH`` and connects to the given *port*.
+    Checks the ``DEBUGPY_PATH`` environment variable and, when present,
+    loads debugpy from that path and connects to the given *port*.
 
-    This uses the secure opt-in pattern from black/isort/pylint where
-    both ``USE_DEBUGPY`` **and** ``DEBUGPY_PATH`` must be set.
+    Parameters
+    ----------
+    port:
+        The port to connect to for debugging.
+    require_opt_in:
+        When ``True`` (default), the ``USE_DEBUGPY`` environment variable
+        must also be set to a truthy value (``True``, ``TRUE``, ``1``, or
+        ``T``).  Set to ``False`` to skip this check — useful for
+        extensions that don't gate on ``USE_DEBUGPY`` (e.g. flake8, mypy).
     """
-    if os.getenv("USE_DEBUGPY", None) not in ("True", "TRUE", "1", "T"):
-        return
+    if require_opt_in:
+        if os.getenv("USE_DEBUGPY", None) not in ("True", "TRUE", "1", "T"):
+            return
 
     debugger_path = os.getenv("DEBUGPY_PATH", None)
     if not debugger_path:

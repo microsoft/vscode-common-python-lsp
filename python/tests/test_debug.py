@@ -65,3 +65,46 @@ def test_debugpy_path_ending_with_debugpy_strips_suffix():
             ) as mock_update:
                 setup_debugpy()
                 mock_update.assert_called_once_with(test_parent)
+
+
+# ---------------------------------------------------------------------------
+# require_opt_in=False tests (for repos without USE_DEBUGPY guard)
+# ---------------------------------------------------------------------------
+
+
+def test_no_opt_in_skips_use_debugpy_check():
+    """With require_opt_in=False, USE_DEBUGPY is not checked."""
+    mock_debugpy = MagicMock()
+    debugger_dir = os.path.dirname(__file__)
+    env = {"DEBUGPY_PATH": debugger_dir}
+    with patch.dict(os.environ, env, clear=True):
+        with patch.dict("sys.modules", {"debugpy": mock_debugpy}):
+            with patch(
+                "vscode_common_python_lsp.debug._update_sys_path"
+            ):
+                setup_debugpy(require_opt_in=False)
+
+                mock_debugpy.connect.assert_called_once_with(5678)
+                mock_debugpy.breakpoint.assert_called_once()
+
+
+def test_no_opt_in_still_requires_debugpy_path():
+    """With require_opt_in=False but no DEBUGPY_PATH, nothing happens."""
+    with patch.dict(os.environ, {}, clear=True):
+        setup_debugpy(require_opt_in=False)
+
+
+@pytest.mark.parametrize("value", ["False", "0", "no"])
+def test_no_opt_in_ignores_use_debugpy_value(value):
+    """With require_opt_in=False, USE_DEBUGPY value is irrelevant."""
+    mock_debugpy = MagicMock()
+    debugger_dir = os.path.dirname(__file__)
+    env = {"USE_DEBUGPY": value, "DEBUGPY_PATH": debugger_dir}
+    with patch.dict(os.environ, env, clear=False):
+        with patch.dict("sys.modules", {"debugpy": mock_debugpy}):
+            with patch(
+                "vscode_common_python_lsp.debug._update_sys_path"
+            ):
+                setup_debugpy(require_opt_in=False)
+
+                mock_debugpy.connect.assert_called_once()
