@@ -368,6 +368,16 @@ class ToolServer:
                 lsp.ShowMessageParams(type=lsp.MessageType.Warning, message=message)
             )
 
+    def log_always(self, message: str) -> None:
+        """Log an info message and show a notification only when ``always``."""
+        self.server.window_log_message(
+            lsp.LogMessageParams(type=lsp.MessageType.Info, message=message)
+        )
+        if os.getenv("LS_SHOW_NOTIFICATION", "off") == "always":
+            self.server.window_show_message(
+                lsp.ShowMessageParams(type=lsp.MessageType.Info, message=message)
+            )
+
     # -----------------------------------------------------------------
     # Lifecycle helpers
     # -----------------------------------------------------------------

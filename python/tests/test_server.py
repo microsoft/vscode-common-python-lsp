@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -119,6 +120,28 @@ class TestGetGlobalDefaults:
         defaults = ts.get_global_defaults()
         assert defaults["showNotifications"] == "onError"
 
+    def test_nested_dict_default_preserved(self):
+        cfg = ToolServerConfig(
+            tool_module="flake8",
+            tool_display="Flake8",
+            default_settings={"severity": {"E": "Error", "W": "Warning"}},
+        )
+        ts = _make_server(cfg)
+        defaults = ts.get_global_defaults()
+        assert defaults["severity"]["E"] == "Error"
+        assert defaults["severity"]["W"] == "Warning"
+
+    def test_global_overrides_nested_dict(self):
+        cfg = ToolServerConfig(
+            tool_module="flake8",
+            tool_display="Flake8",
+            default_settings={"severity": {"E": "Error"}},
+        )
+        ts = _make_server(cfg)
+        ts.global_settings["severity"] = {"E": "Warning"}
+        defaults = ts.get_global_defaults()
+        assert defaults["severity"]["E"] == "Warning"
+
 
 class TestUpdateWorkspaceSettings:
     @patch("vscode_common_python_lsp.server.uris")
@@ -145,6 +168,51 @@ class TestUpdateWorkspaceSettings:
         )
         assert len(ts.workspace_settings) == 2
 
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_empty_list_treated_as_none(self, mock_uris):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        ts = _make_server()
+        ts.update_workspace_settings([])
+        assert len(ts.workspace_settings) == 1
+
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_workspace_settings_include_original_keys(self, mock_uris):
+        mock_uris.to_fs_path.side_effect = lambda u: u.replace("file://", "")
+        ts = _make_server()
+        ts.update_workspace_settings(
+            [{"workspace": "file:///ws1", "args": ["--check"], "enabled": True}]
+        )
+        settings = list(ts.workspace_settings.values())[0]
+        assert settings["args"] == ["--check"]
+        assert settings["enabled"] is True
+
+
+class TestGetSettingsByPath:
+    def test_matches_closest_workspace(self):
+        ts = _make_server()
+        ts.workspace_settings = {
+            "/ws1": {"workspaceFS": "/ws1", "cwd": "/ws1"},
+            "/ws2": {"workspaceFS": "/ws2", "cwd": "/ws2"},
+        }
+        result = ts.get_settings_by_path(pathlib.Path("/ws1/subdir/file.py"))
+        assert result["workspaceFS"] == "/ws1"
+
+    def test_file_outside_all_workspaces_returns_first(self):
+        ts = _make_server()
+        ts.workspace_settings = {
+            "/ws1": {"workspaceFS": "/ws1"},
+        }
+        result = ts.get_settings_by_path(pathlib.Path("/other/file.py"))
+        assert result["workspaceFS"] == "/ws1"
+
+    def test_deeply_nested_file(self):
+        ts = _make_server()
+        ts.workspace_settings = {
+            "/ws": {"workspaceFS": "/ws", "cwd": "/ws"},
+        }
+        result = ts.get_settings_by_path(pathlib.Path("/ws/a/b/c/d/file.py"))
+        assert result["workspaceFS"] == "/ws"
+
 
 class TestGetSettingsByDocument:
     @patch("vscode_common_python_lsp.server.uris")
@@ -165,11 +233,60 @@ class TestGetSettingsByDocument:
         settings = ts.get_settings_by_document(doc)
         assert "workspaceFS" in settings
 
+    def test_document_in_known_workspace(self):
+        ts = _make_server()
+        from vscode_common_python_lsp.paths import normalize_path
+
+        ws1_key = normalize_path(os.path.abspath("/ws1"))
+        ws2_key = normalize_path(os.path.abspath("/ws2"))
+        ts.workspace_settings = {
+            ws1_key: {"workspaceFS": ws1_key, "cwd": ws1_key},
+            ws2_key: {"workspaceFS": ws2_key, "cwd": ws2_key},
+        }
+        doc_path = os.path.join(os.path.abspath("/ws1"), "src", "file.py")
+        doc = _make_document(doc_path)
+        result = ts.get_settings_by_document(doc)
+        assert result["workspaceFS"] == ws1_key
+
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_document_outside_workspaces_creates_fallback(self, mock_uris):
+        mock_uris.from_fs_path.return_value = "file:///other/src"
+        ts = _make_server()
+        ts.workspace_settings = {
+            "/ws1": {"workspaceFS": "/ws1"},
+        }
+        doc = _make_document("/other/src/file.py")
+        result = ts.get_settings_by_document(doc)
+        assert "workspaceFS" in result
+        assert "interpreter" in result
+
 
 class TestGetDocumentKey:
     def test_returns_none_when_no_workspace(self):
         ts = _make_server()
         doc = _make_document()
+        assert ts.get_document_key(doc) is None
+
+    def test_returns_matching_workspace_key(self):
+        ts = _make_server()
+        from vscode_common_python_lsp.paths import normalize_path
+
+        ws1_key = normalize_path(os.path.abspath("/ws1"))
+        ws2_key = normalize_path(os.path.abspath("/ws2"))
+        ts.workspace_settings = {
+            ws1_key: {"workspaceFS": ws1_key},
+            ws2_key: {"workspaceFS": ws2_key},
+        }
+        doc_path = os.path.join(os.path.abspath("/ws1"), "src", "file.py")
+        doc = _make_document(doc_path)
+        assert ts.get_document_key(doc) == ws1_key
+
+    def test_returns_none_when_document_outside_all(self):
+        ts = _make_server()
+        ts.workspace_settings = {
+            "/ws1": {"workspaceFS": "/ws1"},
+        }
+        doc = _make_document("/other/file.py")
         assert ts.get_document_key(doc) is None
 
 
@@ -210,21 +327,42 @@ class TestGetCwd:
         result = ts.get_cwd(settings)
         assert result == "/workspace"
 
+    def test_relative_file_variable_falls_back_without_doc(self):
+        ts = _make_server()
+        for token in ["${relativeFile}", "${relativeFileDirname}"]:
+            settings = {"workspaceFS": "/workspace", "cwd": token}
+            result = ts.get_cwd(settings, None)
+            assert result == "/workspace", f"Failed for {token}"
+
     @pytest.mark.parametrize(
-        "var,expected_part",
+        "var,expected",
         [
-            ("${fileBasename}", "main.py"),
-            ("${fileBasenameNoExtension}", "main"),
+            ("${file}", "/workspace/src/foo.py"),
+            ("${fileBasename}", "foo.py"),
+            ("${fileBasenameNoExtension}", "foo"),
             ("${fileExtname}", ".py"),
+            ("${fileDirname}", "/workspace/src"),
+            ("${fileDirnameBasename}", "src"),
+            ("${relativeFile}", os.path.relpath("/workspace/src/foo.py", "/workspace")),
+            (
+                "${relativeFileDirname}",
+                os.path.relpath("/workspace/src", "/workspace"),
+            ),
             ("${fileWorkspaceFolder}", "/workspace"),
         ],
     )
-    def test_all_file_variables(self, var, expected_part):
+    def test_all_file_variables_exact(self, var, expected):
         ts = _make_server()
         settings = {"workspaceFS": "/workspace", "cwd": var}
-        doc = _make_document("/workspace/src/main.py")
-        result = ts.get_cwd(settings, doc)
-        assert expected_part in result
+        doc = _make_document("/workspace/src/foo.py")
+        assert ts.get_cwd(settings, doc) == expected
+
+    def test_document_path_takes_precedence_over_doc(self):
+        ts = _make_server()
+        settings = {"workspaceFS": "/workspace", "cwd": "${fileDirname}"}
+        doc = _make_document("/workspace/original.py")
+        result = ts.get_cwd(settings, doc, document_path="/workspace/override/cell.py")
+        assert result == "/workspace/override"
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +383,50 @@ class TestExecuteTool:
             )
             mock_run.assert_called_once()
             assert result.stdout == "ok"
+
+    def test_path_mode_logs_argv_and_cwd(self):
+        ts = _make_server()
+        with patch("vscode_common_python_lsp.server.run_path") as mock_run:
+            mock_run.return_value = MagicMock(stdout="", stderr="")
+            ts.execute_tool(
+                argv=["/bin/tool", "--flag"],
+                mode="path",
+                settings={},
+                cwd="/tmp",
+            )
+        calls = ts.server.window_log_message.call_args_list
+        messages = [str(c) for c in calls]
+        assert any("--flag" in m for m in messages)
+        assert any("CWD Server: /tmp" in m for m in messages)
+
+    def test_path_mode_logs_stderr(self):
+        ts = _make_server()
+        with patch("vscode_common_python_lsp.server.run_path") as mock_run:
+            mock_run.return_value = MagicMock(stdout="ok", stderr="some warning")
+            ts.execute_tool(
+                argv=["/bin/tool"],
+                mode="path",
+                settings={},
+                cwd="/tmp",
+            )
+        messages = [str(c) for c in ts.server.window_log_message.call_args_list]
+        assert any("some warning" in m for m in messages)
+
+    def test_path_mode_passes_use_stdin_and_source(self):
+        ts = _make_server()
+        with patch("vscode_common_python_lsp.server.run_path") as mock_run:
+            mock_run.return_value = MagicMock(stdout="", stderr="")
+            ts.execute_tool(
+                argv=["/bin/tool"],
+                mode="path",
+                settings={},
+                cwd="/tmp",
+                use_stdin=True,
+                source="print('hello')",
+            )
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["use_stdin"] is True
+        assert call_kwargs["source"] == "print('hello')"
 
     def test_rpc_mode(self):
         ts = _make_server()
@@ -286,6 +468,21 @@ class TestExecuteTool:
             assert call_kwargs["env"] == {"EXTRA": "val"}
             assert call_kwargs["timeout"] == 5.0
 
+    def test_rpc_mode_uses_tool_module_from_config(self):
+        ts = _make_server()
+        with patch(
+            "vscode_common_python_lsp.server.jsonrpc.run_over_json_rpc"
+        ) as mock_rpc:
+            mock_rpc.return_value = MagicMock(stdout="", stderr="", exception=None)
+            ts.execute_tool(
+                argv=["--check"],
+                mode="rpc",
+                settings={"interpreter": ["python3"]},
+                cwd="/tmp",
+                workspace="/ws",
+            )
+        assert mock_rpc.call_args[1]["module"] == "testtool"
+
     def test_module_mode(self):
         ts = _make_server()
         with patch("vscode_common_python_lsp.server.run_module") as mock_run:
@@ -312,6 +509,19 @@ class TestExecuteTool:
                 )
             ts.server.window_log_message.assert_called()
 
+    def test_module_mode_logs_stderr(self):
+        ts = _make_server()
+        with patch("vscode_common_python_lsp.server.run_module") as mock_run:
+            mock_run.return_value = MagicMock(stdout="ok", stderr="module warning")
+            ts.execute_tool(
+                argv=["testtool"],
+                mode="module",
+                settings={},
+                cwd="/tmp",
+            )
+        messages = [str(c) for c in ts.server.window_log_message.call_args_list]
+        assert any("module warning" in m for m in messages)
+
     def test_runner_script_override(self):
         ts = _make_server()
         with patch(
@@ -337,7 +547,6 @@ class TestToRunResultWithLogging:
         result = ts.to_run_result_with_logging(rpc_result)
         assert result.stdout == "out"
         assert result.stderr == "traceback"
-        # Verify error was logged
         ts.server.window_log_message.assert_called()
 
     def test_stderr_logged_to_output(self):
@@ -345,6 +554,7 @@ class TestToRunResultWithLogging:
         rpc_result = MagicMock(stdout="out", stderr="warning text", exception=None)
         result = ts.to_run_result_with_logging(rpc_result)
         assert result.stderr == "warning text"
+        ts.server.window_log_message.assert_called()
 
     def test_clean_result(self):
         ts = _make_server()
@@ -403,6 +613,25 @@ class TestLogging:
             ts.log_error("msg")
         ts.server.window_show_message.assert_called_once()
 
+    def test_log_always_shows_notification_when_always(self):
+        ts = _make_server()
+        with patch.dict(os.environ, {"LS_SHOW_NOTIFICATION": "always"}):
+            ts.log_always("info")
+        ts.server.window_show_message.assert_called_once()
+
+    @pytest.mark.parametrize("level", ["off", "onError", "onWarning"])
+    def test_log_always_no_notification_unless_always(self, level):
+        ts = _make_server()
+        with patch.dict(os.environ, {"LS_SHOW_NOTIFICATION": level}):
+            ts.log_always("info")
+        ts.server.window_show_message.assert_not_called()
+
+    def test_log_always_logs_to_output(self):
+        ts = _make_server()
+        with patch.dict(os.environ, {"LS_SHOW_NOTIFICATION": "off"}):
+            ts.log_always("info msg")
+        ts.server.window_log_message.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Lifecycle helpers
@@ -436,11 +665,35 @@ class TestLifecycle:
             ts.apply_settings(params)
             assert len(ts.workspace_settings) == 2
 
+    def test_apply_settings_updates_global_settings(self):
+        ts = _make_server()
+        params = MagicMock()
+        params.initialization_options = {
+            "globalSettings": {"path": ["/first"]},
+            "settings": None,
+        }
+        ts.apply_settings(params)
+        assert ts.global_settings["path"] == ["/first"]
+
+        params.initialization_options = {
+            "globalSettings": {"path": ["/second"]},
+            "settings": None,
+        }
+        ts.apply_settings(params)
+        assert ts.global_settings["path"] == ["/second"]
+
     def test_log_startup_info(self):
         ts = _make_server()
         ts.global_settings = {"path": []}
         ts.log_startup_info(settings=[{"workspace": "file:///ws"}])
         assert ts.server.window_log_message.call_count >= 3
+
+    def test_log_startup_info_without_settings(self):
+        ts = _make_server()
+        ts.global_settings = {"path": []}
+        ts.log_startup_info()
+        # Should still log CWD, global settings, sys.path
+        assert ts.server.window_log_message.call_count >= 2
 
     def test_handle_exit(self):
         ts = _make_server()
