@@ -7,7 +7,6 @@ from __future__ import annotations
 import fnmatch
 import functools
 import os
-import os.path
 import pathlib
 import site
 import sys

@@ -4,6 +4,6 @@
 import vscode_common_python_lsp
 
 
-def test_package_version():
-    """Verify the package is importable and has a version."""
-    assert vscode_common_python_lsp.__version__ == "0.1.0"
+def test_package_importable():
+    """Verify the package is importable."""
+    assert hasattr(vscode_common_python_lsp, "classify_python_file")

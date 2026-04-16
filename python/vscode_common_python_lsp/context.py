@@ -37,7 +37,12 @@ def redirect_io(stream: str, new_stream):
 
 @contextlib.contextmanager
 def change_cwd(new_cwd):
-    """Change working directory before running code."""
+    """Change working directory before running code.
+
+    Always restores to ``SERVER_CWD`` (the working directory at process
+    start), not the working directory active when the context manager was
+    entered.  This matches the behaviour of all upstream extension repos.
+    """
     try:
         os.chdir(new_cwd)
     except OSError as e:

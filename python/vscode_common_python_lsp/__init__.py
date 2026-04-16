@@ -2,8 +2,6 @@
 # Licensed under the MIT License.
 """Shared Python utilities for VS Code Python tool extensions."""
 
-__version__ = "0.1.0"
-
 from .context import change_cwd, redirect_io, substitute_attr
 from .paths import (
     CWD_LOCK,
