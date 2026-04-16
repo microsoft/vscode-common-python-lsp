@@ -5,7 +5,7 @@ import * as dotenv from 'dotenv';
 import * as fsapi from 'fs-extra';
 import { WorkspaceFolder } from 'vscode';
 import { traceLog, traceWarn } from './logging';
-import { resolvePathSetting } from './variables';
+import { resolvePathSetting } from './settings';
 import { getConfiguration } from './vscodeapi';
 
 /**

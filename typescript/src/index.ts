@@ -40,5 +40,5 @@ export { registerLanguageStatusItem, updateStatus } from './status';
 // Env file
 export { getEnvFileVars } from './envFile';
 
-// Variable substitution
-export { expandTilde, resolvePathSetting, resolveWorkspaceFolder } from './variables';
+// Settings & variable substitution
+export { expandTilde, resolvePathSetting, resolveVariables } from './settings';
