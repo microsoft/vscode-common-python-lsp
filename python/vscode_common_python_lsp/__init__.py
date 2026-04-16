@@ -29,7 +29,6 @@ from .jsonrpc import (
     get_or_start_json_rpc,
     run_over_json_rpc,
     shutdown_json_rpc,
-    to_str,
 )
 from .process_runner import run_message_loop, update_sys_path
 from .debug import setup_debugpy
@@ -59,7 +58,6 @@ __all__ = [
     "run_path",
     "run_api",
     # jsonrpc
-    "to_str",
     "StreamClosedException",
     "JsonWriter",
     "JsonReader",

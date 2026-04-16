@@ -20,11 +20,6 @@ from typing import BinaryIO
 CONTENT_LENGTH = "Content-Length: "
 
 
-def to_str(text: str | bytes) -> str:
-    """Convert bytes to string as needed."""
-    return text.decode("utf-8") if isinstance(text, bytes) else text
-
-
 class StreamClosedException(Exception):
     """JSON RPC stream is closed."""
 
@@ -73,15 +68,15 @@ class JsonReader:
             raise StreamClosedException()
         length = None
         while not length:
-            line = to_str(self._readline())
+            line = self._readline().decode("utf-8")
             if line.startswith(CONTENT_LENGTH):
                 length = int(line[len(CONTENT_LENGTH):])  # noqa: E203
 
-        line = to_str(self._readline()).strip()
+        line = self._readline().decode("utf-8").strip()
         while line:
-            line = to_str(self._readline()).strip()
+            line = self._readline().decode("utf-8").strip()
 
-        content = to_str(self._reader.read(length))
+        content = self._reader.read(length).decode("utf-8")
         return json.loads(content)
 
     def _readline(self):

@@ -16,21 +16,7 @@ from vscode_common_python_lsp.jsonrpc import (
     RpcRunResult,
     StreamClosedException,
     create_json_rpc,
-    to_str,
 )
-
-
-class TestToStr(unittest.TestCase):
-    """Tests for to_str helper."""
-
-    def test_bytes_to_str(self):
-        assert to_str(b"hello") == "hello"
-
-    def test_str_passthrough(self):
-        assert to_str("hello") == "hello"
-
-    def test_utf8_bytes(self):
-        assert to_str("café".encode("utf-8")) == "café"
 
 
 class TestJsonWriterReader(unittest.TestCase):
