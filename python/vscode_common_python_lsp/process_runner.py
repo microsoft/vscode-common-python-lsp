@@ -72,9 +72,7 @@ def run_message_loop(
                         source=msg.get("source"),
                     )
                 except Exception:
-                    result = result_cls(
-                        "", traceback.format_exc(chain=True)
-                    )
+                    result = result_cls("", traceback.format_exc(chain=True))
                     is_exception = True
 
             response: dict[str, object] = {

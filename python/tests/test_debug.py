@@ -79,9 +79,7 @@ def test_no_opt_in_skips_use_debugpy_check():
     env = {"DEBUGPY_PATH": debugger_dir}
     with patch.dict(os.environ, env, clear=True):
         with patch.dict("sys.modules", {"debugpy": mock_debugpy}):
-            with patch(
-                "vscode_common_python_lsp.debug._update_sys_path"
-            ):
+            with patch("vscode_common_python_lsp.debug._update_sys_path"):
                 setup_debugpy(require_opt_in=False)
 
                 mock_debugpy.connect.assert_called_once_with(5678)
@@ -102,9 +100,7 @@ def test_no_opt_in_ignores_use_debugpy_value(value):
     env = {"USE_DEBUGPY": value, "DEBUGPY_PATH": debugger_dir}
     with patch.dict(os.environ, env, clear=False):
         with patch.dict("sys.modules", {"debugpy": mock_debugpy}):
-            with patch(
-                "vscode_common_python_lsp.debug._update_sys_path"
-            ):
+            with patch("vscode_common_python_lsp.debug._update_sys_path"):
                 setup_debugpy(require_opt_in=False)
 
                 mock_debugpy.connect.assert_called_once()

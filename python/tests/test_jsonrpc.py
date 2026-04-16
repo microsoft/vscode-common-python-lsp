@@ -326,9 +326,7 @@ class TestRunOverJsonRpc(unittest.TestCase):
     def test_connection_failure_raises(self, _mock_get_rpc):
         """Raises ConnectionError when RPC cannot be established."""
         with pytest.raises(ConnectionError, match="Failed to run over JSON-RPC"):
-            run_over_json_rpc(
-                "ws", ["python"], "mod", [], True, "/tmp", "runner.py"
-            )
+            run_over_json_rpc("ws", ["python"], "mod", [], True, "/tmp", "runner.py")
 
     @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
     @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
@@ -339,7 +337,13 @@ class TestRunOverJsonRpc(unittest.TestCase):
         mock_get_rpc.return_value = mock_rpc
 
         run_over_json_rpc(
-            "ws", ["python"], "mod", [], True, "/tmp", "runner.py",
+            "ws",
+            ["python"],
+            "mod",
+            [],
+            True,
+            "/tmp",
+            "runner.py",
             source="x = 1\n",
         )
 
@@ -354,9 +358,7 @@ class TestRunOverJsonRpc(unittest.TestCase):
         mock_rpc = self._patch_rpc(response)
         mock_get_rpc.return_value = mock_rpc
 
-        run_over_json_rpc(
-            "ws", ["python"], "mod", [], True, "/tmp", "runner.py"
-        )
+        run_over_json_rpc("ws", ["python"], "mod", [], True, "/tmp", "runner.py")
 
         sent_msg = mock_rpc.send_data.call_args[0][0]
         assert "source" not in sent_msg
@@ -368,9 +370,7 @@ class TestRunOverJsonRpcTimeout(unittest.TestCase):
     @patch(f"{PATCH_PREFIX}._process_manager")
     @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
     @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
-    def test_timeout_calls_stop_process(
-        self, mock_get_rpc, _mock_uuid, mock_pm
-    ):
+    def test_timeout_calls_stop_process(self, mock_get_rpc, _mock_uuid, mock_pm):
         """Timeout triggers stop_process and raises TimeoutError."""
         block = threading.Event()
         mock_rpc = MagicMock()
@@ -379,7 +379,13 @@ class TestRunOverJsonRpcTimeout(unittest.TestCase):
 
         with pytest.raises(TimeoutError, match="timed out after 0.05s"):
             run_over_json_rpc(
-                "ws", ["python"], "mod", [], True, "/tmp", "runner.py",
+                "ws",
+                ["python"],
+                "mod",
+                [],
+                True,
+                "/tmp",
+                "runner.py",
                 timeout=0.05,
             )
 
@@ -396,7 +402,13 @@ class TestRunOverJsonRpcTimeout(unittest.TestCase):
         mock_get_rpc.return_value = mock_rpc
 
         result = run_over_json_rpc(
-            "ws", ["python"], "mod", [], True, "/tmp", "runner.py",
+            "ws",
+            ["python"],
+            "mod",
+            [],
+            True,
+            "/tmp",
+            "runner.py",
             timeout=5.0,
         )
 

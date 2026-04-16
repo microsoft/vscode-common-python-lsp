@@ -71,7 +71,7 @@ class JsonReader:
         while not length:
             line = self._readline().decode("utf-8")
             if line.startswith(CONTENT_LENGTH):
-                length = int(line[len(CONTENT_LENGTH):])  # noqa: E203
+                length = int(line[len(CONTENT_LENGTH) :])  # noqa: E203
 
         line = self._readline().decode("utf-8").strip()
         while line:
@@ -250,9 +250,7 @@ def run_over_json_rpc(
     timeout: float | None = None,
 ) -> RpcRunResult:
     """Uses JSON-RPC to execute a command."""
-    rpc = get_or_start_json_rpc(
-        workspace, interpreter, cwd, runner_script, env
-    )
+    rpc = get_or_start_json_rpc(workspace, interpreter, cwd, runner_script, env)
     if not rpc:
         raise ConnectionError("Failed to run over JSON-RPC.")
 
@@ -285,9 +283,7 @@ def run_over_json_rpc(
         recv_thread.join(timeout)
         if recv_thread.is_alive():
             _process_manager.stop_process(workspace)
-            raise TimeoutError(
-                f"JSON-RPC call timed out after {timeout}s"
-            )
+            raise TimeoutError(f"JSON-RPC call timed out after {timeout}s")
         if error_container[0] is not None:
             raise error_container[0]
         data = result_container[0]
