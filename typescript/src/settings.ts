@@ -31,8 +31,6 @@ export function resolveVariables(
     const home = os.homedir();
 
     substitutions.set('${userHome}', home);
-    substitutions.set('~/', `${home}/`);
-    substitutions.set('~\\', `${home}\\`);
 
     if (workspace) {
         substitutions.set('${workspaceFolder}', workspace.uri.fsPath);
@@ -66,7 +64,7 @@ export function resolveVariables(
         for (const [key, value] of substitutions) {
             s = s.replace(key, value);
         }
-        return s;
+        return expandTilde(s);
     });
 }
 
