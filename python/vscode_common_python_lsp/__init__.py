@@ -5,13 +5,10 @@
 from .context import change_cwd, redirect_io, substitute_attr
 from .debug import setup_debugpy
 from .jsonrpc import (
-    JsonReader,
     JsonRpc,
-    JsonWriter,
     ProcessManager,
     RpcRunResult,
     StreamClosedException,
-    create_json_rpc,
     get_or_start_json_rpc,
     run_over_json_rpc,
     shutdown_json_rpc,
@@ -59,10 +56,7 @@ __all__ = [
     "run_api",
     # jsonrpc
     "StreamClosedException",
-    "JsonWriter",
-    "JsonReader",
     "JsonRpc",
-    "create_json_rpc",
     "ProcessManager",
     "RpcRunResult",
     "get_or_start_json_rpc",

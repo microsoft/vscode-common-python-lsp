@@ -25,22 +25,23 @@ class StreamClosedException(Exception):
     pass
 
 
-class JsonWriter:
-    """Manages writing JSON-RPC messages to the writer stream."""
+class JsonRpc:
+    """Manages sending and receiving data over JSON-RPC.
 
-    def __init__(self, writer: BinaryIO):
+    Handles content-length-framed JSON messages over a pair of binary
+    streams (typically ``stdin``/``stdout`` of a subprocess).
+    """
+
+    def __init__(self, reader: BinaryIO, writer: BinaryIO):
+        self._reader = reader
         self._writer = writer
-        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
 
-    def close(self):
-        """Closes the underlying writer stream."""
-        with self._lock:
-            if not self._writer.closed:
-                self._writer.close()
+    # -- write --------------------------------------------------------------
 
-    def write(self, data):
-        """Writes given data to stream in JSON-RPC format."""
-        with self._lock:
+    def write(self, data) -> None:
+        """Write *data* to the stream in JSON-RPC format (thread-safe)."""
+        with self._write_lock:
             if self._writer.closed:
                 raise StreamClosedException()
             content = json.dumps(data)
@@ -50,20 +51,14 @@ class JsonWriter:
             )
             self._writer.flush()
 
+    def send_data(self, data) -> None:
+        """Alias for :meth:`write` — send *data* in JSON-RPC format."""
+        self.write(data)
 
-class JsonReader:
-    """Manages reading JSON-RPC messages from stream."""
-
-    def __init__(self, reader: BinaryIO):
-        self._reader = reader
-
-    def close(self):
-        """Closes the underlying reader stream."""
-        if not self._reader.closed:
-            self._reader.close()
+    # -- read ---------------------------------------------------------------
 
     def read(self):
-        """Reads data from the stream in JSON-RPC format."""
+        """Read and return the next JSON-RPC message from the stream."""
         if self._reader.closed:
             raise StreamClosedException()
         length = None
@@ -79,39 +74,28 @@ class JsonReader:
         content = self._reader.read(length).decode("utf-8")
         return json.loads(content)
 
+    def receive_data(self):
+        """Alias for :meth:`read` — receive data in JSON-RPC format."""
+        return self.read()
+
+    # -- close --------------------------------------------------------------
+
+    def close(self) -> None:
+        """Close both the reader and writer streams."""
+        with contextlib.suppress(Exception):
+            if not self._reader.closed:
+                self._reader.close()
+        with self._write_lock:
+            if not self._writer.closed:
+                self._writer.close()
+
+    # -- internal -----------------------------------------------------------
+
     def _readline(self):
         line = self._reader.readline()
         if not line:
             raise EOFError
         return line
-
-
-class JsonRpc:
-    """Manages sending and receiving data over JSON-RPC."""
-
-    def __init__(self, reader: BinaryIO, writer: BinaryIO):
-        self._reader = JsonReader(reader)
-        self._writer = JsonWriter(writer)
-
-    def close(self):
-        """Closes the underlying streams."""
-        with contextlib.suppress(Exception):
-            self._reader.close()
-        with contextlib.suppress(Exception):
-            self._writer.close()
-
-    def send_data(self, data):
-        """Send given data in JSON-RPC format."""
-        self._writer.write(data)
-
-    def receive_data(self):
-        """Receive data in JSON-RPC format."""
-        return self._reader.read()
-
-
-def create_json_rpc(readable: BinaryIO, writable: BinaryIO) -> JsonRpc:
-    """Creates JSON-RPC wrapper for the readable and writable streams."""
-    return JsonRpc(readable, writable)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +166,7 @@ class ProcessManager:
         )
         with self._lock:
             self._processes[workspace] = proc
-            self._rpc[workspace] = create_json_rpc(proc.stdout, proc.stdin)
+            self._rpc[workspace] = JsonRpc(proc.stdout, proc.stdin)
 
         def _monitor_process():
             proc.wait()

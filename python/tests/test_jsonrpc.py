@@ -11,121 +11,104 @@ import pytest
 
 from vscode_common_python_lsp.jsonrpc import (
     CONTENT_LENGTH,
-    JsonReader,
     JsonRpc,
-    JsonWriter,
     ProcessManager,
     RpcRunResult,
     StreamClosedException,
-    create_json_rpc,
     run_over_json_rpc,
 )
 
 
-class TestJsonWriterReader(unittest.TestCase):
-    """Tests for JsonWriter / JsonReader round-trip."""
-
-    def _make_streams(self):
-        """Create a pipe-like pair of binary streams."""
-        buf = io.BytesIO()
-        return buf, buf
+class TestJsonRpcReadWrite(unittest.TestCase):
+    """Tests for JsonRpc read/write round-trip."""
 
     def test_write_read_roundtrip(self):
         buf = io.BytesIO()
-        writer = JsonWriter(buf)
+        rpc = JsonRpc(buf, buf)
         data = {"id": "1", "method": "test", "params": [1, 2, 3]}
-        writer.write(data)
+        rpc.write(data)
 
         buf.seek(0)
-        reader = JsonReader(buf)
-        result = reader.read()
+        result = rpc.read()
         assert result == data
 
     def test_multiple_messages(self):
         buf = io.BytesIO()
-        writer = JsonWriter(buf)
+        rpc = JsonRpc(buf, buf)
         msgs = [
             {"id": "1", "method": "run"},
             {"id": "2", "method": "exit"},
         ]
         for m in msgs:
-            writer.write(m)
+            rpc.write(m)
 
         buf.seek(0)
-        reader = JsonReader(buf)
         for expected in msgs:
-            assert reader.read() == expected
+            assert rpc.read() == expected
 
     def test_write_to_closed_stream_raises(self):
         buf = io.BytesIO()
-        writer = JsonWriter(buf)
+        rpc = JsonRpc(io.BytesIO(), buf)
         buf.close()
         with self.assertRaises(StreamClosedException):
-            writer.write({"id": "1"})
+            rpc.write({"id": "1"})
 
     def test_read_from_closed_stream_raises(self):
         buf = io.BytesIO()
-        reader = JsonReader(buf)
+        rpc = JsonRpc(buf, io.BytesIO())
         buf.close()
         with self.assertRaises(StreamClosedException):
-            reader.read()
+            rpc.read()
 
     def test_read_from_empty_stream_raises_eof(self):
-        buf = io.BytesIO(b"")
-        reader = JsonReader(buf)
+        rpc = JsonRpc(io.BytesIO(b""), io.BytesIO())
         with self.assertRaises(EOFError):
-            reader.read()
+            rpc.read()
 
     def test_unicode_content(self):
         buf = io.BytesIO()
-        writer = JsonWriter(buf)
+        rpc = JsonRpc(buf, buf)
         data = {"message": "héllo wörld 日本語"}
-        writer.write(data)
+        rpc.write(data)
 
         buf.seek(0)
-        reader = JsonReader(buf)
-        assert reader.read() == data
+        assert rpc.read() == data
 
     def test_content_length_header_format(self):
         buf = io.BytesIO()
-        writer = JsonWriter(buf)
-        data = {"id": "1"}
-        writer.write(data)
+        rpc = JsonRpc(io.BytesIO(), buf)
+        rpc.write({"id": "1"})
 
         raw = buf.getvalue().decode("utf-8")
         assert raw.startswith(CONTENT_LENGTH)
         assert "\r\n\r\n" in raw
 
-
-class TestJsonRpc(unittest.TestCase):
-    """Tests for JsonRpc wrapper."""
-
-    def test_send_receive(self):
+    def test_send_data_receive_data_aliases(self):
+        """send_data/receive_data are aliases for write/read."""
         buf = io.BytesIO()
         rpc = JsonRpc(buf, buf)
         data = {"id": "42", "method": "run"}
         rpc.send_data(data)
 
         buf.seek(0)
-        rpc2 = JsonRpc(buf, io.BytesIO())
-        assert rpc2.receive_data() == data
+        assert rpc.receive_data() == data
 
     def test_close_suppresses_errors(self):
+        """close() on already-closed streams does not raise."""
         reader = io.BytesIO()
         writer = io.BytesIO()
         rpc = JsonRpc(reader, writer)
         reader.close()
         writer.close()
-        # Should not raise
         rpc.close()
 
-
-class TestCreateJsonRpc(unittest.TestCase):
-    def test_returns_json_rpc_instance(self):
-        r = io.BytesIO()
-        w = io.BytesIO()
-        rpc = create_json_rpc(r, w)
-        assert isinstance(rpc, JsonRpc)
+    def test_close_closes_both_streams(self):
+        reader = io.BytesIO()
+        writer = io.BytesIO()
+        rpc = JsonRpc(reader, writer)
+        rpc.close()
+        assert reader.closed
+        assert writer.closed
 
 
 class TestRpcRunResult(unittest.TestCase):
