@@ -26,9 +26,13 @@ def setup_debugpy(port: int = 5678, *, require_opt_in: bool = True) -> None:
         ``T``).  Set to ``False`` to skip this check — useful for
         extensions that don't gate on ``USE_DEBUGPY`` (e.g. flake8, mypy).
     """
-    if require_opt_in:
-        if os.getenv("USE_DEBUGPY", None) not in ("True", "TRUE", "1", "T"):
-            return
+    if require_opt_in and os.getenv("USE_DEBUGPY", None) not in (
+        "True",
+        "TRUE",
+        "1",
+        "T",
+    ):
+        return
 
     debugger_path = os.getenv("DEBUGPY_PATH", None)
     if not debugger_path:
