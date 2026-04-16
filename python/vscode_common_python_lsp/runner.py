@@ -39,6 +39,7 @@ class CustomIO(io.TextIOWrapper):
     def close(self):
         """Provide this close method which is used by some tools."""
         # This is intentionally empty.
+        pass
 
     def get_value(self) -> str:
         """Returns value from the buffer as string."""
