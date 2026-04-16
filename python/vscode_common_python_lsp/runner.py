@@ -33,8 +33,8 @@ class CustomIO(io.TextIOWrapper):
 
     def __init__(self, name, encoding="utf-8", newline=None):
         self._buffer = io.BytesIO()
-        self._buffer.name = name
         super().__init__(self._buffer, encoding=encoding, newline=newline)
+        self.name = name
 
     def close(self):
         """Provide this close method which is used by some tools."""
@@ -71,7 +71,7 @@ def run_module(
 
         exit_code = None
         try:
-            with substitute_attr(sys, "argv", argv):
+            with substitute_attr(sys, "argv", list(argv)):
                 with redirect_io("stdout", str_output):
                     with redirect_io("stderr", str_error):
                         if use_stdin:
@@ -150,7 +150,7 @@ def run_api(
 
         exit_code = None
         try:
-            with substitute_attr(sys, "argv", argv):
+            with substitute_attr(sys, "argv", list(argv)):
                 with redirect_io("stdout", str_output):
                     with redirect_io("stderr", str_error):
                         if use_stdin:

@@ -13,7 +13,7 @@ import sys
 import sysconfig
 import threading
 from enum import Enum
-from typing import Any, List, Optional, Set, Tuple, Union
+from typing import Any, List, Optional, Set
 
 # Save the working directory used when loading this module
 SERVER_CWD = os.getcwd()
@@ -28,7 +28,7 @@ class PythonFileKind(Enum):
     SYSTEM_SITE = "system_site"
 
 
-def as_list(content: Union[Any, List[Any], Tuple[Any]]) -> List[Any]:
+def as_list(content: Any) -> List[Any]:
     """Ensures we always get a list."""
     if isinstance(content, (list, tuple)):
         return list(content)
