@@ -13,8 +13,8 @@
         "lint": "eslint src --ext ts",
         "format-check": "prettier --check 'src/**/*.ts'",
         "fix-format": "prettier --write 'src/**/*.ts'",
-        "pretest": "npm run build",
-        "test": "mocha out/tests/**/*.test.js --timeout 10000"
+        "pretest": "tsc -p tsconfig.test.json",
+        "test": "mocha --ui tdd --require out/tests/_setup.js out/tests/**/*.test.js --timeout 10000"
     },
     "engines": {
         "node": ">=18.0.0",

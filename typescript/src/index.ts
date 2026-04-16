@@ -7,6 +7,38 @@
  * @packageDocumentation
  */
 
-// Barrel re-exports will be added as modules are implemented in subsequent PRs.
-// A real export is required so CodeQL JS analysis does not fail on an empty file.
-export const PACKAGE_NAME = 'vscode-common-python-lsp';
+// Types
+export { IBaseSettings, IInitOptions, IServerInfo, ToolConfig } from './types';
+
+// Logging
+export { registerLogger, traceError, traceInfo, traceLog, traceVerbose, traceWarn } from './logging';
+
+// VS Code API wrappers
+export {
+    createLanguageStatusItem,
+    createOutputChannel,
+    createStatusBarItem,
+    getConfiguration,
+    getWorkspaceFolder,
+    getWorkspaceFolders,
+    isVirtualWorkspace,
+    onDidChangeActiveTextEditor,
+    onDidChangeConfiguration,
+    registerCommand,
+    registerDocumentFormattingEditProvider,
+} from './vscodeapi';
+
+// Utilities
+export { getDocumentSelector, getInterpreterFromSetting, getLSClientTraceLevel, getProjectRoot } from './utilities';
+
+// Setup
+export { loadServerDefaults } from './setup';
+
+// Status
+export { registerLanguageStatusItem, updateStatus } from './status';
+
+// Env file
+export { getEnvFileVars } from './envFile';
+
+// Settings & variable substitution
+export { expandTilde, resolvePathSetting, resolveVariables } from './settings';
