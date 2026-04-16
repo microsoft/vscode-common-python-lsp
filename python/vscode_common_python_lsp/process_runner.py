@@ -7,9 +7,13 @@ from __future__ import annotations
 import os
 import sys
 import traceback
-from typing import Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .context import substitute_attr
+
+if TYPE_CHECKING:
+    from .jsonrpc import JsonRpc
 
 
 def update_sys_path(path_to_add: str, strategy: str) -> None:
@@ -31,7 +35,7 @@ def update_sys_path(path_to_add: str, strategy: str) -> None:
 
 
 def run_message_loop(
-    rpc,
+    rpc: JsonRpc,
     run_fn: Callable[..., object],
     result_cls: Callable[[str, str], object],
 ) -> None:
@@ -73,7 +77,10 @@ def run_message_loop(
                     )
                     is_exception = True
 
-            response = {"id": msg["id"], "error": result.stderr}
+            response: dict[str, object] = {
+                "id": msg["id"],
+                "error": result.stderr,
+            }
             if is_exception:
                 response["exception"] = is_exception
             elif result.stdout:

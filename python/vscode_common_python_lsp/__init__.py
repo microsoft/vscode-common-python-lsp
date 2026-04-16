@@ -19,8 +19,8 @@ from .paths import (
 )
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
 from .jsonrpc import (
-    JsonRpc,
     JsonReader,
+    JsonRpc,
     JsonWriter,
     ProcessManager,
     RpcRunResult,
