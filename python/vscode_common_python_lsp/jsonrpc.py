@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import atexit
 import contextlib
-import io
 import json
 import os
 import subprocess
@@ -27,7 +26,7 @@ class StreamClosedException(Exception):
 class JsonWriter:
     """Manages writing JSON-RPC messages to the writer stream."""
 
-    def __init__(self, writer: io.TextIOWrapper):
+    def __init__(self, writer: BinaryIO):
         self._writer = writer
         self._lock = threading.Lock()
 
@@ -54,7 +53,7 @@ class JsonWriter:
 class JsonReader:
     """Manages reading JSON-RPC messages from stream."""
 
-    def __init__(self, reader: io.TextIOWrapper):
+    def __init__(self, reader: BinaryIO):
         self._reader = reader
 
     def close(self):
@@ -89,7 +88,7 @@ class JsonReader:
 class JsonRpc:
     """Manages sending and receiving data over JSON-RPC."""
 
-    def __init__(self, reader: io.TextIOWrapper, writer: io.TextIOWrapper):
+    def __init__(self, reader: BinaryIO, writer: BinaryIO):
         self._reader = JsonReader(reader)
         self._writer = JsonWriter(writer)
 
@@ -123,7 +122,6 @@ class ProcessManager:
     """Manages sub-processes launched for running tools."""
 
     def __init__(self):
-        self._args: dict[str, Sequence[str]] = {}
         self._processes: dict[str, subprocess.Popen] = {}
         self._rpc: dict[str, JsonRpc] = {}
         self._lock = threading.Lock()
@@ -147,7 +145,9 @@ class ProcessManager:
 
     def stop_all_processes(self):
         """Send exit command to all processes and shutdown transport."""
-        for rpc in self._rpc.values():
+        with self._lock:
+            rpcs = list(self._rpc.values())
+        for rpc in rpcs:
             with contextlib.suppress(Exception):
                 rpc.send_data({"id": str(uuid.uuid4()), "method": "exit"})
         self._thread_pool.shutdown(wait=False)
@@ -170,8 +170,9 @@ class ProcessManager:
             stdin=subprocess.PIPE,
             env=new_env,
         )
-        self._processes[workspace] = proc
-        self._rpc[workspace] = create_json_rpc(proc.stdout, proc.stdin)
+        with self._lock:
+            self._processes[workspace] = proc
+            self._rpc[workspace] = create_json_rpc(proc.stdout, proc.stdin)
 
         def _monitor_process():
             proc.wait()
@@ -296,15 +297,14 @@ def run_over_json_rpc(
             "", f"Invalid result for request: {json.dumps(msg, indent=4)}"
         )
 
+    result = data.get("result", "")
     if "error" in data:
-        result = data.get("result", "")
         error = data["error"]
-
         if data.get("exception", False):
             return RpcRunResult(result, "", error)
         return RpcRunResult(result, error)
 
-    return RpcRunResult(data.get("result", ""), "")
+    return RpcRunResult(result, "")
 
 
 def shutdown_json_rpc():
