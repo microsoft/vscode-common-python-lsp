@@ -29,7 +29,8 @@ export async function getEnvFileVars(workspace: WorkspaceFolder): Promise<Record
             return environmentVariables;
         }
     } catch (err) {
-        traceWarn(`Failed to read env file ${envFilePath}: ${err}`);
+        const message = err instanceof Error ? err.message : String(err);
+        traceWarn(`Failed to read env file ${envFilePath}: ${message}`);
     }
     return {};
 }

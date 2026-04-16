@@ -53,7 +53,7 @@ export async function getProjectRoot(): Promise<WorkspaceFolder> {
         return workspaces[0];
     } else {
         let rootWorkspace = workspaces[0];
-        let root = undefined;
+        let root: string | undefined = undefined;
         for (const w of workspaces) {
             if (await fs.pathExists(w.uri.fsPath)) {
                 root = w.uri.fsPath;
