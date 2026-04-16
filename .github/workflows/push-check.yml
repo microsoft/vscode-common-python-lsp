@@ -1,0 +1,88 @@
+name: Push Validation
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release'
+      - 'release/*'
+      - 'release-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: push-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22.17.0"
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install nox
+      - name: Run linters
+        run: nox -s lint
+
+  python-tests:
+    name: Python Tests (${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: |
+          pip install nox
+      - name: Run tests
+        run: nox -s tests
+
+  typescript-lint:
+    name: TypeScript Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install dependencies
+        working-directory: typescript
+        run: npm ci
+      - name: Lint
+        working-directory: typescript
+        run: npm run lint
+
+  typescript-build:
+    name: TypeScript Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install dependencies
+        working-directory: typescript
+        run: npm ci
+      - name: Build
+        working-directory: typescript
+        run: npm run build
