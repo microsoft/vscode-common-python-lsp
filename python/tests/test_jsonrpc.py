@@ -1,0 +1,470 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+"""Tests for vscode_common_python_lsp.jsonrpc."""
+
+import io
+import threading
+import unittest
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from vscode_common_python_lsp.jsonrpc import (
+    CONTENT_LENGTH,
+    JsonRpc,
+    ProcessManager,
+    RpcRunResult,
+    StreamClosedException,
+    run_over_json_rpc,
+)
+
+
+class TestJsonRpcReadWrite(unittest.TestCase):
+    """Tests for JsonRpc read/write round-trip."""
+
+    def test_write_read_roundtrip(self):
+        buf = io.BytesIO()
+        rpc = JsonRpc(buf, buf)
+        data = {"id": "1", "method": "test", "params": [1, 2, 3]}
+        rpc.write(data)
+
+        buf.seek(0)
+        result = rpc.read()
+        assert result == data
+
+    def test_multiple_messages(self):
+        buf = io.BytesIO()
+        rpc = JsonRpc(buf, buf)
+        msgs = [
+            {"id": "1", "method": "run"},
+            {"id": "2", "method": "exit"},
+        ]
+        for m in msgs:
+            rpc.write(m)
+
+        buf.seek(0)
+        for expected in msgs:
+            assert rpc.read() == expected
+
+    def test_write_to_closed_stream_raises(self):
+        buf = io.BytesIO()
+        rpc = JsonRpc(io.BytesIO(), buf)
+        buf.close()
+        with self.assertRaises(StreamClosedException):
+            rpc.write({"id": "1"})
+
+    def test_read_from_closed_stream_raises(self):
+        buf = io.BytesIO()
+        rpc = JsonRpc(buf, io.BytesIO())
+        buf.close()
+        with self.assertRaises(StreamClosedException):
+            rpc.read()
+
+    def test_read_from_empty_stream_raises_eof(self):
+        rpc = JsonRpc(io.BytesIO(b""), io.BytesIO())
+        with self.assertRaises(EOFError):
+            rpc.read()
+
+    def test_unicode_content(self):
+        buf = io.BytesIO()
+        rpc = JsonRpc(buf, buf)
+        data = {"message": "héllo wörld 日本語"}
+        rpc.write(data)
+
+        buf.seek(0)
+        assert rpc.read() == data
+
+    def test_content_length_header_format(self):
+        buf = io.BytesIO()
+        rpc = JsonRpc(io.BytesIO(), buf)
+        rpc.write({"id": "1"})
+
+        raw = buf.getvalue().decode("utf-8")
+        assert raw.startswith(CONTENT_LENGTH)
+        assert "\r\n\r\n" in raw
+
+    def test_send_data_receive_data_aliases(self):
+        """send_data/receive_data are aliases for write/read."""
+        buf = io.BytesIO()
+        rpc = JsonRpc(buf, buf)
+        data = {"id": "42", "method": "run"}
+        rpc.send_data(data)
+
+        buf.seek(0)
+        assert rpc.receive_data() == data
+
+    def test_close_suppresses_errors(self):
+        """close() on already-closed streams does not raise."""
+        reader = io.BytesIO()
+        writer = io.BytesIO()
+        rpc = JsonRpc(reader, writer)
+        reader.close()
+        writer.close()
+        rpc.close()
+
+    def test_close_closes_both_streams(self):
+        reader = io.BytesIO()
+        writer = io.BytesIO()
+        rpc = JsonRpc(reader, writer)
+        rpc.close()
+        assert reader.closed
+        assert writer.closed
+
+
+class TestRpcRunResult(unittest.TestCase):
+    """Tests for RpcRunResult."""
+
+    def test_basic_result(self):
+        r = RpcRunResult("out", "err")
+        assert r.stdout == "out"
+        assert r.stderr == "err"
+        assert r.exception is None
+
+    def test_with_exception(self):
+        r = RpcRunResult("out", "", "traceback")
+        assert r.exception == "traceback"
+
+
+class TestProcessManager(unittest.TestCase):
+    """Tests for ProcessManager."""
+
+    def test_get_json_rpc_raises_when_not_started(self):
+        pm = ProcessManager()
+        with self.assertRaises(StreamClosedException):
+            pm.get_json_rpc("nonexistent")
+
+    @patch("vscode_common_python_lsp.jsonrpc.subprocess.Popen")
+    def test_start_process_registers_rpc(self, mock_popen):
+        pm = ProcessManager()
+        mock_proc = MagicMock()
+        mock_proc.stdout = io.BytesIO()
+        mock_proc.stdin = io.BytesIO()
+        # Block the monitor thread so it doesn't clean up before we check
+        wait_event = threading.Event()
+        mock_proc.wait = MagicMock(side_effect=lambda: wait_event.wait())
+        mock_popen.return_value = mock_proc
+
+        pm.start_process("ws1", ["python", "runner.py"], "/tmp")
+        rpc = pm.get_json_rpc("ws1")
+        assert isinstance(rpc, JsonRpc)
+        wait_event.set()
+
+    @patch("vscode_common_python_lsp.jsonrpc.subprocess.Popen")
+    def test_start_process_with_env(self, mock_popen):
+        pm = ProcessManager()
+        mock_proc = MagicMock()
+        mock_proc.stdout = io.BytesIO()
+        mock_proc.stdin = io.BytesIO()
+        wait_event = threading.Event()
+        mock_proc.wait = MagicMock(side_effect=lambda: wait_event.wait())
+        mock_popen.return_value = mock_proc
+
+        pm.start_process("ws1", ["python"], "/tmp", env={"FOO": "bar"})
+        call_kwargs = mock_popen.call_args[1]
+        assert call_kwargs["env"]["FOO"] == "bar"
+        wait_event.set()
+
+    @patch("vscode_common_python_lsp.jsonrpc.subprocess.Popen")
+    def test_stop_process(self, mock_popen):
+        pm = ProcessManager()
+        mock_proc = MagicMock()
+        mock_proc.stdout = io.BytesIO()
+        mock_proc.stdin = io.BytesIO()
+        wait_event = threading.Event()
+        mock_proc.wait = MagicMock(side_effect=lambda: wait_event.wait())
+        mock_popen.return_value = mock_proc
+
+        pm.start_process("ws1", ["python"], "/tmp")
+        # Release the monitor thread before stopping
+        wait_event.set()
+        pm.stop_process("ws1")
+
+        mock_proc.kill.assert_called()
+        with self.assertRaises(StreamClosedException):
+            pm.get_json_rpc("ws1")
+
+    def test_stop_process_nonexistent_is_noop(self):
+        pm = ProcessManager()
+        # Should not raise
+        pm.stop_process("nonexistent")
+
+    def test_stop_all_processes_empty(self):
+        pm = ProcessManager()
+        # Should not raise
+        pm.stop_all_processes()
+
+
+# ---------------------------------------------------------------------------
+# run_over_json_rpc tests
+# ---------------------------------------------------------------------------
+
+FIXED_UUID = "test-uuid-1234"
+MODULE = "jsonrpc"
+PATCH_PREFIX = "vscode_common_python_lsp.jsonrpc"
+
+
+class TestRunOverJsonRpc(unittest.TestCase):
+    """Tests for run_over_json_rpc."""
+
+    def _patch_rpc(self, receive_return):
+        """Set up mocks: get_or_start_json_rpc returns a fake RPC, uuid4 is fixed."""
+        mock_rpc = MagicMock()
+        mock_rpc.receive_data.return_value = receive_return
+        return mock_rpc
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_success_with_error_key(self, mock_get_rpc, _mock_uuid):
+        """Normal success: runner sends error="" and result=stdout."""
+        response = {
+            "id": FIXED_UUID,
+            "error": "",
+            "result": "formatted output",
+        }
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        result = run_over_json_rpc(
+            "ws", ["python"], "black", ["--check"], True, "/tmp", "runner.py"
+        )
+
+        assert result.stdout == "formatted output"
+        assert result.stderr == ""
+        assert result.exception is None
+        mock_rpc.send_data.assert_called_once()
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_success_without_error_key(self, mock_get_rpc, _mock_uuid):
+        """Response without error key (e.g. non-standard runner)."""
+        response = {"id": FIXED_UUID, "result": "output"}
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        result = run_over_json_rpc(
+            "ws", ["python"], "mod", [], True, "/tmp", "runner.py"
+        )
+
+        assert result.stdout == "output"
+        assert result.stderr == ""
+        assert result.exception is None
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_error_with_stderr(self, mock_get_rpc, _mock_uuid):
+        """Error response: runner sends non-empty error."""
+        response = {
+            "id": FIXED_UUID,
+            "error": "some warning\n",
+            "result": "partial output",
+        }
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        result = run_over_json_rpc(
+            "ws", ["python"], "mod", [], True, "/tmp", "runner.py"
+        )
+
+        assert result.stdout == "partial output"
+        assert result.stderr == "some warning\n"
+        assert result.exception is None
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_exception_response(self, mock_get_rpc, _mock_uuid):
+        """Exception response: runner sends exception=True with traceback."""
+        response = {
+            "id": FIXED_UUID,
+            "error": "Traceback (most recent call last):\n  ...",
+            "exception": True,
+        }
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        result = run_over_json_rpc(
+            "ws", ["python"], "mod", [], True, "/tmp", "runner.py"
+        )
+
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert result.exception == "Traceback (most recent call last):\n  ..."
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_mismatched_id(self, mock_get_rpc, _mock_uuid):
+        """Response with wrong id returns error message."""
+        response = {"id": "wrong-id", "error": "", "result": "output"}
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        result = run_over_json_rpc(
+            "ws", ["python"], "mod", [], True, "/tmp", "runner.py"
+        )
+
+        assert result.stdout == ""
+        assert result.stderr.startswith("Invalid result for request")
+        assert result.exception is None
+
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc", return_value=None)
+    def test_connection_failure_raises(self, _mock_get_rpc):
+        """Raises ConnectionError when RPC cannot be established."""
+        with pytest.raises(ConnectionError, match="Failed to run over JSON-RPC"):
+            run_over_json_rpc("ws", ["python"], "mod", [], True, "/tmp", "runner.py")
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_source_included_in_message(self, mock_get_rpc, _mock_uuid):
+        """When source is provided, it's included in the RPC message."""
+        response = {"id": FIXED_UUID, "error": "", "result": ""}
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        run_over_json_rpc(
+            "ws",
+            ["python"],
+            "mod",
+            [],
+            True,
+            "/tmp",
+            "runner.py",
+            source="x = 1\n",
+        )
+
+        sent_msg = mock_rpc.send_data.call_args[0][0]
+        assert sent_msg["source"] == "x = 1\n"
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_source_omitted_when_none(self, mock_get_rpc, _mock_uuid):
+        """When source is None, the message omits the source key."""
+        response = {"id": FIXED_UUID, "error": "", "result": ""}
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        run_over_json_rpc("ws", ["python"], "mod", [], True, "/tmp", "runner.py")
+
+        sent_msg = mock_rpc.send_data.call_args[0][0]
+        assert "source" not in sent_msg
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_empty_source_is_sent(self, mock_get_rpc, _mock_uuid):
+        """Empty string source is included in the message (not dropped)."""
+        response = {"id": FIXED_UUID, "error": "", "result": ""}
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        run_over_json_rpc(
+            "ws", ["python"], "mod", [], True, "/tmp", "runner.py", source=""
+        )
+
+        sent_msg = mock_rpc.send_data.call_args[0][0]
+        assert "source" in sent_msg
+        assert sent_msg["source"] == ""
+
+
+class TestGetOrStartJsonRpc(unittest.TestCase):
+    """Tests for get_or_start_json_rpc lazy-start path."""
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    def test_returns_existing_rpc(self, mock_pm):
+        """When RPC already exists, returns it without starting a new process."""
+        existing_rpc = MagicMock()
+        mock_pm.get_json_rpc.return_value = existing_rpc
+
+        from vscode_common_python_lsp.jsonrpc import get_or_start_json_rpc
+
+        result = get_or_start_json_rpc("ws1", ["python"], "/tmp", "runner.py")
+
+        assert result is existing_rpc
+        mock_pm.start_process.assert_not_called()
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    def test_starts_new_when_not_running(self, mock_pm):
+        """When no RPC exists, starts a new process and returns its RPC."""
+        new_rpc = MagicMock()
+        mock_pm.get_json_rpc.side_effect = [
+            StreamClosedException(),  # First call: not found
+            new_rpc,  # Second call: after start
+        ]
+
+        from vscode_common_python_lsp.jsonrpc import get_or_start_json_rpc
+
+        result = get_or_start_json_rpc("ws1", ["python"], "/cwd", "runner.py")
+
+        assert result is new_rpc
+        mock_pm.start_process.assert_called_once_with(
+            "ws1", ["python", "runner.py"], "/cwd", None
+        )
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    def test_passes_env(self, mock_pm):
+        """Environment variables are forwarded to start_process."""
+        mock_pm.get_json_rpc.side_effect = [StreamClosedException(), MagicMock()]
+
+        from vscode_common_python_lsp.jsonrpc import get_or_start_json_rpc
+
+        get_or_start_json_rpc(
+            "ws1", ["python"], "/cwd", "runner.py", env={"FOO": "bar"}
+        )
+
+        call_kwargs = mock_pm.start_process.call_args
+        assert call_kwargs[0][3] == {"FOO": "bar"}
+
+
+class TestRunOverJsonRpcTimeout(unittest.TestCase):
+    """Tests for run_over_json_rpc timeout behavior."""
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_timeout_calls_stop_process(self, mock_get_rpc, _mock_uuid, mock_pm):
+        """Timeout triggers stop_process and raises TimeoutError."""
+        block = threading.Event()
+        mock_rpc = MagicMock()
+        mock_rpc.receive_data.side_effect = lambda: block.wait()
+        mock_get_rpc.return_value = mock_rpc
+
+        with pytest.raises(
+            TimeoutError, match=r"^JSON-RPC call timed out after 0\.05s$"
+        ):
+            run_over_json_rpc(
+                "ws",
+                ["python"],
+                "mod",
+                [],
+                True,
+                "/tmp",
+                "runner.py",
+                timeout=0.05,
+            )
+
+        mock_pm.stop_process.assert_called_once_with("ws")
+        block.set()  # Release daemon thread
+
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_timeout_returns_normally_when_fast(self, mock_get_rpc, _mock_uuid):
+        """When response arrives before timeout, returns normally."""
+        response = {"id": FIXED_UUID, "error": "", "result": "fast"}
+        mock_rpc = MagicMock()
+        mock_rpc.receive_data.return_value = response
+        mock_get_rpc.return_value = mock_rpc
+
+        result = run_over_json_rpc(
+            "ws",
+            ["python"],
+            "mod",
+            [],
+            True,
+            "/tmp",
+            "runner.py",
+            timeout=5.0,
+        )
+
+        assert result.stdout == "fast"
+        assert result.stderr == ""
+
+
+if __name__ == "__main__":
+    unittest.main()
