@@ -8,15 +8,20 @@ import { getDocumentSelector } from './utilities';
 
 let _status: LanguageStatusItem | undefined;
 export function registerLanguageStatusItem(id: string, name: string, command: string): Disposable {
-    _status = createLanguageStatusItem(id, getDocumentSelector());
-    _status.name = name;
-    _status.text = name;
-    _status.command = Command.create(l10n.t('Open logs'), command);
+    _status?.dispose();
+
+    const status = createLanguageStatusItem(id, getDocumentSelector());
+    _status = status;
+    status.name = name;
+    status.text = name;
+    status.command = Command.create(l10n.t('Open logs'), command);
 
     return {
         dispose: () => {
-            _status?.dispose();
-            _status = undefined;
+            status.dispose();
+            if (_status === status) {
+                _status = undefined;
+            }
         },
     };
 }

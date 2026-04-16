@@ -73,7 +73,7 @@ export async function getProjectRoot(): Promise<WorkspaceFolder> {
 }
 
 export function getDocumentSelector(): DocumentSelector {
-    // virtual workspaces are not supported yet
+    // In virtual workspaces, omit scheme to match any scheme (e.g. vscode-vfs)
     return isVirtualWorkspace()
         ? [{ language: 'python' }]
         : [

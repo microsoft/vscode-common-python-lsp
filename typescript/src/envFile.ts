@@ -15,7 +15,7 @@ import { getConfiguration } from './vscodeapi';
  */
 export async function getEnvFileVars(workspace: WorkspaceFolder): Promise<Record<string, string>> {
     const pythonConfig = getConfiguration('python', workspace.uri);
-    const rawPath = pythonConfig.get<string>('envFile', '${workspaceFolder}/.env') ?? '${workspaceFolder}/.env';
+    const rawPath = pythonConfig.get<string>('envFile', '${workspaceFolder}/.env');
     const envFilePath = resolvePathSetting(rawPath, workspace);
 
     try {

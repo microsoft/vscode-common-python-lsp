@@ -62,7 +62,7 @@ export function resolveVariables(
 
     return expanded.map((s) => {
         for (const [key, value] of substitutions) {
-            s = s.replace(key, value);
+            s = s.split(key).join(value);
         }
         return expandTilde(s);
     });

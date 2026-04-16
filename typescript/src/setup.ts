@@ -7,7 +7,27 @@ import { IServerInfo } from './types';
 
 export function loadServerDefaults(extensionRootDir: string): IServerInfo {
     const packageJson = path.join(extensionRootDir, 'package.json');
-    const content = fs.readFileSync(packageJson).toString();
-    const config = JSON.parse(content);
-    return config.serverInfo as IServerInfo;
+
+    let content: string;
+    try {
+        content = fs.readFileSync(packageJson).toString();
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to read "${packageJson}": ${message}`);
+    }
+
+    let config: Record<string, unknown>;
+    try {
+        config = JSON.parse(content);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid JSON in "${packageJson}": ${message}`);
+    }
+
+    const serverInfo = config.serverInfo;
+    if (!serverInfo || typeof serverInfo !== 'object') {
+        throw new Error(`Missing or invalid "serverInfo" in "${packageJson}".`);
+    }
+
+    return serverInfo as IServerInfo;
 }

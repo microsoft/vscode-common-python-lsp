@@ -206,6 +206,16 @@ suite('settings', () => {
             assert.deepStrictEqual(result, ['--check', '--diff', 'file.py']);
         });
 
+        test('replaces multiple occurrences of same variable in one string', () => {
+            const result = resolveVariables(
+                ['${workspaceFolder}/src:${workspaceFolder}/lib'],
+                workspace,
+            );
+            assert.deepStrictEqual(result, [
+                `${workspace.uri.fsPath}/src:${workspace.uri.fsPath}/lib`,
+            ]);
+        });
+
         test('uses multiple workspace folders for named resolution', () => {
             const ws1 = makeWorkspace('frontend', '/repos/frontend', 0);
             const ws2 = makeWorkspace('backend', '/repos/backend', 1);
