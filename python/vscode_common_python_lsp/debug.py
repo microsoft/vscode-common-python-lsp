@@ -6,13 +6,8 @@ from __future__ import annotations
 
 import os
 import pathlib
-import sys
 
-
-def _update_sys_path(path_to_add: str) -> None:
-    """Add given path to ``sys.path`` if it exists."""
-    if path_to_add not in sys.path and os.path.isdir(path_to_add):
-        sys.path.append(path_to_add)
+from .process_runner import update_sys_path
 
 
 def setup_debugpy(port: int = 5678, *, require_opt_in: bool = True) -> None:
@@ -39,10 +34,10 @@ def setup_debugpy(port: int = 5678, *, require_opt_in: bool = True) -> None:
     if not debugger_path:
         return
 
-    if debugger_path.endswith("debugpy"):
+    if pathlib.Path(debugger_path).name == "debugpy":
         debugger_path = os.fspath(pathlib.Path(debugger_path).parent)
 
-    _update_sys_path(debugger_path)
+    update_sys_path(debugger_path, "fromEnvironment")
 
     import debugpy  # noqa: E402
 

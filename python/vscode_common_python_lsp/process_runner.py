@@ -81,7 +81,14 @@ def run_message_loop(
             }
             if is_exception:
                 response["exception"] = is_exception
-            elif result.stdout:
+            elif result.stdout is not None:
                 response["result"] = result.stdout
 
             rpc.send_data(response)
+        else:
+            rpc.send_data(
+                {
+                    "id": msg.get("id", ""),
+                    "error": f"Unknown method: {method}",
+                }
+            )

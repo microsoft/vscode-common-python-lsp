@@ -319,7 +319,7 @@ class TestRunOverJsonRpc(unittest.TestCase):
         )
 
         assert result.stdout == ""
-        assert "Invalid result for request" in result.stderr
+        assert result.stderr.startswith("Invalid result for request")
         assert result.exception is None
 
     @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc", return_value=None)
@@ -363,6 +363,71 @@ class TestRunOverJsonRpc(unittest.TestCase):
         sent_msg = mock_rpc.send_data.call_args[0][0]
         assert "source" not in sent_msg
 
+    @patch(f"{PATCH_PREFIX}.uuid.uuid4", return_value=FIXED_UUID)
+    @patch(f"{PATCH_PREFIX}.get_or_start_json_rpc")
+    def test_empty_source_is_sent(self, mock_get_rpc, _mock_uuid):
+        """Empty string source is included in the message (not dropped)."""
+        response = {"id": FIXED_UUID, "error": "", "result": ""}
+        mock_rpc = self._patch_rpc(response)
+        mock_get_rpc.return_value = mock_rpc
+
+        run_over_json_rpc(
+            "ws", ["python"], "mod", [], True, "/tmp", "runner.py", source=""
+        )
+
+        sent_msg = mock_rpc.send_data.call_args[0][0]
+        assert "source" in sent_msg
+        assert sent_msg["source"] == ""
+
+
+class TestGetOrStartJsonRpc(unittest.TestCase):
+    """Tests for get_or_start_json_rpc lazy-start path."""
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    def test_returns_existing_rpc(self, mock_pm):
+        """When RPC already exists, returns it without starting a new process."""
+        existing_rpc = MagicMock()
+        mock_pm.get_json_rpc.return_value = existing_rpc
+
+        from vscode_common_python_lsp.jsonrpc import get_or_start_json_rpc
+
+        result = get_or_start_json_rpc("ws1", ["python"], "/tmp", "runner.py")
+
+        assert result is existing_rpc
+        mock_pm.start_process.assert_not_called()
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    def test_starts_new_when_not_running(self, mock_pm):
+        """When no RPC exists, starts a new process and returns its RPC."""
+        new_rpc = MagicMock()
+        mock_pm.get_json_rpc.side_effect = [
+            StreamClosedException(),  # First call: not found
+            new_rpc,  # Second call: after start
+        ]
+
+        from vscode_common_python_lsp.jsonrpc import get_or_start_json_rpc
+
+        result = get_or_start_json_rpc("ws1", ["python"], "/cwd", "runner.py")
+
+        assert result is new_rpc
+        mock_pm.start_process.assert_called_once_with(
+            "ws1", ["python", "runner.py"], "/cwd", None
+        )
+
+    @patch(f"{PATCH_PREFIX}._process_manager")
+    def test_passes_env(self, mock_pm):
+        """Environment variables are forwarded to start_process."""
+        mock_pm.get_json_rpc.side_effect = [StreamClosedException(), MagicMock()]
+
+        from vscode_common_python_lsp.jsonrpc import get_or_start_json_rpc
+
+        get_or_start_json_rpc(
+            "ws1", ["python"], "/cwd", "runner.py", env={"FOO": "bar"}
+        )
+
+        call_kwargs = mock_pm.start_process.call_args
+        assert call_kwargs[0][3] == {"FOO": "bar"}
+
 
 class TestRunOverJsonRpcTimeout(unittest.TestCase):
     """Tests for run_over_json_rpc timeout behavior."""
@@ -377,7 +442,9 @@ class TestRunOverJsonRpcTimeout(unittest.TestCase):
         mock_rpc.receive_data.side_effect = lambda: block.wait()
         mock_get_rpc.return_value = mock_rpc
 
-        with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        with pytest.raises(
+            TimeoutError, match=r"^JSON-RPC call timed out after 0\.05s$"
+        ):
             run_over_json_rpc(
                 "ws",
                 ["python"],

@@ -172,6 +172,7 @@ class TestRunMessageLoop(unittest.TestCase):
         sent = rpc.send_data.call_args[0][0]
         assert sent["id"] == "3"
         assert sent["exception"] is True
+        # Traceback includes non-deterministic file paths and line numbers
         assert "boom" in sent["error"]
 
     def test_source_defaults_to_none(self):
@@ -215,6 +216,42 @@ class TestRunMessageLoop(unittest.TestCase):
         run_message_loop(rpc, run_fn, _MockResult)
 
         assert sys.path == original_path
+
+    def test_empty_stdout_includes_result_key(self):
+        """When stdout is empty string, result key should still be present."""
+        run_fn = MagicMock(return_value=_MockResult("", ""))
+        messages = [
+            {
+                "id": "6",
+                "method": "run",
+                "module": "black",
+                "argv": [],
+                "useStdin": False,
+                "cwd": "/tmp",
+            },
+            {"method": "exit"},
+        ]
+        rpc = self._make_rpc(messages)
+
+        run_message_loop(rpc, run_fn, _MockResult)
+
+        sent = rpc.send_data.call_args[0][0]
+        assert "result" in sent
+        assert sent["result"] == ""
+
+    def test_unknown_method_sends_error_response(self):
+        """Unknown RPC methods should send an error response, not hang."""
+        messages = [
+            {"id": "7", "method": "unknown_method"},
+            {"method": "exit"},
+        ]
+        rpc = self._make_rpc(messages)
+
+        run_message_loop(rpc, MagicMock(), _MockResult)
+
+        sent = rpc.send_data.call_args[0][0]
+        assert sent["id"] == "7"
+        assert "Unknown method: unknown_method" in sent["error"]
 
 
 if __name__ == "__main__":

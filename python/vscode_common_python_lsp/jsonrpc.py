@@ -40,10 +40,9 @@ class JsonWriter:
 
     def write(self, data):
         """Writes given data to stream in JSON-RPC format."""
-        if self._writer.closed:
-            raise StreamClosedException()
-
         with self._lock:
+            if self._writer.closed:
+                raise StreamClosedException()
             content = json.dumps(data)
             length = len(content.encode("utf-8"))
             self._writer.write(
@@ -146,12 +145,21 @@ class ProcessManager:
                     rpc.close()
 
     def stop_all_processes(self):
-        """Send exit command to all processes and shutdown transport."""
+        """Stop all managed processes and shutdown transport."""
         with self._lock:
             rpcs = list(self._rpc.values())
+            procs = list(self._processes.values())
+            self._rpc.clear()
+            self._processes.clear()
         for rpc in rpcs:
             with contextlib.suppress(Exception):
                 rpc.send_data({"id": str(uuid.uuid4()), "method": "exit"})
+            with contextlib.suppress(Exception):
+                rpc.close()
+        for proc in procs:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                proc.wait(timeout=5)
         self._thread_pool.shutdown(wait=False)
 
     def start_process(
@@ -179,6 +187,10 @@ class ProcessManager:
         def _monitor_process():
             proc.wait()
             with self._lock:
+                # Only clean up if this is still the registered process
+                # (a replacement may have been started under the same key).
+                if self._processes.get(workspace) is not proc:
+                    return
                 try:
                     del self._processes[workspace]
                     rpc = self._rpc.pop(workspace)
@@ -197,6 +209,7 @@ class ProcessManager:
 
 
 _process_manager = ProcessManager()
+_start_lock = threading.Lock()
 atexit.register(_process_manager.stop_all_processes)
 
 
@@ -215,11 +228,12 @@ def get_or_start_json_rpc(
     env: dict[str, str] | None = None,
 ) -> JsonRpc | None:
     """Gets an existing JSON-RPC connection or starts one and return it."""
-    res = _get_json_rpc(workspace)
-    if not res:
-        args = [*interpreter, runner_script]
-        _process_manager.start_process(workspace, args, cwd, env)
+    with _start_lock:
         res = _get_json_rpc(workspace)
+        if not res:
+            args = [*interpreter, runner_script]
+            _process_manager.start_process(workspace, args, cwd, env)
+            res = _get_json_rpc(workspace)
     return res
 
 
@@ -263,7 +277,7 @@ def run_over_json_rpc(
         "useStdin": use_stdin,
         "cwd": cwd,
     }
-    if source:
+    if source is not None:
         msg["source"] = source
 
     rpc.send_data(msg)
