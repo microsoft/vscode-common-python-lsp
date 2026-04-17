@@ -136,14 +136,20 @@ class TestMakeDiagnostic:
 
 # Flake8-style regex
 FLAKE8_RE = re.compile(
-    r"(?P<line>\d+),(?P<column>-?\d+),(?P<type>\w+),(?P<code>\w+\d+):(?P<message>[^\r\n]*)"
+    r"(?P<line>\d+),(?P<column>-?\d+),"
+    r"(?P<type>\w+),(?P<code>\w+\d+):(?P<message>[^\r\n]*)"
 )
 
 
 class TestParseDiagnosticsRegex:
     def test_flake8_output(self):
-        content = "5,1,Error,E302:expected 2 blank lines, got 1\n10,80,Warning,W501:line too long"
-        result = parse_diagnostics_regex(content, FLAKE8_RE, FLAKE8_SEVERITY, "Flake8")
+        content = (
+            "5,1,Error,E302:expected 2 blank lines, got 1\n"
+            "10,80,Warning,W501:line too long"
+        )
+        result = parse_diagnostics_regex(
+            content, FLAKE8_RE, FLAKE8_SEVERITY, "Flake8"
+        )
         assert len(result) == 2
         assert result[0].range.start.line == 4  # 5 - 1 (line_at_1)
         assert result[0].range.start.character == 0  # 1 - 1 (col_at_1)
