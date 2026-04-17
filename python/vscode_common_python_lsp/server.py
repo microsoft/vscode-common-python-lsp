@@ -11,7 +11,7 @@ import sys
 import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import lsprotocol.types as lsp
 from pygls import uris
@@ -57,7 +57,7 @@ class ToolServerConfig:
     tool_args: list[str] = field(default_factory=list)
     min_version: str = ""
     runner_script: str = ""
-    default_notification_level: str = "off"
+    default_notification_level: Literal["off", "onError", "onWarning", "always"] = "off"
     default_settings: dict[str, Any] = field(default_factory=dict)
 
 
@@ -126,10 +126,23 @@ class ToolServer:
 
         for setting in settings:
             key = normalize_path(uris.to_fs_path(setting["workspace"]))
-            self.workspace_settings[key] = {**setting, "workspaceFS": key}
+            self.workspace_settings[key] = {
+                **self.get_global_defaults(),
+                **setting,
+                "workspaceFS": key,
+            }
 
     def get_settings_by_path(self, file_path: pathlib.Path) -> dict[str, Any]:
         """Return workspace settings for the given file path."""
+        if not self.workspace_settings:
+            cwd = normalize_path(os.getcwd())
+            return {
+                "cwd": cwd,
+                "workspaceFS": cwd,
+                "workspace": uris.from_fs_path(cwd),
+                **self.get_global_defaults(),
+            }
+
         workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
 
         while file_path != file_path.parent:
@@ -157,6 +170,14 @@ class ToolServer:
     def get_settings_by_document(self, document: TextDocument | None) -> dict[str, Any]:
         """Return workspace settings for the given document."""
         if document is None or document.path is None:
+            if not self.workspace_settings:
+                cwd = normalize_path(os.getcwd())
+                return {
+                    "cwd": cwd,
+                    "workspaceFS": cwd,
+                    "workspace": uris.from_fs_path(cwd),
+                    **self.get_global_defaults(),
+                }
             return list(self.workspace_settings.values())[0]
 
         key = self.get_document_key(document)
@@ -244,7 +265,7 @@ class ToolServer:
         self,
         *,
         argv: Sequence[str],
-        mode: str,
+        mode: Literal["path", "rpc", "module"],
         settings: dict[str, Any],
         use_stdin: bool = False,
         cwd: str = "",
@@ -276,16 +297,23 @@ class ToolServer:
         runner_script:
             Override for :attr:`ToolServerConfig.runner_script`.
         env:
-            Extra environment variables for RPC mode.
+            Extra environment variables for path and RPC modes.
         timeout:
-            Timeout in seconds for RPC mode (``None`` = no timeout).
+            Timeout in seconds for path and RPC modes (``None`` = no timeout).
         """
         runner = runner_script or self.config.runner_script
 
         if mode == "path":
             self.log_to_output(" ".join(argv))
             self.log_to_output(f"CWD Server: {cwd}")
-            result = run_path(argv=argv, use_stdin=use_stdin, cwd=cwd, source=source)
+            result = run_path(
+                argv=argv,
+                use_stdin=use_stdin,
+                cwd=cwd,
+                source=source,
+                env=env,
+                timeout=timeout,
+            )
             if result.stderr:
                 self.log_to_output(result.stderr)
 
@@ -340,6 +368,9 @@ class ToolServer:
         if rpc_result.exception:
             self.log_error(rpc_result.exception)
             error = rpc_result.exception
+            if rpc_result.stderr:
+                self.log_to_output(rpc_result.stderr)
+                error += "\n" + rpc_result.stderr
         elif rpc_result.stderr:
             self.log_to_output(rpc_result.stderr)
             error = rpc_result.stderr

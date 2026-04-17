@@ -186,6 +186,19 @@ class TestUpdateWorkspaceSettings:
         assert settings["args"] == ["--check"]
         assert settings["enabled"] is True
 
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_multi_workspace_settings_include_defaults(self, mock_uris):
+        mock_uris.to_fs_path.side_effect = lambda u: u.replace("file://", "")
+        ts = _make_server()
+        ts.update_workspace_settings(
+            [{"workspace": "file:///ws1"}, {"workspace": "file:///ws2"}]
+        )
+        for ws_settings in ts.workspace_settings.values():
+            assert "interpreter" in ws_settings
+            assert "path" in ws_settings
+            assert "args" in ws_settings
+            assert "importStrategy" in ws_settings
+
 
 class TestGetSettingsByPath:
     def test_matches_closest_workspace(self):
@@ -213,6 +226,14 @@ class TestGetSettingsByPath:
         result = ts.get_settings_by_path(pathlib.Path("/ws/a/b/c/d/file.py"))
         assert result["workspaceFS"] == "/ws"
 
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_empty_workspace_settings_returns_fallback(self, mock_uris):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        ts = _make_server()
+        result = ts.get_settings_by_path(pathlib.Path("/some/file.py"))
+        assert "workspaceFS" in result
+        assert "interpreter" in result
+
 
 class TestGetSettingsByDocument:
     @patch("vscode_common_python_lsp.server.uris")
@@ -232,6 +253,24 @@ class TestGetSettingsByDocument:
         doc.path = None
         settings = ts.get_settings_by_document(doc)
         assert "workspaceFS" in settings
+
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_none_document_empty_workspace_settings(self, mock_uris):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        ts = _make_server()
+        result = ts.get_settings_by_document(None)
+        assert "workspaceFS" in result
+        assert "interpreter" in result
+
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_no_path_document_empty_workspace_settings(self, mock_uris):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        ts = _make_server()
+        doc = MagicMock()
+        doc.path = None
+        result = ts.get_settings_by_document(doc)
+        assert "workspaceFS" in result
+        assert "interpreter" in result
 
     def test_document_in_known_workspace(self):
         ts = _make_server()
@@ -428,6 +467,23 @@ class TestExecuteTool:
         assert call_kwargs["use_stdin"] is True
         assert call_kwargs["source"] == "print('hello')"
 
+    def test_path_mode_forwards_env_and_timeout(self):
+        ts = _make_server()
+        with patch("vscode_common_python_lsp.server.run_path") as mock_run:
+            mock_run.return_value = MagicMock(stdout="", stderr="")
+            custom_env = {"MY_VAR": "value"}
+            ts.execute_tool(
+                argv=["/bin/tool"],
+                mode="path",
+                settings={},
+                cwd="/tmp",
+                env=custom_env,
+                timeout=30.0,
+            )
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["env"] == custom_env
+        assert call_kwargs["timeout"] == 30.0
+
     def test_rpc_mode(self):
         ts = _make_server()
         with patch(
@@ -546,8 +602,23 @@ class TestToRunResultWithLogging:
         rpc_result = MagicMock(stdout="out", stderr="err", exception="traceback")
         result = ts.to_run_result_with_logging(rpc_result)
         assert result.stdout == "out"
-        assert result.stderr == "traceback"
+        assert result.stderr == "traceback\nerr"
         ts.server.window_log_message.assert_called()
+
+    def test_exception_and_stderr_combined(self):
+        ts = _make_server()
+        rpc_result = MagicMock(
+            stdout="out", stderr="diagnostic info", exception="fatal error"
+        )
+        result = ts.to_run_result_with_logging(rpc_result)
+        assert "fatal error" in result.stderr
+        assert "diagnostic info" in result.stderr
+
+    def test_exception_without_stderr(self):
+        ts = _make_server()
+        rpc_result = MagicMock(stdout="out", stderr="", exception="traceback")
+        result = ts.to_run_result_with_logging(rpc_result)
+        assert result.stderr == "traceback"
 
     def test_stderr_logged_to_output(self):
         ts = _make_server()
