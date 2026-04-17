@@ -199,6 +199,18 @@ suite('createServer', () => {
         const client = await createServer(makeCreateOptions());
         assert.isDefined(client);
     });
+
+    test('throws when interpreter array is empty', async () => {
+        const options = makeCreateOptions({
+            settings: makeSettings({ interpreter: [] }),
+        });
+        try {
+            await createServer(options);
+            assert.fail('should have thrown');
+        } catch (err: unknown) {
+            assert.include((err as Error).message, 'no Python interpreter');
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------

@@ -54,6 +54,10 @@ export class LanguageClient {
     async setTrace(_level: unknown): Promise<void> {
         // no-op
     }
+
+    dispose(): void {
+        this._state = State.Stopped;
+    }
 }
 
 export type LanguageClientOptions = Record<string, unknown>;

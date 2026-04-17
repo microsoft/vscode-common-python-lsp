@@ -70,6 +70,15 @@ export interface CreateServerOptions {
 export async function createServer(options: CreateServerOptions): Promise<LanguageClient> {
     const { settings, serverId, serverName, outputChannel, initializationOptions, toolConfig, debuggerPath } = options;
 
+    if (!settings.interpreter.length) {
+        const message = l10n.t(
+            'Unable to start {0}: no Python interpreter executable is configured.',
+            serverName,
+        );
+        updateStatus(message, LanguageStatusSeverity.Error);
+        throw new Error(message);
+    }
+
     const command = settings.interpreter[0];
     const cwd = getServerCwd(settings);
 
@@ -88,10 +97,14 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
         }
     }
 
-    // Debugger path
-    if (newEnv.USE_DEBUGPY && debuggerPath) {
+    // Debugger path — only enable when USE_DEBUGPY is explicitly 'true'/'1'
+    const useDebugpy = (newEnv.USE_DEBUGPY ?? '').toLowerCase();
+    if ((useDebugpy === 'true' || useDebugpy === '1') && debuggerPath) {
         newEnv.DEBUGPY_PATH = debuggerPath;
     } else {
+        if (useDebugpy === 'true' || useDebugpy === '1') {
+            traceInfo('USE_DEBUGPY is set but debuggerPath is unavailable — debug disabled.');
+        }
         newEnv.USE_DEBUGPY = 'False';
     }
 
@@ -243,6 +256,12 @@ export async function restartServer(
     } catch (ex) {
         updateStatus(l10n.t('Server failed to start.'), LanguageStatusSeverity.Error);
         traceError(`Server: Start failed (CWD: ${serverCwd}): ${ex}`);
+        try {
+            newLSClient.dispose();
+        } catch {
+            // best-effort cleanup
+        }
+        return undefined;
     }
 
     return newLSClient;

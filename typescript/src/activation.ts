@@ -70,7 +70,7 @@ export interface CreateToolContextOptions {
  */
 export function createToolContext(options: CreateToolContextOptions): ToolExtensionContext {
     const { serverInfo, outputChannel, toolConfig, pythonProvider } = options;
-    const serverId = serverInfo.module;
+    const serverId = toolConfig.toolId;
     const serverName = serverInfo.name;
     const restartDelay = toolConfig.restartDelay ?? DEFAULT_RESTART_DELAY;
 
@@ -173,7 +173,7 @@ export function registerCommonSubscriptions(
     options: RegisterSubscriptionsOptions,
 ): void {
     const { serverInfo, outputChannel, toolConfig, toolContext, pythonProvider } = options;
-    const serverId = serverInfo.module;
+    const serverId = toolConfig.toolId;
     const serverName = serverInfo.name;
 
     // Log level change listeners
