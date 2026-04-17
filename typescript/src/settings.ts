@@ -196,7 +196,7 @@ export async function getWorkspaceSettings(
         cwd: getCwd(config, workspace),
         workspace: workspace.uri.toString(),
         args: resolveVariables(config.get<string[]>('args', []), workspace),
-        path: resolveVariables(config.get<string[]>('path', []), workspace, interpreter).map(expandTilde),
+        path: resolveVariables(config.get<string[]>('path', []), workspace, interpreter),
         interpreter: resolveVariables(interpreter, workspace),
         importStrategy: config.get<string>('importStrategy', 'useBundled'),
         showNotifications: config.get<string>('showNotifications', 'off'),
@@ -209,7 +209,7 @@ export async function getWorkspaceSettings(
 
     // Handle extraPaths if the tool defines it
     if ('extraPaths' in toolConfig.settingsDefaults) {
-        settings.extraPaths = resolveVariables(getExtraPaths(namespace, workspace), workspace).map(expandTilde);
+        settings.extraPaths = resolveVariables(getExtraPaths(namespace, workspace), workspace);
     }
 
     // Tilde expansion on cwd
@@ -235,20 +235,22 @@ export async function getGlobalSettings(
         interpreter = (await resolveInterpreter()).path ?? [];
     }
 
+    const resolvedInterpreter = resolveVariables(interpreter ?? [], undefined);
+
     const rawCwd = getGlobalValue<string>(config, 'cwd', process.cwd());
     const rawArgs = getGlobalValue<string[]>(config, 'args', []);
     const rawPath = getGlobalValue<string[]>(config, 'path', []);
 
-    const resolvedCwd = expandTilde(resolveVariables([rawCwd], undefined, interpreter)[0]);
-    const resolvedArgs = resolveVariables(rawArgs, undefined, interpreter).map((arg) => expandTilde(arg));
-    const resolvedPath = resolveVariables(rawPath, undefined, interpreter).map((entry) => expandTilde(entry));
+    const resolvedCwd = resolveVariables([rawCwd], undefined, resolvedInterpreter)[0];
+    const resolvedArgs = resolveVariables(rawArgs, undefined, resolvedInterpreter);
+    const resolvedPath = resolveVariables(rawPath, undefined, resolvedInterpreter);
 
     const settings: IBaseSettings = {
         cwd: resolvedCwd,
         workspace: process.cwd(),
         args: resolvedArgs,
         path: resolvedPath,
-        interpreter: interpreter ?? [],
+        interpreter: resolvedInterpreter,
         importStrategy: getGlobalValue<string>(config, 'importStrategy', 'fromEnvironment'),
         showNotifications: getGlobalValue<string>(config, 'showNotifications', 'off'),
     };

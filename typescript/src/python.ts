@@ -331,9 +331,14 @@ export class PythonEnvironmentsProvider {
         if (version && (version.major > this._minMajor || (version.major === this._minMajor && version.minor >= this._minMinor))) {
             return true;
         }
-        traceError(`Python version ${version?.major}.${version?.minor} is not supported.`);
-        traceError(`Selected python path: ${resolved?.executablePath}`);
-        traceError(`Supported versions are ${this._versionLabel} and above.`);
+        if (!version) {
+            traceError(`Python version could not be determined for interpreter: ${resolved?.executablePath}`);
+            traceError(`Supported versions are ${this._versionLabel} and above.`);
+        } else {
+            traceError(`Python version ${version.major}.${version.minor} is not supported.`);
+            traceError(`Selected python path: ${resolved?.executablePath}`);
+            traceError(`Supported versions are ${this._versionLabel} and above.`);
+        }
         return false;
     }
 
