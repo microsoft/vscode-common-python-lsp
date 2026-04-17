@@ -211,7 +211,7 @@ export class PythonEnvironmentsProvider {
                     const runConfig = environment.execInfo?.activatedRun ?? environment.execInfo?.run;
                     const executable = runConfig?.executable;
                     const args = runConfig?.args ?? [];
-                    if (coerced && coerced.major === this._minMajor && coerced.minor >= this._minMinor) {
+                    if (coerced && (coerced.major > this._minMajor || (coerced.major === this._minMajor && coerced.minor >= this._minMinor))) {
                         if (executable) {
                             return { path: [executable, ...args], resource };
                         }
@@ -268,7 +268,7 @@ export class PythonEnvironmentsProvider {
      */
     checkVersion(resolved: IResolvedPythonEnvironment | undefined): boolean {
         const version = resolved?.version;
-        if (version?.major === this._minMajor && version?.minor >= this._minMinor) {
+        if (version && (version.major > this._minMajor || (version.major === this._minMajor && version.minor >= this._minMinor))) {
             return true;
         }
         traceError(`Python version ${version?.major}.${version?.minor} is not supported.`);

@@ -38,11 +38,16 @@ export function createConfigFileWatchers(
                 return;
             }
             traceLog(`${toolName} config file ${event}: ${pattern}`);
-            pending = onConfigChanged()
-                .catch((e) => traceError(`Config file ${event} handler failed`, e))
-                .finally(() => {
+            const run = () =>
+                onConfigChanged().catch((e) => traceError(`Config file ${event} handler failed`, e));
+
+            const nextPending = (pending ? pending.then(run, run) : run()).finally(() => {
+                if (pending === nextPending) {
                     pending = undefined;
-                });
+                }
+            });
+
+            pending = nextPending;
         };
 
         const changeDisposable = watcher.onDidChange(() => handleEvent('changed'));

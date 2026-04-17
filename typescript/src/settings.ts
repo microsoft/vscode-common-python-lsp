@@ -170,30 +170,25 @@ export async function getWorkspaceSettings(
 ): Promise<IBaseSettings> {
     const config = getConfiguration(namespace, workspace);
 
-    let interpreter: string[] = [];
-    if (resolveInterpreter) {
-        interpreter = getInterpreterSettingValue(namespace, workspace) ?? [];
-        if (interpreter.length === 0) {
-            traceLog(`No interpreter found from setting ${namespace}.interpreter`);
+    let interpreter: string[] = getInterpreterSettingValue(namespace, workspace) ?? [];
+    if (interpreter.length > 0) {
+        traceLog(`Interpreter from setting ${namespace}.interpreter: ${interpreter.join(' ')}`);
+    } else if (resolveInterpreter) {
+        traceLog(`No interpreter found from setting ${namespace}.interpreter`);
+        traceLog(
+            `Getting interpreter from ms-python.python extension for workspace ${workspace.uri.fsPath}`,
+        );
+        interpreter = (await resolveInterpreter(workspace.uri)).path ?? [];
+        if (interpreter.length > 0) {
             traceLog(
-                `Getting interpreter from ms-python.python extension for workspace ${workspace.uri.fsPath}`,
+                `Interpreter from ms-python.python extension for ${workspace.uri.fsPath}:`,
+                `${interpreter.join(' ')}`,
             );
-            interpreter = (await resolveInterpreter(workspace.uri)).path ?? [];
-            if (interpreter.length > 0) {
-                traceLog(
-                    `Interpreter from ms-python.python extension for ${workspace.uri.fsPath}:`,
-                    `${interpreter.join(' ')}`,
-                );
-            }
-        } else {
-            traceLog(`Interpreter from setting ${namespace}.interpreter: ${interpreter.join(' ')}`);
         }
+    }
 
-        if (interpreter.length === 0) {
-            traceLog(
-                `No interpreter found for ${workspace.uri.fsPath} in settings or from ms-python.python extension`,
-            );
-        }
+    if (interpreter.length === 0) {
+        traceLog(`No interpreter found for ${workspace.uri.fsPath} in settings or from ms-python.python extension`);
     }
 
     // Base settings (common to all extensions)
@@ -235,19 +230,24 @@ export async function getGlobalSettings(
 ): Promise<IBaseSettings> {
     const config = getConfiguration(namespace);
 
-    let interpreter: string[] = [];
-    if (resolveInterpreter) {
-        interpreter = getGlobalValue<string[]>(config, 'interpreter', []);
-        if (interpreter === undefined || interpreter.length === 0) {
-            interpreter = (await resolveInterpreter()).path ?? [];
-        }
+    let interpreter: string[] = getGlobalValue<string[]>(config, 'interpreter', []);
+    if ((interpreter === undefined || interpreter.length === 0) && resolveInterpreter) {
+        interpreter = (await resolveInterpreter()).path ?? [];
     }
 
+    const rawCwd = getGlobalValue<string>(config, 'cwd', process.cwd());
+    const rawArgs = getGlobalValue<string[]>(config, 'args', []);
+    const rawPath = getGlobalValue<string[]>(config, 'path', []);
+
+    const resolvedCwd = expandTilde(resolveVariables([rawCwd], undefined, interpreter)[0]);
+    const resolvedArgs = resolveVariables(rawArgs, undefined, interpreter).map((arg) => expandTilde(arg));
+    const resolvedPath = resolveVariables(rawPath, undefined, interpreter).map((entry) => expandTilde(entry));
+
     const settings: IBaseSettings = {
-        cwd: getGlobalValue<string>(config, 'cwd', process.cwd()),
+        cwd: resolvedCwd,
         workspace: process.cwd(),
-        args: getGlobalValue<string[]>(config, 'args', []),
-        path: getGlobalValue<string[]>(config, 'path', []),
+        args: resolvedArgs,
+        path: resolvedPath,
         interpreter: interpreter ?? [],
         importStrategy: getGlobalValue<string>(config, 'importStrategy', 'fromEnvironment'),
         showNotifications: getGlobalValue<string>(config, 'showNotifications', 'off'),
@@ -323,7 +323,7 @@ export function logLegacySettings(
                     }
                 } else {
                     const value = legacyConfig.get(mapping.legacyKey);
-                    if (value) {
+                    if (value !== undefined) {
                         traceWarn(`"python.${mapping.legacyKey}" is deprecated. Use "${namespace}.${mapping.newKey}" instead.`);
                         traceWarn(
                             `"python.${mapping.legacyKey}" value for workspace ${workspace.uri.fsPath}: ${value}`,
