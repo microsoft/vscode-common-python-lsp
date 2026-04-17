@@ -45,3 +45,24 @@ export interface ToolConfig {
     // Environment
     extraEnvVars?: Record<string, string>;
 }
+
+/**
+ * Canonical resolved Python environment — API-agnostic.
+ *
+ * Carries only the fields actually consumed by the shared package and
+ * extension code.  Both the newer `@vscode/python-environments`
+ * (`PythonEnvironment`) and legacy `@vscode/python-extension`
+ * (`ResolvedEnvironment`) are converted into this shape internally.
+ *
+ * **Breaking change (PR #10):** replaces the previous
+ * `ResolvedEnvironment` re-export from `@vscode/python-extension`.
+ * Migrate `.executable.uri.fsPath` → `.executablePath`.
+ */
+export interface IResolvedPythonEnvironment {
+    /** Absolute path to the Python executable. */
+    executablePath: string;
+    /** Parsed version, if available. */
+    version?: { major: number; minor: number; micro: number };
+    /** Additional CLI arguments (from new API's `execInfo.args`). */
+    args?: string[];
+}

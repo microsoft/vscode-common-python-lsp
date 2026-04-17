@@ -8,7 +8,7 @@
  */
 
 // Types
-export { IBaseSettings, IInitOptions, IServerInfo, ToolConfig } from './types';
+export { IBaseSettings, IInitOptions, IResolvedPythonEnvironment, IServerInfo, ToolConfig } from './types';
 
 // Logging
 export { registerLogger, traceError, traceInfo, traceLog, traceVerbose, traceWarn } from './logging';
@@ -41,4 +41,20 @@ export { registerLanguageStatusItem, updateStatus } from './status';
 export { getEnvFileVars } from './envFile';
 
 // Settings & variable substitution
-export { expandTilde, resolvePathSetting, resolveVariables } from './settings';
+export {
+    checkIfConfigurationChanged,
+    expandTilde,
+    getExtensionSettings,
+    getExtraPaths,
+    getGlobalSettings,
+    getWorkspaceSettings,
+    logLegacySettings,
+    resolvePathSetting,
+    resolveVariables,
+} from './settings';
+
+// Python interpreter resolution
+export { IInterpreterDetails, IPythonApi, PythonEnvironmentsProvider } from './python';
+
+// Config file watching
+export { createConfigFileWatchers } from './configWatcher';
