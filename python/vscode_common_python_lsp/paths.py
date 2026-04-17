@@ -13,7 +13,7 @@ import sys
 import sysconfig
 import threading
 from enum import Enum
-from typing import Any, List, Optional, Set
+from typing import Any
 
 # Save the working directory used when loading this module
 SERVER_CWD = os.getcwd()
@@ -28,14 +28,14 @@ class PythonFileKind(Enum):
     SYSTEM_SITE = "system_site"
 
 
-def as_list(content: Any) -> List[Any]:
+def as_list(content: Any) -> list[Any]:
     """Ensures we always get a list."""
     if isinstance(content, (list, tuple)):
         return list(content)
     return [content]
 
 
-def get_sys_config_paths() -> List[str]:
+def get_sys_config_paths() -> list[str]:
     """Returns Python installation paths from sysconfig.get_paths().
 
     Uses the broader filter (not in data/platdata/scripts) to match
@@ -49,7 +49,7 @@ def get_sys_config_paths() -> List[str]:
     ]
 
 
-def get_extensions_dir() -> List[str]:
+def get_extensions_dir() -> list[str]:
     """Returns the VS Code extensions folder (under ~/.vscode or ~/.vscode-server).
 
     The path is calculated relative to this file, because users can launch
@@ -78,7 +78,7 @@ def _get_stdlib_roots() -> frozenset[pathlib.Path]:
     The result is computed lazily on the first call, then cached for
     the lifetime of the process (paths do not change at runtime).
     """
-    roots: Set[pathlib.Path] = set()
+    roots: set[pathlib.Path] = set()
     for group in ("stdlib", "platstdlib"):
         p = sysconfig.get_path(group)
         if p:
@@ -95,7 +95,7 @@ def _get_stdlib_roots() -> frozenset[pathlib.Path]:
 
 
 @functools.lru_cache(maxsize=1)
-def _get_user_site_root() -> Optional[pathlib.Path]:
+def _get_user_site_root() -> pathlib.Path | None:
     """Resolved user site-packages path, or None.
 
     The result is computed lazily on the first call, then cached for
@@ -126,7 +126,7 @@ def _get_system_site_roots() -> frozenset[pathlib.Path]:
     The result is computed lazily on the first call, then cached for
     the lifetime of the process.
     """
-    roots: Set[pathlib.Path] = set()
+    roots: set[pathlib.Path] = set()
     for group in ("purelib", "platlib"):
         p = sysconfig.get_path(group)
         if p:
@@ -145,7 +145,7 @@ def _get_system_site_roots() -> frozenset[pathlib.Path]:
     return frozenset(roots)
 
 
-def classify_python_file(file_path: str) -> Optional[PythonFileKind]:
+def classify_python_file(file_path: str) -> PythonFileKind | None:
     """Classify a file as stdlib, user site-packages, or system site-packages.
 
     Returns None if the file does not belong to any known Python
@@ -237,7 +237,7 @@ def get_relative_path(file_path: str, workspace_root: str) -> str:
         return pathlib.Path(file_path).as_posix()
 
 
-def is_match(patterns: List[str], file_path: str, workspace_root: str = None) -> bool:
+def is_match(patterns: list[str], file_path: str, workspace_root: str = None) -> bool:
     """Returns true if the file matches one of the fnmatch patterns."""
     if not patterns:
         return False

@@ -10,8 +10,8 @@ import os
 import runpy
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Sequence, Union
 
 from .context import change_cwd, redirect_io, substitute_attr
 from .paths import CWD_LOCK, is_same_path
@@ -23,7 +23,7 @@ class RunResult:
 
     stdout: str
     stderr: str
-    exit_code: Optional[Union[int, str]] = None
+    exit_code: int | str | None = None
 
 
 class CustomIO(io.TextIOWrapper):
@@ -96,8 +96,8 @@ def run_path(
     use_stdin: bool,
     cwd: str,
     source: str = None,
-    env: Optional[Dict[str, str]] = None,
-    timeout: Optional[float] = None,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> RunResult:
     """Runs tool as a subprocess via executable path."""
     if use_stdin:

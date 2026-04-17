@@ -19,7 +19,6 @@ from .diagnostics import (
 from .formatting import is_notebook_cell, match_line_endings, strip_trailing_newline
 from .jsonrpc import (
     JsonRpc,
-    ProcessManager,
     RpcRunResult,
     StreamClosedException,
     get_or_start_json_rpc,
@@ -89,7 +88,6 @@ __all__ = [
     # jsonrpc
     "StreamClosedException",
     "JsonRpc",
-    "ProcessManager",
     "RpcRunResult",
     "get_or_start_json_rpc",
     "run_over_json_rpc",
