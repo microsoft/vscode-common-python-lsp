@@ -54,7 +54,7 @@ export {
 } from './settings';
 
 // Python interpreter resolution
-export { IInterpreterDetails, PythonEnvironmentsProvider } from './python';
+export { IInterpreterDetails, IPythonApi, PythonEnvironmentsProvider } from './python';
 
 // Config file watching
 export { createConfigFileWatchers } from './configWatcher';
