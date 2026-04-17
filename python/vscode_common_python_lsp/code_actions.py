@@ -104,7 +104,7 @@ def command_quick_fix(
 def create_workspace_edit(
     document_uri: str,
     document_version: int | None,
-    text_edits: list[lsp.TextEdit] | None,
+    text_edits: list[lsp.TextEdit],
 ) -> lsp.WorkspaceEdit:
     """Build a :class:`WorkspaceEdit` for a single document.
 

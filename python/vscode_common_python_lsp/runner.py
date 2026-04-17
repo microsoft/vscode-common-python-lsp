@@ -59,7 +59,11 @@ def _cwd_lock(cwd):
 
 
 def run_module(
-    module: str, argv: Sequence[str], use_stdin: bool, cwd: str, source: str = None
+    module: str,
+    argv: Sequence[str],
+    use_stdin: bool,
+    cwd: str,
+    source: str | None = None,
 ) -> RunResult:
     """Runs a Python module via runpy (e.g. black, flake8).
 
@@ -95,7 +99,7 @@ def run_path(
     argv: Sequence[str],
     use_stdin: bool,
     cwd: str,
-    source: str = None,
+    source: str | None = None,
     env: dict[str, str] | None = None,
     timeout: float | None = None,
 ) -> RunResult:
@@ -138,7 +142,7 @@ def run_api(
     argv: Sequence[str],
     use_stdin: bool,
     cwd: str,
-    source: str = None,
+    source: str | None = None,
 ) -> RunResult:
     """Runs tool via API callback (importable tools).
 
