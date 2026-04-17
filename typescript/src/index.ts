@@ -8,7 +8,7 @@
  */
 
 // Types
-export { IBaseSettings, IInitOptions, IServerInfo, ToolConfig } from './types';
+export { IBaseSettings, IInitOptions, IResolvedPythonEnvironment, IServerInfo, ToolConfig } from './types';
 
 // Logging
 export { registerLogger, traceError, traceInfo, traceLog, traceVerbose, traceWarn } from './logging';

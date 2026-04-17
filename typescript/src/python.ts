@@ -15,7 +15,7 @@ import { PythonExtension, ResolvedEnvironment } from '@vscode/python-extension';
 import * as semver from 'semver';
 import { Disposable, Event, EventEmitter, Uri } from 'vscode';
 import { traceError, traceLog } from './logging';
-import { ToolConfig } from './types';
+import { IResolvedPythonEnvironment, ToolConfig } from './types';
 import { getProjectRoot } from './utilities';
 
 // ---------------------------------------------------------------------------
@@ -28,15 +28,14 @@ export interface IInterpreterDetails {
 }
 
 // ---------------------------------------------------------------------------
-// Conversion helper
+// Conversion helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Adapt a {@link PythonEnvironment} (new API) to the legacy
- * {@link ResolvedEnvironment} shape so callers don't have to care
- * which API resolved the interpreter.
+ * Extract an {@link IResolvedPythonEnvironment} from the newer
+ * `@vscode/python-environments` {@link PythonEnvironment}.
  */
-function convertToResolvedEnvironment(environment: PythonEnvironment): ResolvedEnvironment | undefined {
+function fromPythonEnvironment(environment: PythonEnvironment): IResolvedPythonEnvironment | undefined {
     const runConfig = environment.execInfo?.activatedRun ?? environment.execInfo?.run;
     const executable = runConfig?.executable;
     if (!executable) {
@@ -44,25 +43,30 @@ function convertToResolvedEnvironment(environment: PythonEnvironment): ResolvedE
     }
     const coerced = semver.coerce(environment.version);
     return {
-        id: environment.envId?.id ?? '',
-        path: executable,
-        executable: {
-            uri: Uri.file(executable),
-            bitness: 'Unknown',
-            sysPrefix: environment.sysPrefix ?? '',
-        },
+        executablePath: executable,
         version: coerced
-            ? {
-                  major: coerced.major,
-                  minor: coerced.minor,
-                  micro: coerced.patch,
-                  release: { level: 'final', serial: 0 },
-                  sysVersion: environment.version ?? '',
-              }
+            ? { major: coerced.major, minor: coerced.minor, micro: coerced.patch }
             : undefined,
-        environment: undefined,
-        tools: [],
-    } as ResolvedEnvironment;
+        args: runConfig?.args,
+    };
+}
+
+/**
+ * Extract an {@link IResolvedPythonEnvironment} from the legacy
+ * `@vscode/python-extension` {@link ResolvedEnvironment}.
+ */
+function fromLegacyResolved(resolved: ResolvedEnvironment): IResolvedPythonEnvironment | undefined {
+    const fsPath = resolved.executable?.uri?.fsPath;
+    if (!fsPath) {
+        return undefined;
+    }
+    const version = resolved.version;
+    return {
+        executablePath: fsPath,
+        version: version
+            ? { major: version.major, minor: version.minor, micro: version.micro }
+            : undefined,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -229,8 +233,11 @@ export class PythonEnvironmentsProvider {
             const environment = await api?.environments.resolveEnvironment(
                 api?.environments.getActiveEnvironmentPath(resource),
             );
-            if (environment?.executable.uri && this.checkVersion(environment)) {
-                return { path: [environment?.executable.uri.fsPath], resource };
+            if (environment) {
+                const resolved = fromLegacyResolved(environment);
+                if (resolved && this.checkVersion(resolved)) {
+                    return { path: [resolved.executablePath], resource };
+                }
             }
         } catch (error) {
             traceError('Error resolving Python environment via legacy API: ', error);
@@ -241,30 +248,31 @@ export class PythonEnvironmentsProvider {
     /**
      * Resolve full environment details for a given interpreter path.
      */
-    async resolveInterpreter(interpreter: string[]): Promise<ResolvedEnvironment | undefined> {
+    async resolveInterpreter(interpreter: string[]): Promise<IResolvedPythonEnvironment | undefined> {
         const envsApi = await this.getEnvsApi();
         if (envsApi) {
             const environment = await envsApi.resolveEnvironment(Uri.file(interpreter[0]));
             if (!environment) {
                 return undefined;
             }
-            return convertToResolvedEnvironment(environment);
+            return fromPythonEnvironment(environment);
         }
         const api = await this.getLegacyApi();
-        return api?.environments.resolveEnvironment(interpreter[0]);
+        const resolved = await api?.environments.resolveEnvironment(interpreter[0]);
+        return resolved ? fromLegacyResolved(resolved) : undefined;
     }
 
     /**
      * Check whether a resolved environment meets the minimum Python
      * version requirement from the tool configuration.
      */
-    checkVersion(resolved: ResolvedEnvironment | undefined): boolean {
+    checkVersion(resolved: IResolvedPythonEnvironment | undefined): boolean {
         const version = resolved?.version;
         if (version?.major === this._minMajor && version?.minor >= this._minMinor) {
             return true;
         }
         traceError(`Python version ${version?.major}.${version?.minor} is not supported.`);
-        traceError(`Selected python path: ${resolved?.executable.uri?.fsPath}`);
+        traceError(`Selected python path: ${resolved?.executablePath}`);
         traceError(`Supported versions are ${this._versionLabel} and above.`);
         return false;
     }

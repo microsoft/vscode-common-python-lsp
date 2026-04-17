@@ -4,7 +4,7 @@
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { PythonEnvironmentsProvider, IInterpreterDetails } from '../src/python';
-import { ToolConfig } from '../src/types';
+import { IResolvedPythonEnvironment, ToolConfig } from '../src/types';
 import * as utilities from '../src/utilities';
 
 function makeToolConfig(overrides?: Partial<ToolConfig>): ToolConfig {
@@ -45,10 +45,10 @@ suite('PythonEnvironmentsProvider', () => {
             const config = makeToolConfig({ minimumPythonVersion: { major: 3, minor: 9 } });
             const provider = new PythonEnvironmentsProvider(config);
 
-            const resolved = {
+            const resolved: IResolvedPythonEnvironment = {
+                executablePath: '/usr/bin/python3',
                 version: { major: 3, minor: 10, micro: 0 },
-                executable: { uri: { fsPath: '/usr/bin/python3' } },
-            } as any;
+            };
 
             assert.isTrue(provider.checkVersion(resolved));
         });
@@ -57,10 +57,10 @@ suite('PythonEnvironmentsProvider', () => {
             const config = makeToolConfig({ minimumPythonVersion: { major: 3, minor: 9 } });
             const provider = new PythonEnvironmentsProvider(config);
 
-            const resolved = {
+            const resolved: IResolvedPythonEnvironment = {
+                executablePath: '/usr/bin/python3',
                 version: { major: 3, minor: 9, micro: 1 },
-                executable: { uri: { fsPath: '/usr/bin/python3' } },
-            } as any;
+            };
 
             assert.isTrue(provider.checkVersion(resolved));
         });
@@ -69,10 +69,10 @@ suite('PythonEnvironmentsProvider', () => {
             const config = makeToolConfig({ minimumPythonVersion: { major: 3, minor: 9 } });
             const provider = new PythonEnvironmentsProvider(config);
 
-            const resolved = {
+            const resolved: IResolvedPythonEnvironment = {
+                executablePath: '/usr/bin/python3',
                 version: { major: 3, minor: 8, micro: 0 },
-                executable: { uri: { fsPath: '/usr/bin/python3' } },
-            } as any;
+            };
 
             assert.isFalse(provider.checkVersion(resolved));
         });
@@ -81,10 +81,10 @@ suite('PythonEnvironmentsProvider', () => {
             const config = makeToolConfig({ minimumPythonVersion: { major: 3, minor: 9 } });
             const provider = new PythonEnvironmentsProvider(config);
 
-            const resolved = {
+            const resolved: IResolvedPythonEnvironment = {
+                executablePath: '/usr/bin/python2',
                 version: { major: 2, minor: 7, micro: 0 },
-                executable: { uri: { fsPath: '/usr/bin/python2' } },
-            } as any;
+            };
 
             assert.isFalse(provider.checkVersion(resolved));
         });
@@ -98,10 +98,10 @@ suite('PythonEnvironmentsProvider', () => {
         test('returns false for missing version', () => {
             const config = makeToolConfig();
             const provider = new PythonEnvironmentsProvider(config);
-            const resolved = {
+            const resolved: IResolvedPythonEnvironment = {
+                executablePath: '/usr/bin/python3',
                 version: undefined,
-                executable: { uri: { fsPath: '/usr/bin/python3' } },
-            } as any;
+            };
             assert.isFalse(provider.checkVersion(resolved));
         });
     });
