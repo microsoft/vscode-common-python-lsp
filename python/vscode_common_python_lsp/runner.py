@@ -10,8 +10,8 @@ import os
 import runpy
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Sequence, Union
 
 from .context import change_cwd, redirect_io, substitute_attr
 from .paths import CWD_LOCK, is_same_path
@@ -23,7 +23,7 @@ class RunResult:
 
     stdout: str
     stderr: str
-    exit_code: Optional[Union[int, str]] = None
+    exit_code: int | str | None = None
 
 
 class CustomIO(io.TextIOWrapper):
@@ -59,7 +59,11 @@ def _cwd_lock(cwd):
 
 
 def run_module(
-    module: str, argv: Sequence[str], use_stdin: bool, cwd: str, source: str = None
+    module: str,
+    argv: Sequence[str],
+    use_stdin: bool,
+    cwd: str,
+    source: str | None = None,
 ) -> RunResult:
     """Runs a Python module via runpy (e.g. black, flake8).
 
@@ -95,9 +99,9 @@ def run_path(
     argv: Sequence[str],
     use_stdin: bool,
     cwd: str,
-    source: str = None,
-    env: Optional[Dict[str, str]] = None,
-    timeout: Optional[float] = None,
+    source: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> RunResult:
     """Runs tool as a subprocess via executable path."""
     if use_stdin:
@@ -138,7 +142,7 @@ def run_api(
     argv: Sequence[str],
     use_stdin: bool,
     cwd: str,
-    source: str = None,
+    source: str | None = None,
 ) -> RunResult:
     """Runs tool via API callback (importable tools).
 

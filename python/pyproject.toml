@@ -16,6 +16,7 @@ authors = [
 dependencies = [
     "pygls>=1.1.0",
     "lsprotocol>=2023.0.0",
+    "packaging>=22.0",
 ]
 
 [project.optional-dependencies]

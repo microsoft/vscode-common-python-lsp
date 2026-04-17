@@ -596,11 +596,11 @@ class TestExecuteTool:
             assert call_kwargs["runner_script"] == "/custom/runner.py"
 
 
-class TestToRunResultWithLogging:
+class TestRpcToRunResult:
     def test_exception_logged_as_error(self):
         ts = _make_server()
         rpc_result = MagicMock(stdout="out", stderr="err", exception="traceback")
-        result = ts.to_run_result_with_logging(rpc_result)
+        result = ts._rpc_to_run_result(rpc_result)
         assert result.stdout == "out"
         assert result.stderr == "traceback\nerr"
         ts.server.window_log_message.assert_called()
@@ -610,27 +610,27 @@ class TestToRunResultWithLogging:
         rpc_result = MagicMock(
             stdout="out", stderr="diagnostic info", exception="fatal error"
         )
-        result = ts.to_run_result_with_logging(rpc_result)
+        result = ts._rpc_to_run_result(rpc_result)
         assert "fatal error" in result.stderr
         assert "diagnostic info" in result.stderr
 
     def test_exception_without_stderr(self):
         ts = _make_server()
         rpc_result = MagicMock(stdout="out", stderr="", exception="traceback")
-        result = ts.to_run_result_with_logging(rpc_result)
+        result = ts._rpc_to_run_result(rpc_result)
         assert result.stderr == "traceback"
 
     def test_stderr_logged_to_output(self):
         ts = _make_server()
         rpc_result = MagicMock(stdout="out", stderr="warning text", exception=None)
-        result = ts.to_run_result_with_logging(rpc_result)
+        result = ts._rpc_to_run_result(rpc_result)
         assert result.stderr == "warning text"
         ts.server.window_log_message.assert_called()
 
     def test_clean_result(self):
         ts = _make_server()
         rpc_result = MagicMock(stdout="out", stderr="", exception=None)
-        result = ts.to_run_result_with_logging(rpc_result)
+        result = ts._rpc_to_run_result(rpc_result)
         assert result.stdout == "out"
         assert result.stderr == ""
 

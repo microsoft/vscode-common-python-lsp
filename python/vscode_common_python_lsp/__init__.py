@@ -2,16 +2,46 @@
 # Licensed under the MIT License.
 """Shared Python utilities for VS Code Python tool extensions."""
 
+from .code_actions import (
+    QuickFixRegistrationError,
+    QuickFixRegistry,
+    command_quick_fix,
+    create_workspace_edit,
+)
 from .context import change_cwd, redirect_io, substitute_attr
 from .debug import setup_debugpy
+from .diagnostics import (
+    ParsedRecord,
+    get_severity,
+    make_diagnostic,
+    parse_diagnostics_regex,
+    parse_to_records,
+    records_to_diagnostics,
+)
+from .formatting import (
+    NOTEBOOK_CELL_SCHEME,
+    is_notebook_cell,
+    match_line_endings,
+    strip_trailing_newline,
+)
 from .jsonrpc import (
     JsonRpc,
-    ProcessManager,
     RpcRunResult,
     StreamClosedException,
     get_or_start_json_rpc,
     run_over_json_rpc,
     shutdown_json_rpc,
+)
+from .linting import LintRequestTracker
+from .notebook import (
+    MAGIC_LINE_RE,
+    NOTEBOOK_SYNC_OPTIONS,
+    CellLike,
+    CellOffset,
+    SyntheticDocument,
+    build_notebook_source,
+    get_cell_for_line,
+    remap_diagnostics_to_cells,
 )
 from .paths import (
     CWD_LOCK,
@@ -30,6 +60,7 @@ from .paths import (
 from .process_runner import run_message_loop, update_sys_path
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
 from .server import ToolServer, ToolServerConfig
+from .version import VersionInfo, check_min_version, extract_version, version_to_tuple
 
 __all__ = [
     # paths
@@ -58,7 +89,6 @@ __all__ = [
     # jsonrpc
     "StreamClosedException",
     "JsonRpc",
-    "ProcessManager",
     "RpcRunResult",
     "get_or_start_json_rpc",
     "run_over_json_rpc",
@@ -71,4 +101,37 @@ __all__ = [
     # server
     "ToolServerConfig",
     "ToolServer",
+    # code_actions
+    "QuickFixRegistrationError",
+    "QuickFixRegistry",
+    "command_quick_fix",
+    "create_workspace_edit",
+    # diagnostics
+    "ParsedRecord",
+    "get_severity",
+    "make_diagnostic",
+    "parse_diagnostics_regex",
+    "parse_to_records",
+    "records_to_diagnostics",
+    # formatting
+    "NOTEBOOK_CELL_SCHEME",
+    "match_line_endings",
+    "is_notebook_cell",
+    "strip_trailing_newline",
+    # linting
+    "LintRequestTracker",
+    # notebook
+    "CellLike",
+    "SyntheticDocument",
+    "CellOffset",
+    "MAGIC_LINE_RE",
+    "NOTEBOOK_SYNC_OPTIONS",
+    "build_notebook_source",
+    "get_cell_for_line",
+    "remap_diagnostics_to_cells",
+    # version
+    "VersionInfo",
+    "extract_version",
+    "check_min_version",
+    "version_to_tuple",
 ]

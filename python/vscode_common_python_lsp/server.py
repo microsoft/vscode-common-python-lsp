@@ -334,7 +334,7 @@ class ToolServer:
                 env=env,
                 timeout=timeout,
             )
-            result = self.to_run_result_with_logging(rpc_result)
+            result = self._rpc_to_run_result(rpc_result)
 
         elif mode == "module":
             self.log_to_output(" ".join([sys.executable, "-m"] + list(argv)))
@@ -362,7 +362,7 @@ class ToolServer:
 
         return result
 
-    def to_run_result_with_logging(self, rpc_result: jsonrpc.RpcRunResult) -> RunResult:
+    def _rpc_to_run_result(self, rpc_result: jsonrpc.RpcRunResult) -> RunResult:
         """Convert an :class:`RpcRunResult` to a :class:`RunResult`, logging errors."""
         error = ""
         if rpc_result.exception:
