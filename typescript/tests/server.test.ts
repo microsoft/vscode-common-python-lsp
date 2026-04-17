@@ -147,12 +147,14 @@ suite('createServer', () => {
             settings: makeSettings({ importStrategy: 'fromEnvironment' }),
         });
         const client = await createServer(options);
-        assert.isDefined(client);
+        const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string> } } }).serverOptions).options.env;
+        assert.strictEqual(env.LS_IMPORT_STRATEGY, 'fromEnvironment');
     });
 
     test('creates client with pythonUtf8 default (true)', async () => {
         const client = await createServer(makeCreateOptions());
-        assert.isDefined(client);
+        const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string> } } }).serverOptions).options.env;
+        assert.strictEqual(env.PYTHONUTF8, '1');
     });
 
     test('creates client when pythonUtf8 is false', async () => {
@@ -160,7 +162,8 @@ suite('createServer', () => {
             toolConfig: makeToolConfig({ pythonUtf8: false }),
         });
         const client = await createServer(options);
-        assert.isDefined(client);
+        const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string | undefined> } } }).serverOptions).options.env;
+        assert.isUndefined(env.PYTHONUTF8, 'PYTHONUTF8 should not be set when pythonUtf8 is false');
     });
 
     test('merges extraEnvVars from toolConfig', async () => {
@@ -170,7 +173,8 @@ suite('createServer', () => {
             }),
         });
         const client = await createServer(options);
-        assert.isDefined(client);
+        const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string> } } }).serverOptions).options.env;
+        assert.strictEqual(env.VSCODE_PYLINT_LINT_ON_CHANGE, 'yes');
     });
 
     test('uses serverScript from toolConfig', async () => {
@@ -178,7 +182,8 @@ suite('createServer', () => {
             toolConfig: makeToolConfig({ serverScript: '/custom/server.py' }),
         });
         const client = await createServer(options);
-        assert.isDefined(client);
+        const args = (client as unknown as { serverOptions: { args: string[] } }).serverOptions.args;
+        assert.include(args, '/custom/server.py');
     });
 
     test('handles extraPaths in settings', async () => {
@@ -189,7 +194,9 @@ suite('createServer', () => {
             },
         });
         const client = await createServer(options);
-        assert.isDefined(client);
+        const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string> } } }).serverOptions).options.env;
+        assert.include(env.PYTHONPATH, '/extra/lib1');
+        assert.include(env.PYTHONPATH, '/extra/lib2');
     });
 
     test('merges env file vars', async () => {
@@ -197,7 +204,8 @@ suite('createServer', () => {
             PYTHONPATH: '/envfile/path',
         });
         const client = await createServer(makeCreateOptions());
-        assert.isDefined(client);
+        const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string> } } }).serverOptions).options.env;
+        assert.include(env.PYTHONPATH, '/envfile/path');
     });
 
     test('throws when interpreter array is empty', async () => {

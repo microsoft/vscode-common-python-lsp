@@ -26,6 +26,7 @@ import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
 // Default restart delay
 // ---------------------------------------------------------------------------
 
+/** Fallback when {@link ToolConfig.restartDelay} is not set. */
 const DEFAULT_RESTART_DELAY = 1000;
 
 // ---------------------------------------------------------------------------
@@ -130,7 +131,8 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     traceError(
                         'Python interpreter missing:\r\n' +
                             '[Option 1] Select Python interpreter using the ms-python.python extension.\r\n' +
-                            `[Option 2] Set an interpreter using "${serverId}.interpreter" setting.\r\n` +
+                            '[Option 2] Use the ms-python.python-environments extension to manage environments.\r\n' +
+                            `[Option 3] Set an interpreter using "${serverId}.interpreter" setting.\r\n` +
                             `Please use Python ${pythonVersion} or greater.`,
                     );
                 } else {
@@ -205,6 +207,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 /** Run server with error handling — fire-and-forget wrapper for event handlers. */
 async function safeRunServer(toolContext: ToolExtensionContext, trigger: string): Promise<void> {
     try {
+        traceLog(`Server restart triggered by: ${trigger}`);
         await toolContext.runServer();
     } catch (ex) {
         traceError(`Failed to restart server on ${trigger}: ${ex}`);
@@ -291,8 +294,11 @@ export function registerCommonSubscriptions(
 
     // Log startup info
     traceLog(`Name: ${serverName}`);
-    traceLog(`Module: ${serverId}`);
-    traceVerbose(`Configuration: ${JSON.stringify(toolConfig)}`);
+    traceLog(`Module: ${toolConfig.toolModule}`);
+    // Omit extraEnvVars from the log to avoid leaking sensitive values
+    // (tokens, credentials) that may be passed via environment variables.
+    const { extraEnvVars: _envVars, ...safeToolConfig } = toolConfig;
+    traceVerbose(`Configuration: ${JSON.stringify(safeToolConfig)}`);
 }
 
 // ---------------------------------------------------------------------------

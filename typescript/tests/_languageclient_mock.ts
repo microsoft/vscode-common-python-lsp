@@ -21,16 +21,19 @@ export enum RevealOutputChannelOn {
 export class LanguageClient {
     private _id: string;
     private _name: string;
-    private _serverOptions: unknown;
-    private _clientOptions: unknown;
     private _stateListeners: Array<(e: { oldState: State; newState: State }) => void> = [];
     private _state: State = State.Stopped;
+
+    /** Exposed for test assertions on the constructed server options. */
+    public readonly serverOptions: unknown;
+    /** Exposed for test assertions on the constructed client options. */
+    public readonly clientOptions: unknown;
 
     constructor(id: string, name: string, serverOptions: unknown, clientOptions: unknown) {
         this._id = id;
         this._name = name;
-        this._serverOptions = serverOptions;
-        this._clientOptions = clientOptions;
+        this.serverOptions = serverOptions;
+        this.clientOptions = clientOptions;
     }
 
     onDidChangeState(listener: (e: { oldState: State; newState: State }) => void) {

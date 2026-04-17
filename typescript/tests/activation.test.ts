@@ -136,20 +136,27 @@ suite('createToolContext', () => {
     });
 
     test('runServer debounces rapid calls', async () => {
+        const clock = sandbox.useFakeTimers();
+        const restartServerStub = serverModule.restartServer as sinon.SinonStub;
         const ctx = createToolContext(makeOptions({ toolConfig: makeToolConfig({ restartDelay: 50 }) }));
 
-        // First call triggers immediately
+        // First call triggers. isRestarting is set synchronously.
         const p1 = ctx.runServer();
-        // Second call while first is running should be debounced
+        // Second call while first is in progress — hits isRestarting, schedules timer.
         const p2 = ctx.runServer();
 
-        await p1;
-        // Allow the debounce timer to fire
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // p2 resolves immediately (debounced path returns early).
         await p2;
 
-        // restartServer should be called at least once (first call)
-        assert.isTrue((serverModule.restartServer as sinon.SinonStub).called);
+        // Complete the first call (flushes all internal awaits).
+        await p1;
+        assert.isTrue(restartServerStub.calledOnce, 'first call should trigger restartServer');
+
+        // Tick past the debounce delay — the scheduled timer should fire.
+        await clock.tickAsync(50);
+        assert.isTrue(restartServerStub.calledTwice, 'debounced call should trigger restartServer after delay');
+
+        clock.restore();
     });
 
     test('initialize starts server when interpreter is already set', async () => {

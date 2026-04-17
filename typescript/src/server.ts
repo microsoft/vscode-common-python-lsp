@@ -97,7 +97,10 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
         }
     }
 
-    // Debugger path — only enable when USE_DEBUGPY is explicitly 'true'/'1'
+    // Debugger path — only enable when USE_DEBUGPY is explicitly 'true'/'1'.
+    // This matches the upstream extension pattern: debug is opt-in, and
+    // USE_DEBUGPY is forced to 'False' by default so the Python server
+    // does not attempt to import debugpy unless explicitly requested.
     const useDebugpy = (newEnv.USE_DEBUGPY ?? '').toLowerCase();
     if ((useDebugpy === 'true' || useDebugpy === '1') && debuggerPath) {
         newEnv.DEBUGPY_PATH = debuggerPath;
@@ -125,7 +128,9 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
         traceInfo(`PYTHONPATH: ${newEnv.PYTHONPATH}`);
     }
 
-    // Tool-specific extra env vars (applied before built-in assignments to avoid silent overrides)
+    // Tool-specific extra env vars — applied AFTER built-in assignments.
+    // A warning is logged when a key collides with a built-in to surface
+    // potential silent overrides.
     const BUILT_IN_ENV_KEYS = new Set([
         'USE_DEBUGPY', 'DEBUGPY_PATH', 'LS_IMPORT_STRATEGY', 'LS_SHOW_NOTIFICATION', 'PYTHONUTF8', 'PYTHONPATH',
     ]);
@@ -254,6 +259,11 @@ export async function restartServer(
         }
         return { client: undefined, disposables: [] };
     }
+
+    // Explicitly clear busy status after successful start — the state
+    // listener below only catches future transitions and may miss the
+    // initial Running state.
+    updateStatus(undefined, LanguageStatusSeverity.Information, false);
 
     // Register state listener only after successful start
     const disposables: Disposable[] = [];
