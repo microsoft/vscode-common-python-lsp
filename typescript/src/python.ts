@@ -114,6 +114,7 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
         },
 
         async getDebuggerPath() {
+            // TODO: Not yet supported by the environments extension. Implement when it is.
             return undefined;
         },
     };
@@ -205,8 +206,8 @@ export class PythonEnvironmentsProvider {
     // API acquisition (cached, envs preferred → legacy fallback)
     // -----------------------------------------------------------------
 
-    private async getApi(): Promise<IPythonApi | undefined> {
-        if (this._api) {
+    private async getApi(useCache: boolean = true): Promise<IPythonApi | undefined> {
+        if (this._api && useCache) {
             return this._api;
         }
         try {
