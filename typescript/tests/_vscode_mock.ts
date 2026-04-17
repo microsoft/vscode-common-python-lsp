@@ -42,6 +42,12 @@ export const workspace = {
     workspaceFolders: undefined as WorkspaceFolder[] | undefined,
     onDidChangeConfiguration: noopEvent,
     getWorkspaceFolder: () => undefined,
+    createFileSystemWatcher: () => ({
+        onDidChange: noopEvent,
+        onDidCreate: noopEvent,
+        onDidDelete: noopEvent,
+        dispose: () => {},
+    }),
 };
 
 export const window = {
@@ -71,3 +77,29 @@ export type LogOutputChannel = any;
 export type LanguageStatusItem = any;
 export type StatusBarItem = any;
 export type DocumentFormattingEditProvider = any;
+
+export class EventEmitter<T = void> {
+    private handlers: Array<(e: T) => void> = [];
+
+    get event(): (listener: (e: T) => void) => Disposable {
+        return (listener: (e: T) => void) => {
+            this.handlers.push(listener);
+            return {
+                dispose: () => {
+                    const idx = this.handlers.indexOf(listener);
+                    if (idx >= 0) {
+                        this.handlers.splice(idx, 1);
+                    }
+                },
+            };
+        };
+    }
+
+    fire(data: T): void {
+        this.handlers.forEach((h) => h(data));
+    }
+
+    dispose(): void {
+        this.handlers = [];
+    }
+}

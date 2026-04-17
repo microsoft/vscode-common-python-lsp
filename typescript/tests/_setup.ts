@@ -15,5 +15,11 @@ Module._resolveFilename = function (request: string, ...args: unknown[]) {
     if (request === 'vscode') {
         return path.resolve(__dirname, '_vscode_mock.js');
     }
+    if (request === '@vscode/python-environments') {
+        return path.resolve(__dirname, '_python_environments_mock.js');
+    }
+    if (request === '@vscode/python-extension') {
+        return path.resolve(__dirname, '_python_extension_mock.js');
+    }
     return originalResolveFilename.call(this, request, ...args);
 };
