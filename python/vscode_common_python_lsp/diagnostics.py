@@ -11,6 +11,7 @@ Provides:
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Callable
 from typing import Any
@@ -108,6 +109,7 @@ def make_diagnostic(
 # ---------------------------------------------------------------------------
 
 
+@dataclasses.dataclass(slots=True)
 class ParsedRecord:
     """Intermediate representation of a single parsed diagnostic line.
 
@@ -115,24 +117,12 @@ class ParsedRecord:
     turned into :class:`lsprotocol.types.Diagnostic` objects.
     """
 
-    __slots__ = ("file", "line", "column", "code", "code_type", "message")
-
-    def __init__(
-        self,
-        *,
-        file: str = "",
-        line: int = 0,
-        column: int = 0,
-        code: str = "",
-        code_type: str = "",
-        message: str = "",
-    ) -> None:
-        self.file = file
-        self.line = line
-        self.column = column
-        self.code = code
-        self.code_type = code_type
-        self.message = message
+    file: str = ""
+    line: int = 0
+    column: int = 0
+    code: str = ""
+    code_type: str = ""
+    message: str = ""
 
 
 def parse_diagnostics_regex(
