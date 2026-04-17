@@ -29,6 +29,7 @@ from .paths import (
 )
 from .process_runner import run_message_loop, update_sys_path
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
+from .server import ToolServer, ToolServerConfig
 
 __all__ = [
     # paths
@@ -67,4 +68,7 @@ __all__ = [
     "run_message_loop",
     # debug
     "setup_debugpy",
+    # server
+    "ToolServerConfig",
+    "ToolServer",
 ]
