@@ -87,15 +87,12 @@ class CellOffset:
     line_count: int
 
 
-CellMap = list[CellOffset]
-
-
 def build_notebook_source(
     cells: list,
     get_text_document: Callable[[str], TextDocumentLike | None],
     *,
     sanitize_line: Callable[[str], str] | None = None,
-) -> tuple[str, CellMap]:
+) -> tuple[str, list[CellOffset]]:
     """Build a single Python source string from all code cells.
 
     Parameters
@@ -119,7 +116,7 @@ def build_notebook_source(
     _sanitize = sanitize_line or _default_sanitize_line
 
     source_parts: list[str] = []
-    cell_map: CellMap = []
+    cell_map: list[CellOffset] = []
     current_line = 0
 
     for cell in cells:
@@ -152,7 +149,9 @@ def _default_sanitize_line(line: str) -> str:
     return "pass\n" if MAGIC_LINE_RE.match(line) else line
 
 
-def get_cell_for_line(global_line: int, cell_map: CellMap) -> CellOffset | None:
+def get_cell_for_line(
+    global_line: int, cell_map: list[CellOffset]
+) -> CellOffset | None:
     """Return the :class:`CellOffset` entry that owns *global_line*.
 
     *global_line* is a 0-based line number in the combined notebook source.
@@ -166,7 +165,7 @@ def get_cell_for_line(global_line: int, cell_map: CellMap) -> CellOffset | None:
 
 def remap_diagnostics_to_cells(
     diagnostics: Sequence[lsp.Diagnostic],
-    cell_map: CellMap,
+    cell_map: list[CellOffset],
 ) -> dict[str, list[lsp.Diagnostic]]:
     """Map combined-source diagnostics back to individual cell URIs.
 

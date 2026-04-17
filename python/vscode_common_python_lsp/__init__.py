@@ -29,7 +29,6 @@ from .linting import LintRequestTracker
 from .notebook import (
     MAGIC_LINE_RE,
     NOTEBOOK_SYNC_OPTIONS,
-    CellMap,
     CellOffset,
     SyntheticDocument,
     build_notebook_source,
@@ -119,7 +118,6 @@ __all__ = [
     # notebook
     "SyntheticDocument",
     "CellOffset",
-    "CellMap",
     "MAGIC_LINE_RE",
     "NOTEBOOK_SYNC_OPTIONS",
     "build_notebook_source",
