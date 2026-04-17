@@ -18,6 +18,7 @@ export interface IBaseSettings {
     interpreter: string[];
     importStrategy: string;
     showNotifications: string;
+    extraPaths?: string[];
     [key: string]: unknown;
 }
 

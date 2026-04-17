@@ -5,7 +5,7 @@ import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { LanguageStatusSeverity, LogOutputChannel, Uri, LogLevel, WorkspaceFolder } from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { getServerCwd, createServer, restartServer, CreateServerOptions, RestartServerOptions } from '../src/server';
+import { getServerCwd, createServer, restartServer, CreateServerOptions, RestartServerOptions, RestartServerResult } from '../src/server';
 import * as envFileModule from '../src/envFile';
 import * as status from '../src/status';
 import * as utilities from '../src/utilities';
@@ -259,9 +259,11 @@ suite('restartServer', () => {
         };
     }
 
-    test('returns a LanguageClient', async () => {
-        const client = await restartServer(makeRestartOptions());
-        assert.isDefined(client);
+    test('returns a result with client and disposables', async () => {
+        const result = await restartServer(makeRestartOptions());
+        assert.isDefined(result.client);
+        assert.isArray(result.disposables);
+        assert.isAbove(result.disposables.length, 0);
     });
 
     test('stops old client before creating new one', async () => {
@@ -278,8 +280,8 @@ suite('restartServer', () => {
         } as unknown as LanguageClient;
 
         // Should not throw
-        const client = await restartServer(makeRestartOptions(), oldClient);
-        assert.isDefined(client);
+        const result = await restartServer(makeRestartOptions(), oldClient);
+        assert.isDefined(result.client);
     });
 
     test('updates status to busy during restart', async () => {

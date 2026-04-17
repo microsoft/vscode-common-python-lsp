@@ -60,7 +60,14 @@ export { IInterpreterDetails, IPythonApi, PythonEnvironmentsProvider } from './p
 export { createConfigFileWatchers } from './configWatcher';
 
 // Server lifecycle
-export { createServer, CreateServerOptions, getServerCwd, restartServer, RestartServerOptions } from './server';
+export {
+    createServer,
+    CreateServerOptions,
+    getServerCwd,
+    restartServer,
+    RestartServerOptions,
+    RestartServerResult,
+} from './server';
 
 // Activation / deactivation
 export {

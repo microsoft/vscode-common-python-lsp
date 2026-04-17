@@ -42,7 +42,15 @@ export interface ToolExtensionContext {
     /** The current LanguageClient instance (`undefined` before first start). */
     lsClient: LanguageClient | undefined;
 
-    /** Debounced restart — safe to call from any trigger (config change, interpreter change, etc.). */
+    /**
+     * Debounced restart — safe to call from any trigger (config change,
+     * interpreter change, etc.).
+     *
+     * **Note:** When a restart is already in progress, this schedules a
+     * delayed retry and resolves immediately.  The returned promise does
+     * *not* wait for the deferred restart to complete — callers should
+     * treat this as fire-and-forget for event-handler use.
+     */
     runServer(): Promise<void>;
 
     /**
@@ -53,6 +61,14 @@ export interface ToolExtensionContext {
      * extension's interpreter resolution.
      */
     initialize(subscriptions: vscode.Disposable[]): Promise<void>;
+
+    /**
+     * Dispose all internal resources (timers, state listeners).
+     *
+     * Call from the extension's `deactivate()` to prevent orphaned
+     * server processes from debounce timers firing after shutdown.
+     */
+    dispose(): void;
 }
 
 export interface CreateToolContextOptions {
@@ -79,11 +95,16 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
     let isRestarting = false;
     let restartTimer: NodeJS.Timeout | undefined;
+    let disposed = false;
+    let serverDisposables: vscode.Disposable[] = [];
 
     const ctx: ToolExtensionContext = {
         lsClient: undefined,
 
         async runServer(): Promise<void> {
+            if (disposed) {
+                return;
+            }
             if (isRestarting) {
                 if (restartTimer) {
                     clearTimeout(restartTimer);
@@ -113,6 +134,16 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                             `Please use Python ${pythonVersion} or greater.`,
                     );
                 } else {
+                    // Dispose previous server state listeners
+                    for (const d of serverDisposables) {
+                        try {
+                            d.dispose();
+                        } catch (ex) {
+                            traceError(`Failed to dispose: ${ex}`);
+                        }
+                    }
+                    serverDisposables = [];
+
                     const restartOptions: RestartServerOptions = {
                         settings: workspaceSetting,
                         serverId,
@@ -121,7 +152,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         toolConfig,
                         pythonProvider,
                     };
-                    ctx.lsClient = await restartServer(restartOptions, ctx.lsClient);
+                    const result = await restartServer(restartOptions, ctx.lsClient);
+                    ctx.lsClient = result.client;
+                    serverDisposables = result.disposables;
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
@@ -144,6 +177,22 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 traceError(`Extension initialization failed: ${ex}`);
             }
         },
+
+        dispose(): void {
+            disposed = true;
+            if (restartTimer) {
+                clearTimeout(restartTimer);
+                restartTimer = undefined;
+            }
+            for (const d of serverDisposables) {
+                try {
+                    d.dispose();
+                } catch (ex) {
+                    traceError(`Failed to dispose: ${ex}`);
+                }
+            }
+            serverDisposables = [];
+        },
     };
 
     return ctx;
@@ -152,6 +201,15 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 // ---------------------------------------------------------------------------
 // Shared subscriptions
 // ---------------------------------------------------------------------------
+
+/** Run server with error handling — fire-and-forget wrapper for event handlers. */
+async function safeRunServer(toolContext: ToolExtensionContext, trigger: string): Promise<void> {
+    try {
+        await toolContext.runServer();
+    } catch (ex) {
+        traceError(`Failed to restart server on ${trigger}: ${ex}`);
+    }
+}
 
 export interface RegisterSubscriptionsOptions {
     serverInfo: IServerInfo;
@@ -198,11 +256,7 @@ export function registerCommonSubscriptions(
     // Interpreter change
     context.subscriptions.push(
         pythonProvider.onDidChangeInterpreter(async () => {
-            try {
-                await toolContext.runServer();
-            } catch (ex) {
-                traceError(`Failed to restart server on interpreter change: ${ex}`);
-            }
+            await safeRunServer(toolContext, 'interpreter change');
         }),
     );
 
@@ -212,11 +266,7 @@ export function registerCommonSubscriptions(
             outputChannel.show();
         }),
         registerCommand(`${serverId}.restart`, async () => {
-            try {
-                await toolContext.runServer();
-            } catch (ex) {
-                traceError(`Failed to restart server: ${ex}`);
-            }
+            await safeRunServer(toolContext, 'restart command');
         }),
     );
 
@@ -224,11 +274,7 @@ export function registerCommonSubscriptions(
     context.subscriptions.push(
         onDidChangeConfiguration(async (e: vscode.ConfigurationChangeEvent) => {
             if (checkIfConfigurationChanged(e, serverId, toolConfig.trackedSettings)) {
-                try {
-                    await toolContext.runServer();
-                } catch (ex) {
-                    traceError(`Failed to restart server on config change: ${ex}`);
-                }
+                await safeRunServer(toolContext, 'config change');
             }
         }),
     );
@@ -239,11 +285,7 @@ export function registerCommonSubscriptions(
     // Config file watchers
     context.subscriptions.push(
         ...createConfigFileWatchers(toolConfig.configFiles, toolConfig.toolDisplayName, async () => {
-            try {
-                await toolContext.runServer();
-            } catch (ex) {
-                traceError(`Failed to restart server on config file change: ${ex}`);
-            }
+            await safeRunServer(toolContext, 'config file change');
         }),
     );
 
@@ -258,16 +300,19 @@ export function registerCommonSubscriptions(
 // ---------------------------------------------------------------------------
 
 /**
- * Stop the language client gracefully.
+ * Stop the language client and clean up the tool context.
  *
  * Call from your extension's `deactivate()` function.
  */
-export async function deactivateServer(lsClient?: LanguageClient): Promise<void> {
-    if (lsClient) {
-        try {
-            await lsClient.stop();
-        } catch (ex) {
-            traceError(`Server: Stop failed: ${ex}`);
+export async function deactivateServer(toolContext?: ToolExtensionContext): Promise<void> {
+    if (toolContext) {
+        toolContext.dispose();
+        if (toolContext.lsClient) {
+            try {
+                await toolContext.lsClient.stop();
+            } catch (ex) {
+                traceError(`Server: Stop failed: ${ex}`);
+            }
         }
     }
 }

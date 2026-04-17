@@ -118,17 +118,22 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     }
 
     // Extra paths → PYTHONPATH
-    const extraPaths = (settings as Record<string, unknown>).extraPaths;
-    if (Array.isArray(extraPaths) && extraPaths.length > 0) {
+    if (Array.isArray(settings.extraPaths) && settings.extraPaths.length > 0) {
         const existing = newEnv.PYTHONPATH ? newEnv.PYTHONPATH.split(path.delimiter) : [];
-        const combined = [...existing, ...(extraPaths as string[])].filter((dir) => dir.length > 0);
+        const combined = [...existing, ...settings.extraPaths].filter((dir) => dir.length > 0);
         newEnv.PYTHONPATH = combined.join(path.delimiter);
         traceInfo(`PYTHONPATH: ${newEnv.PYTHONPATH}`);
     }
 
-    // Tool-specific extra env vars
+    // Tool-specific extra env vars (applied before built-in assignments to avoid silent overrides)
+    const BUILT_IN_ENV_KEYS = new Set([
+        'USE_DEBUGPY', 'DEBUGPY_PATH', 'LS_IMPORT_STRATEGY', 'LS_SHOW_NOTIFICATION', 'PYTHONUTF8', 'PYTHONPATH',
+    ]);
     if (toolConfig.extraEnvVars) {
         for (const [key, val] of Object.entries(toolConfig.extraEnvVars)) {
+            if (BUILT_IN_ENV_KEYS.has(key)) {
+                traceInfo(`extraEnvVars: "${key}" overrides built-in value — this may cause unexpected behavior.`);
+            }
             newEnv[key] = val;
         }
     }
@@ -181,18 +186,23 @@ export interface RestartServerOptions {
     pythonProvider: PythonEnvironmentsProvider;
 }
 
-let _disposables: Disposable[] = [];
+/** Result of {@link restartServer} — caller owns the disposables. */
+export interface RestartServerResult {
+    client: LanguageClient | undefined;
+    disposables: Disposable[];
+}
 
 /**
  * Full server restart lifecycle: stop old → create new → start.
  *
- * Disposes internal state listeners from the previous client, updates
- * the language status item, and returns the new running client.
+ * Updates the language status item and returns the new client alongside
+ * any disposables the caller should track.  Returns `client: undefined`
+ * when creation or start fails.
  */
 export async function restartServer(
     options: RestartServerOptions,
     oldLsClient?: LanguageClient,
-): Promise<LanguageClient | undefined> {
+): Promise<RestartServerResult> {
     const { settings, serverId, serverName, outputChannel, toolConfig, pythonProvider } = options;
 
     if (oldLsClient) {
@@ -204,35 +214,50 @@ export async function restartServer(
         }
     }
 
-    _disposables.forEach((d) => {
-        try {
-            d.dispose();
-        } catch (ex) {
-            traceError(`Failed to dispose: ${ex}`);
-        }
-    });
-    _disposables = [];
-
     updateStatus(undefined, LanguageStatusSeverity.Information, true);
 
     const resolveInterpreter = pythonProvider.getInterpreterDetails.bind(pythonProvider);
     const debuggerPath = await pythonProvider.getDebuggerPath();
 
-    const newLSClient = await createServer({
-        settings,
-        serverId,
-        serverName,
-        outputChannel,
-        toolConfig,
-        debuggerPath,
-        initializationOptions: {
-            settings: await getExtensionSettings(serverId, toolConfig, resolveInterpreter),
-            globalSettings: await getGlobalSettings(serverId, toolConfig),
-        },
-    });
+    let newLSClient: LanguageClient;
+    try {
+        newLSClient = await createServer({
+            settings,
+            serverId,
+            serverName,
+            outputChannel,
+            toolConfig,
+            debuggerPath,
+            initializationOptions: {
+                settings: await getExtensionSettings(serverId, toolConfig, resolveInterpreter),
+                globalSettings: await getGlobalSettings(serverId, toolConfig),
+            },
+        });
+    } catch (ex) {
+        updateStatus(l10n.t('Server failed to start.'), LanguageStatusSeverity.Error);
+        traceError(`Server: Creation failed: ${ex}`);
+        return { client: undefined, disposables: [] };
+    }
 
     traceInfo('Server: Start requested.');
-    _disposables.push(
+    const serverCwd = getServerCwd(settings);
+    try {
+        await newLSClient.start();
+        await newLSClient.setTrace(getLSClientTraceLevel(outputChannel.logLevel, env.logLevel));
+    } catch (ex) {
+        updateStatus(l10n.t('Server failed to start.'), LanguageStatusSeverity.Error);
+        traceError(`Server: Start failed (CWD: ${serverCwd}): ${ex}`);
+        try {
+            newLSClient.dispose();
+        } catch {
+            // best-effort cleanup
+        }
+        return { client: undefined, disposables: [] };
+    }
+
+    // Register state listener only after successful start
+    const disposables: Disposable[] = [];
+    disposables.push(
         newLSClient.onDidChangeState((e) => {
             switch (e.newState) {
                 case State.Stopped:
@@ -249,20 +274,5 @@ export async function restartServer(
         }),
     );
 
-    const serverCwd = getServerCwd(settings);
-    try {
-        await newLSClient.start();
-        await newLSClient.setTrace(getLSClientTraceLevel(outputChannel.logLevel, env.logLevel));
-    } catch (ex) {
-        updateStatus(l10n.t('Server failed to start.'), LanguageStatusSeverity.Error);
-        traceError(`Server: Start failed (CWD: ${serverCwd}): ${ex}`);
-        try {
-            newLSClient.dispose();
-        } catch {
-            // best-effort cleanup
-        }
-        return undefined;
-    }
-
-    return newLSClient;
+    return { client: newLSClient, disposables };
 }

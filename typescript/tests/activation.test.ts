@@ -81,7 +81,7 @@ suite('createToolContext', () => {
             importStrategy: 'useBundled',
             showNotifications: 'off',
         });
-        sandbox.stub(serverModule, 'restartServer').resolves(undefined);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
     });
 
     teardown(() => {
@@ -104,6 +104,7 @@ suite('createToolContext', () => {
         assert.isUndefined(ctx.lsClient);
         assert.isFunction(ctx.runServer);
         assert.isFunction(ctx.initialize);
+        assert.isFunction(ctx.dispose);
     });
 
     test('runServer calls restartServer when interpreter is present', async () => {
@@ -176,6 +177,16 @@ suite('createToolContext', () => {
             'should not call restartServer directly',
         );
     });
+
+    test('dispose prevents further runServer calls', async () => {
+        const ctx = createToolContext(makeOptions());
+        ctx.dispose();
+        await ctx.runServer();
+        assert.isFalse(
+            (serverModule.restartServer as sinon.SinonStub).called,
+            'should not call restartServer after dispose',
+        );
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -211,6 +222,7 @@ suite('registerCommonSubscriptions', () => {
                 lsClient: undefined,
                 runServer: sandbox.stub().resolves(),
                 initialize: sandbox.stub().resolves(),
+                dispose: sandbox.stub(),
             },
             pythonProvider: makeMockProvider(sandbox),
             ...overrides,
@@ -263,21 +275,49 @@ suite('registerCommonSubscriptions', () => {
 // ---------------------------------------------------------------------------
 
 suite('deactivateServer', () => {
-    test('stops the client', async () => {
+    test('stops the client and disposes context', async () => {
         const stop = sinon.stub().resolves();
+        const dispose = sinon.stub();
         const client = { stop } as unknown as LanguageClient;
-        await deactivateServer(client);
+        const ctx: ToolExtensionContext = {
+            lsClient: client,
+            runServer: sinon.stub().resolves(),
+            initialize: sinon.stub().resolves(),
+            dispose,
+        };
+        await deactivateServer(ctx);
         assert.isTrue(stop.calledOnce);
+        assert.isTrue(dispose.calledOnce);
     });
 
-    test('handles undefined client', async () => {
+    test('handles undefined context', async () => {
         await deactivateServer(undefined);
     });
 
     test('handles client stop failure gracefully', async () => {
+        const dispose = sinon.stub();
         const client = {
             stop: sinon.stub().rejects(new Error('stop failed')),
         } as unknown as LanguageClient;
-        await deactivateServer(client);
+        const ctx: ToolExtensionContext = {
+            lsClient: client,
+            runServer: sinon.stub().resolves(),
+            initialize: sinon.stub().resolves(),
+            dispose,
+        };
+        await deactivateServer(ctx);
+        assert.isTrue(dispose.calledOnce, 'dispose should still be called');
+    });
+
+    test('disposes context even without client', async () => {
+        const dispose = sinon.stub();
+        const ctx: ToolExtensionContext = {
+            lsClient: undefined,
+            runServer: sinon.stub().resolves(),
+            initialize: sinon.stub().resolves(),
+            dispose,
+        };
+        await deactivateServer(ctx);
+        assert.isTrue(dispose.calledOnce);
     });
 });
