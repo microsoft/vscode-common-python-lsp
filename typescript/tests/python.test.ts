@@ -133,4 +133,21 @@ suite('PythonEnvironmentsProvider', () => {
             assert.isUndefined(result.path);
         });
     });
+
+    suite('resolveInterpreter', () => {
+        test('returns undefined for empty array', async () => {
+            const config = makeToolConfig();
+            const provider = new PythonEnvironmentsProvider(config);
+            const result = await provider.resolveInterpreter([]);
+            assert.isUndefined(result);
+        });
+
+        test('returns undefined when APIs are unavailable', async () => {
+            const config = makeToolConfig();
+            const provider = new PythonEnvironmentsProvider(config);
+            // Both APIs throw in test — should catch and return undefined
+            const result = await provider.resolveInterpreter(['/usr/bin/python3']);
+            assert.isUndefined(result);
+        });
+    });
 });

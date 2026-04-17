@@ -249,17 +249,25 @@ export class PythonEnvironmentsProvider {
      * Resolve full environment details for a given interpreter path.
      */
     async resolveInterpreter(interpreter: string[]): Promise<IResolvedPythonEnvironment | undefined> {
-        const envsApi = await this.getEnvsApi();
-        if (envsApi) {
-            const environment = await envsApi.resolveEnvironment(Uri.file(interpreter[0]));
-            if (!environment) {
-                return undefined;
-            }
-            return fromPythonEnvironment(environment);
+        if (!interpreter.length) {
+            return undefined;
         }
-        const api = await this.getLegacyApi();
-        const resolved = await api?.environments.resolveEnvironment(interpreter[0]);
-        return resolved ? fromLegacyResolved(resolved) : undefined;
+        try {
+            const envsApi = await this.getEnvsApi();
+            if (envsApi) {
+                const environment = await envsApi.resolveEnvironment(Uri.file(interpreter[0]));
+                if (!environment) {
+                    return undefined;
+                }
+                return fromPythonEnvironment(environment);
+            }
+            const api = await this.getLegacyApi();
+            const resolved = await api?.environments.resolveEnvironment(interpreter[0]);
+            return resolved ? fromLegacyResolved(resolved) : undefined;
+        } catch (error) {
+            traceError('Error resolving interpreter: ', error);
+            return undefined;
+        }
     }
 
     /**
