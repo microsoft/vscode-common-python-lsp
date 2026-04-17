@@ -37,6 +37,10 @@ export interface ToolConfig {
 
     // Server
     configFiles: string[];
+    serverScript: string;
+    debugServerScript?: string;
+    restartDelay?: number;
+    pythonUtf8?: boolean;
 
     // Settings
     settingsDefaults: Record<string, unknown>;

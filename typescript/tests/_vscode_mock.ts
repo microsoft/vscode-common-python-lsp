@@ -19,6 +19,15 @@ export class Uri {
         return new Uri('file', filePath);
     }
 
+    static parse(value: string): Uri {
+        // Simple parse: "file:///path" → scheme "file", fsPath "/path"
+        const match = value.match(/^(\w+):\/\/(.*)$/);
+        if (match) {
+            return new Uri(match[1], match[2]);
+        }
+        return new Uri('file', value);
+    }
+
     toString(): string {
         return `${this.scheme}://${this.fsPath}`;
     }
@@ -77,6 +86,74 @@ export type LogOutputChannel = any;
 export type LanguageStatusItem = any;
 export type StatusBarItem = any;
 export type DocumentFormattingEditProvider = any;
+export type ConfigurationChangeEvent = any;
+export type DocumentSelector = any;
+
+export enum LanguageStatusSeverity {
+    Information = 0,
+    Warning = 1,
+    Error = 2,
+}
+
+export enum LogLevel {
+    Off = 0,
+    Trace = 1,
+    Debug = 2,
+    Info = 3,
+    Warning = 4,
+    Error = 5,
+}
+
+export class CompletionItem {
+    label: string;
+    constructor(label: string) {
+        this.label = label;
+    }
+}
+
+export class CompletionList {
+    items: CompletionItem[] = [];
+}
+
+export class CodeAction {
+    title: string;
+    constructor(title: string) {
+        this.title = title;
+    }
+}
+
+export class CodeLens {
+    range: any;
+}
+
+export class DocumentLink {
+    range: any;
+}
+
+export class SymbolInformation {
+    name: string = '';
+}
+
+export class InlayHint {
+    label: string = '';
+}
+
+export class Diagnostic {
+    message: string = '';
+}
+
+export class DocumentSymbol {
+    name: string = '';
+}
+
+export const l10n = {
+    t: (s: string) => s,
+};
+
+export const env = {
+    logLevel: LogLevel.Info,
+    onDidChangeLogLevel: () => ({ dispose: () => {} }),
+};
 
 export class EventEmitter<T = void> {
     private handlers: Array<(e: T) => void> = [];
