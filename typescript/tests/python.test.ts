@@ -89,6 +89,18 @@ suite('PythonEnvironmentsProvider', () => {
             assert.isFalse(provider.checkVersion(resolved));
         });
 
+        test('returns true for higher major version', () => {
+            const config = makeToolConfig({ minimumPythonVersion: { major: 3, minor: 9 } });
+            const provider = new PythonEnvironmentsProvider(config);
+
+            const resolved: IResolvedPythonEnvironment = {
+                executablePath: '/usr/bin/python4',
+                version: { major: 4, minor: 0, micro: 0 },
+            };
+
+            assert.isTrue(provider.checkVersion(resolved));
+        });
+
         test('returns false for undefined resolved', () => {
             const config = makeToolConfig();
             const provider = new PythonEnvironmentsProvider(config);

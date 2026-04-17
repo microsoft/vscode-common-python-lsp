@@ -269,7 +269,11 @@ export class PythonEnvironmentsProvider {
 
             disposables.push(
                 api.onDidChangeEnvironment(async () => {
-                    await this.refreshServerPython();
+                    try {
+                        await this.refreshServerPython();
+                    } catch (error) {
+                        traceError('Error refreshing Python interpreter: ', error);
+                    }
                 }),
             );
 
