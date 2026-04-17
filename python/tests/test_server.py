@@ -711,6 +711,51 @@ class TestLifecycle:
             ts.handle_shutdown()
             mock_shutdown.assert_called_once()
 
+    def test_apply_settings_with_none_initialization_options(self):
+        ts = _make_server()
+        params = MagicMock()
+        params.initialization_options = None
+        ts.apply_settings(params)
+        assert ts.global_settings == {}
+
+    def test_apply_settings_without_settings_key(self):
+        ts = _make_server()
+        params = MagicMock()
+        params.initialization_options = {
+            "globalSettings": {"path": ["/tool"]},
+        }
+        ts.apply_settings(params)
+        assert ts.global_settings["path"] == ["/tool"]
+
+    def test_execute_tool_invalid_mode_raises(self):
+        ts = _make_server()
+        with pytest.raises(ValueError, match="Unknown execution mode"):
+            ts.execute_tool(
+                argv=["testtool"],
+                mode="invalid",
+                settings={},
+                cwd="/tmp",
+            )
+
+    def test_execute_tool_rpc_requires_workspace(self):
+        ts = _make_server()
+        with pytest.raises(ValueError, match="workspace is required"):
+            ts.execute_tool(
+                argv=["testtool"],
+                mode="rpc",
+                settings={"interpreter": ["python3"]},
+                cwd="/tmp",
+            )
+
+    def test_get_cwd_different_drives_no_crash(self):
+        """relativeFile/relativeFileDirname don't crash on different drives."""
+        ts = _make_server()
+        settings = {"workspaceFS": "C:\\workspace", "cwd": "${relativeFile}"}
+        doc = _make_document("D:\\other\\file.py")
+        # Should not raise ValueError, should fall back gracefully
+        result = ts.get_cwd(settings, doc)
+        assert isinstance(result, str)
+
 
 # ---------------------------------------------------------------------------
 # Constructor

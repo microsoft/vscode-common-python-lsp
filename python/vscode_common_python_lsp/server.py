@@ -205,6 +205,16 @@ class ToolServer:
             file_basename = os.path.basename(file_path)
             file_stem, file_ext = os.path.splitext(file_basename)
 
+            try:
+                rel_file = os.path.relpath(file_path, workspace_fs)
+            except ValueError:
+                rel_file = file_path
+
+            try:
+                rel_dir = os.path.relpath(file_dir, workspace_fs)
+            except ValueError:
+                rel_dir = file_dir
+
             substitutions = {
                 "${file}": file_path,
                 "${fileBasename}": file_basename,
@@ -212,8 +222,8 @@ class ToolServer:
                 "${fileExtname}": file_ext,
                 "${fileDirname}": file_dir,
                 "${fileDirnameBasename}": os.path.basename(file_dir),
-                "${relativeFile}": os.path.relpath(file_path, workspace_fs),
-                "${relativeFileDirname}": os.path.relpath(file_dir, workspace_fs),
+                "${relativeFile}": rel_file,
+                "${relativeFileDirname}": rel_dir,
                 "${fileWorkspaceFolder}": workspace_fs,
             }
 
@@ -280,6 +290,8 @@ class ToolServer:
                 self.log_to_output(result.stderr)
 
         elif mode == "rpc":
+            if not workspace:
+                raise ValueError("workspace is required for RPC execution mode")
             self.log_to_output(" ".join(settings["interpreter"] + ["-m"] + list(argv)))
             self.log_to_output(f"CWD {self.config.tool_display}: {cwd}")
             rpc_result = jsonrpc.run_over_json_rpc(
@@ -296,7 +308,7 @@ class ToolServer:
             )
             result = self.to_run_result_with_logging(rpc_result)
 
-        else:  # module
+        elif mode == "module":
             self.log_to_output(" ".join([sys.executable, "-m"] + list(argv)))
             self.log_to_output(f"CWD {self.config.tool_display}: {cwd}")
             with substitute_attr(sys, "path", [""] + sys.path[:]):
@@ -313,6 +325,12 @@ class ToolServer:
                     raise
             if result.stderr:
                 self.log_to_output(result.stderr)
+
+        else:
+            raise ValueError(
+                f"Unknown execution mode: {mode!r}."
+                " Expected 'path', 'rpc', or 'module'."
+            )
 
         return result
 
@@ -388,10 +406,9 @@ class ToolServer:
         Call this from your ``@server.feature(lsp.INITIALIZE)`` handler.
         Repos can add tool-specific logic before/after this call.
         """
-        self.global_settings.update(
-            **params.initialization_options.get("globalSettings", {})
-        )
-        settings = params.initialization_options["settings"]
+        initialization_options = params.initialization_options or {}
+        self.global_settings.update(**initialization_options.get("globalSettings", {}))
+        settings = initialization_options.get("settings")
         self.update_workspace_settings(settings)
 
     def log_startup_info(self, settings: list[dict[str, Any]] | None = None) -> None:
