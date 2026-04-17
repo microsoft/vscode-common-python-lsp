@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable
 from typing import TypeAlias
 
-from packaging.version import Version, parse
+from packaging.version import parse
 
 
 def extract_version(
@@ -48,11 +48,6 @@ def check_min_version(actual: str, minimum: str) -> bool:
         return parse(actual) >= parse(minimum)
     except Exception:
         return False
-
-
-def parse_version(version_str: str) -> Version:
-    """Thin wrapper around :func:`packaging.version.parse`."""
-    return parse(version_str)
 
 
 VersionInfo: TypeAlias = tuple[int, int, int]

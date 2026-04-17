@@ -18,7 +18,12 @@ from .diagnostics import (
     parse_to_records,
     records_to_diagnostics,
 )
-from .formatting import is_notebook_cell, match_line_endings, strip_trailing_newline
+from .formatting import (
+    NOTEBOOK_CELL_SCHEME,
+    is_notebook_cell,
+    match_line_endings,
+    strip_trailing_newline,
+)
 from .jsonrpc import (
     JsonRpc,
     RpcRunResult,
@@ -55,13 +60,7 @@ from .paths import (
 from .process_runner import run_message_loop, update_sys_path
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
 from .server import ToolServer, ToolServerConfig
-from .version import (
-    VersionInfo,
-    check_min_version,
-    extract_version,
-    parse_version,
-    version_to_tuple,
-)
+from .version import VersionInfo, check_min_version, extract_version, version_to_tuple
 
 __all__ = [
     # paths
@@ -115,6 +114,7 @@ __all__ = [
     "parse_to_records",
     "records_to_diagnostics",
     # formatting
+    "NOTEBOOK_CELL_SCHEME",
     "match_line_endings",
     "is_notebook_cell",
     "strip_trailing_newline",
@@ -133,6 +133,5 @@ __all__ = [
     "VersionInfo",
     "extract_version",
     "check_min_version",
-    "parse_version",
     "version_to_tuple",
 ]

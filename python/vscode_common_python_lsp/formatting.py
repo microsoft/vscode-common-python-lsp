@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
+NOTEBOOK_CELL_SCHEME = "vscode-notebook-cell"
+
 
 def _get_line_endings(lines: list[str]) -> str | None:
     """Detect the dominant line ending in *lines*.
@@ -32,7 +36,7 @@ def match_line_endings(document_source: str, edited_text: str) -> str:
 
 def is_notebook_cell(uri: str) -> bool:
     """Return *True* if *uri* refers to a notebook cell."""
-    return uri.startswith("vscode-notebook-cell")
+    return urlparse(uri).scheme == NOTEBOOK_CELL_SCHEME
 
 
 def strip_trailing_newline(text: str) -> str:
