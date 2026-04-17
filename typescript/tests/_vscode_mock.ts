@@ -20,10 +20,14 @@ export class Uri {
     }
 
     static parse(value: string): Uri {
-        // Simple parse: "file:///path" → scheme "file", fsPath "/path"
-        const match = value.match(/^(\w+):\/\/(.*)$/);
-        if (match) {
-            return new Uri(match[1], match[2]);
+        // Match URI schemes per RFC 3986: letter followed by letters/digits/+/-.
+        const absoluteUriMatch = value.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.*)$/);
+        if (absoluteUriMatch) {
+            return new Uri(absoluteUriMatch[1], absoluteUriMatch[2]);
+        }
+        const schemeMatch = value.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
+        if (schemeMatch) {
+            return new Uri(schemeMatch[1], schemeMatch[2]);
         }
         return new Uri('file', value);
     }

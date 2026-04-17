@@ -34,6 +34,20 @@ import { getWorkspaceFolder } from './vscodeapi';
 // ---------------------------------------------------------------------------
 
 /**
+ * Parse `settings.workspace` into a {@link Uri}, handling both URI strings
+ * (`file:///path`) and plain filesystem paths (`/path` or `C:\path`).
+ *
+ * `getGlobalSettings()` sets `workspace: process.cwd()` which is a plain
+ * path, so we cannot unconditionally call `Uri.parse()`.
+ */
+function parseWorkspaceUri(workspace: string): Uri {
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(workspace)) {
+        return Uri.parse(workspace);
+    }
+    return Uri.file(workspace);
+}
+
+/**
  * Resolve the working directory for spawning the server process.
  *
  * File-based variables (`${file*}`, `${relativeFile*}`) are resolved
@@ -43,7 +57,7 @@ import { getWorkspaceFolder } from './vscodeapi';
  */
 export function getServerCwd(settings: IBaseSettings): string {
     const hasFileVariable = /\$\{(file|relativeFile)/.test(settings.cwd);
-    return hasFileVariable ? Uri.parse(settings.workspace).fsPath : settings.cwd;
+    return hasFileVariable ? parseWorkspaceUri(settings.workspace).fsPath : settings.cwd;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +100,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     const newEnv: Record<string, string | undefined> = { ...process.env };
 
     // Load environment variables from python.envFile (.env)
-    const workspaceUri = Uri.parse(settings.workspace);
+    const workspaceUri = parseWorkspaceUri(settings.workspace);
     const workspaceFolder = getWorkspaceFolder(workspaceUri);
     const envFileVars = workspaceFolder ? await getEnvFileVars(workspaceFolder) : {};
     for (const [key, val] of Object.entries(envFileVars)) {
