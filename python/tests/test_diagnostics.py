@@ -147,9 +147,7 @@ class TestParseDiagnosticsRegex:
             "5,1,Error,E302:expected 2 blank lines, got 1\n"
             "10,80,Warning,W501:line too long"
         )
-        result = parse_diagnostics_regex(
-            content, FLAKE8_RE, FLAKE8_SEVERITY, "Flake8"
-        )
+        result = parse_diagnostics_regex(content, FLAKE8_RE, FLAKE8_SEVERITY, "Flake8")
         assert len(result) == 2
         assert result[0].range.start.line == 4  # 5 - 1 (line_at_1)
         assert result[0].range.start.character == 0  # 1 - 1 (col_at_1)

@@ -11,7 +11,7 @@ from packaging.version import Version, parse
 
 
 def extract_version(
-    stdout: str,
+    stdout: str | None,
     *,
     parser: Callable[[str], str | None] | None = None,
 ) -> str | None:
@@ -21,6 +21,7 @@ def extract_version(
     ----------
     stdout:
         The tool's stdout (typically from running ``<tool> --version``).
+        May be *None* or empty — returns *None* in that case.
     parser:
         Optional callable that receives the full stdout and returns a
         version string.  When *None* the first ``\\d+\\.\\d+`` match in the

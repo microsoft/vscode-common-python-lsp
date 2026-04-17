@@ -190,12 +190,12 @@ def parse_diagnostics_regex(
 
         data = match.groupdict()
         record = ParsedRecord(
-            file=data.get("file", ""),
-            line=max(int(data.get("line", "1")) - line_offset, 0),
-            column=max(int(data.get("column", "1")) - col_offset, 0),
-            code=data.get("code", ""),
-            code_type=data.get("type", ""),
-            message=data.get("message", ""),
+            file=data.get("file") or "",
+            line=max(int(data.get("line") or "1") - line_offset, 0),
+            column=max(int(data.get("column") or "1") - col_offset, 0),
+            code=data.get("code") or "",
+            code_type=data.get("type") or "",
+            message=data.get("message") or "",
         )
 
         if record_callback is not None:

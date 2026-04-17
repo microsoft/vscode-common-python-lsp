@@ -21,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from collections.abc import Callable, Sequence
+from typing import Protocol
 
 import lsprotocol.types as lsp
 
@@ -29,11 +30,11 @@ import lsprotocol.types as lsp
 # ---------------------------------------------------------------------------
 
 
-class TextDocumentLike:
-    """Duck type for objects that provide text document attributes.
+class TextDocumentLike(Protocol):
+    """Protocol for objects that provide text document attributes.
 
-    Avoids importing ``pygls.workspace.TextDocument`` directly so the
-    module stays testable without a running language server.
+    Any object with ``source`` and ``language_id`` string attributes
+    satisfies this — including ``pygls.workspace.TextDocument``.
     """
 
     source: str
