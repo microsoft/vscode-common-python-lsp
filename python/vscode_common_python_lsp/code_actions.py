@@ -66,6 +66,7 @@ class QuickFixRegistry:
                 for code in codes:
                     if code in self._solutions:
                         raise QuickFixRegistrationError(code)
+                for code in codes:
                     self._solutions[code] = func
             return func
 
@@ -122,7 +123,7 @@ def create_workspace_edit(
             lsp.TextDocumentEdit(
                 text_document=lsp.OptionalVersionedTextDocumentIdentifier(
                     uri=document_uri,
-                    version=document_version if document_version else 0,
+                    version=document_version if document_version is not None else 0,
                 ),
                 edits=text_edits,
             )

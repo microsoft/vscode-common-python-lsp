@@ -81,8 +81,8 @@ class TestGetSeverity:
         result = get_severity("X", "X", {"X": "NotAReal"})
         assert result == lsp.DiagnosticSeverity.Error
 
-    def test_flake8_prefix_match(self):
-        """Flake8 uses exact match on code, not prefix. Prefix is the caller's job."""
+    def test_code_type_fallback(self):
+        """Falls back to default when neither code nor code_type matches."""
         assert get_severity("E501", "", {"E": "Error"}) == lsp.DiagnosticSeverity.Error
 
 

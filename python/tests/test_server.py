@@ -596,7 +596,7 @@ class TestExecuteTool:
             assert call_kwargs["runner_script"] == "/custom/runner.py"
 
 
-class TestToRunResultWithLogging:
+class TestRpcToRunResult:
     def test_exception_logged_as_error(self):
         ts = _make_server()
         rpc_result = MagicMock(stdout="out", stderr="err", exception="traceback")

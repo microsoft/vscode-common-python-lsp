@@ -46,7 +46,9 @@ class LintRequestTracker:
     def is_current(self, uri: str, version: int) -> bool:
         """Return *True* if *version* is still the latest for *uri*."""
         with self._lock:
-            return self._versions.get(uri, 0) == version
+            if uri not in self._versions:
+                return False
+            return self._versions[uri] == version
 
     def reset(self, uri: str | None = None) -> None:
         """Reset version counters.

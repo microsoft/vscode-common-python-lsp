@@ -15,6 +15,8 @@ from .diagnostics import (
     get_severity,
     make_diagnostic,
     parse_diagnostics_regex,
+    parse_to_records,
+    records_to_diagnostics,
 )
 from .formatting import is_notebook_cell, match_line_endings, strip_trailing_newline
 from .jsonrpc import (
@@ -29,6 +31,7 @@ from .linting import LintRequestTracker
 from .notebook import (
     MAGIC_LINE_RE,
     NOTEBOOK_SYNC_OPTIONS,
+    CellLike,
     CellOffset,
     SyntheticDocument,
     build_notebook_source,
@@ -109,6 +112,8 @@ __all__ = [
     "get_severity",
     "make_diagnostic",
     "parse_diagnostics_regex",
+    "parse_to_records",
+    "records_to_diagnostics",
     # formatting
     "match_line_endings",
     "is_notebook_cell",
@@ -116,6 +121,7 @@ __all__ = [
     # linting
     "LintRequestTracker",
     # notebook
+    "CellLike",
     "SyntheticDocument",
     "CellOffset",
     "MAGIC_LINE_RE",

@@ -21,7 +21,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from collections.abc import Callable, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 import lsprotocol.types as lsp
 
@@ -39,6 +39,17 @@ class TextDocumentLike(Protocol):
 
     source: str
     language_id: str
+
+
+class CellLike(Protocol):
+    """Protocol for notebook cell objects.
+
+    Any object with ``kind`` and ``document`` attributes satisfies this —
+    including ``lsprotocol.types.NotebookCell``.
+    """
+
+    kind: Any
+    document: str | None
 
 
 @dataclasses.dataclass
@@ -88,7 +99,7 @@ class CellOffset:
 
 
 def build_notebook_source(
-    cells: list,
+    cells: Sequence[CellLike],
     get_text_document: Callable[[str], TextDocumentLike | None],
     *,
     sanitize_line: Callable[[str], str] | None = None,
@@ -145,8 +156,14 @@ def build_notebook_source(
 
 
 def _default_sanitize_line(line: str) -> str:
-    """Replace IPython magic lines with ``pass\\n``."""
-    return "pass\n" if MAGIC_LINE_RE.match(line) else line
+    """Replace IPython magic lines with ``pass`` while preserving line endings."""
+    if not MAGIC_LINE_RE.match(line):
+        return line
+    if line.endswith("\r\n"):
+        return "pass\r\n"
+    if line.endswith("\n"):
+        return "pass\n"
+    return "pass"
 
 
 def get_cell_for_line(
@@ -193,9 +210,11 @@ def remap_diagnostics_to_cells(
         raw_end_line = diag.range.end.line - entry.start_line
         clamped = raw_end_line > max_end_line
         local_end_line = min(raw_end_line, max_end_line)
+        # Use max LSP uint32 value to cover the full last line.
+        _MAX_CHARACTER = 2_147_483_647
         local_end = lsp.Position(
             line=local_end_line,
-            character=0 if clamped else diag.range.end.character,
+            character=_MAX_CHARACTER if clamped else diag.range.end.character,
         )
 
         # Ensure end is not before start (inverted range violates LSP spec).

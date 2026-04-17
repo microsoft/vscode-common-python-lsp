@@ -109,7 +109,7 @@ class TestBuildNotebookSource:
         cells = [_make_cell("cell:1")]
         docs = {"cell:1": FakeDocument(source="x = 1")}
         source, _ = build_notebook_source(cells, docs.get)
-        assert source.endswith("\n")
+        assert source == "x = 1\n"
 
     def test_empty_cell_skipped(self):
         cells = [_make_cell("cell:1"), _make_cell("cell:2")]
@@ -126,7 +126,7 @@ class TestBuildNotebookSource:
         source, _ = build_notebook_source(
             cells, docs.get, sanitize_line=lambda line: f"# {line}"
         )
-        assert source.startswith("# %magic\n")
+        assert source == "# %magic\n# x = 1\n"
 
     def test_missing_document_skipped(self):
         cells = [_make_cell("cell:1")]
@@ -213,7 +213,7 @@ class TestRemapDiagnosticsToCells:
         remapped = result["cell:1"][0]
         assert remapped.range.start.line == 1
         assert remapped.range.end.line == 2  # Clamped to cell boundary
-        assert remapped.range.end.character == 0
+        assert remapped.range.end.character > 0  # Covers last line content
 
     def test_preserves_diagnostic_fields(self):
         cell_map = [CellOffset("cell:1", 0, 5)]

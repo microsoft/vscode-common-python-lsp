@@ -141,3 +141,15 @@ class TestCreateWorkspaceEdit:
     def test_none_version_defaults_to_0(self):
         ws_edit = create_workspace_edit("file:///a.py", None, [])
         assert ws_edit.document_changes[0].text_document.version == 0
+
+    def test_version_zero_preserved(self):
+        """Version 0 is a valid LSP document version (the initial version)."""
+        edit = lsp.TextEdit(
+            range=lsp.Range(
+                start=lsp.Position(line=0, character=0),
+                end=lsp.Position(line=0, character=0),
+            ),
+            new_text="x",
+        )
+        ws_edit = create_workspace_edit("file:///a.py", 0, [edit])
+        assert ws_edit.document_changes[0].text_document.version == 0

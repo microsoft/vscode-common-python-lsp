@@ -22,9 +22,6 @@ import lsprotocol.types as lsp
 # Severity resolution
 # ---------------------------------------------------------------------------
 
-# Default severity maps used across repos (tools override via settings).
-DEFAULT_SEVERITY: dict[str, str] = {}
-
 
 def get_severity(
     code: str,
@@ -125,6 +122,92 @@ class ParsedRecord:
     message: str = ""
 
 
+def parse_to_records(
+    content: str,
+    pattern: re.Pattern[str],
+    *,
+    line_at_1: bool = True,
+    col_at_1: bool = True,
+) -> list[ParsedRecord]:
+    """Parse tool output into :class:`ParsedRecord` instances.
+
+    This is the first stage of the two-stage parsing pipeline.  Use
+    :func:`records_to_diagnostics` to convert the records into LSP
+    diagnostics, or process them directly for custom handling (e.g. mypy
+    note-chaining).
+
+    The *pattern* uses ``re.match`` semantics (anchored at the start of
+    each line).  If your tool output may contain leading whitespace or
+    prefixes, account for that in the pattern.
+
+    Lines where the ``line`` named group is missing or not parseable as an
+    integer are skipped.
+    """
+    records: list[ParsedRecord] = []
+    line_offset = 1 if line_at_1 else 0
+    col_offset = 1 if col_at_1 else 0
+
+    for line in content.splitlines():
+        match = pattern.match(line)
+        if not match:
+            continue
+
+        data = match.groupdict()
+        line_value = data.get("line")
+        if not line_value:
+            continue
+
+        try:
+            parsed_line = int(line_value)
+        except ValueError:
+            continue
+
+        records.append(
+            ParsedRecord(
+                file=data.get("file") or "",
+                line=max(parsed_line - line_offset, 0),
+                column=max(int(data.get("column") or "1") - col_offset, 0),
+                code=data.get("code") or "",
+                code_type=data.get("type") or "",
+                message=data.get("message") or "",
+            )
+        )
+
+    return records
+
+
+def records_to_diagnostics(
+    records: list[ParsedRecord],
+    severity_map: dict[str, str],
+    source: str,
+    *,
+    default_severity: str = "Error",
+) -> list[lsp.Diagnostic]:
+    """Convert :class:`ParsedRecord` instances into LSP diagnostics.
+
+    This is the second stage of the two-stage parsing pipeline.
+    """
+    diagnostics: list[lsp.Diagnostic] = []
+    for record in records:
+        severity = get_severity(
+            record.code,
+            record.code_type,
+            severity_map,
+            default=default_severity,
+        )
+        diagnostics.append(
+            make_diagnostic(
+                line=record.line,
+                column=record.column,
+                message=record.message,
+                severity=severity,
+                code=record.code,
+                source=source,
+            )
+        )
+    return diagnostics
+
+
 def parse_diagnostics_regex(
     content: str,
     pattern: re.Pattern[str],
@@ -138,14 +221,22 @@ def parse_diagnostics_regex(
 ) -> list[lsp.Diagnostic]:
     """Parse tool output into diagnostics using a compiled regex.
 
-    The *pattern* must use **named groups**:
+    The *pattern* must use **named groups** and ``re.match`` semantics
+    (anchored at the start of each line).  If your tool output may contain
+    leading whitespace or prefixes, account for that in the pattern.
 
-    * ``line`` (required) — 1-based line number
-    * ``column`` (optional) — 1-based column number
-    * ``type`` (optional) — severity category (``Error``, ``Warning``, …)
-    * ``code`` (optional) — machine-readable code
-    * ``message`` (optional) — human-readable message
-    * ``file`` (optional) — file path (for multi-file output like mypy)
+    Required named groups:
+
+    * ``line`` — 1-based line number (lines without a valid integer are
+      skipped)
+
+    Optional named groups:
+
+    * ``column`` — 1-based column number
+    * ``type`` — severity category (``Error``, ``Warning``, …)
+    * ``code`` — machine-readable code
+    * ``message`` — human-readable message
+    * ``file`` — file path (for multi-file output like mypy)
 
     Parameters
     ----------
@@ -169,46 +260,16 @@ def parse_diagnostics_regex(
         the default diagnostic construction is bypassed — use this for
         tools like mypy that need note-chaining or custom ranges.
     """
-    diagnostics: list[lsp.Diagnostic] = []
-    line_offset = 1 if line_at_1 else 0
-    col_offset = 1 if col_at_1 else 0
+    records = parse_to_records(content, pattern, line_at_1=line_at_1, col_at_1=col_at_1)
 
-    for line in content.splitlines():
-        match = pattern.match(line)
-        if not match:
-            continue
-
-        data = match.groupdict()
-        record = ParsedRecord(
-            file=data.get("file") or "",
-            line=max(int(data.get("line") or "1") - line_offset, 0),
-            column=max(int(data.get("column") or "1") - col_offset, 0),
-            code=data.get("code") or "",
-            code_type=data.get("type") or "",
-            message=data.get("message") or "",
-        )
-
-        if record_callback is not None:
+    if record_callback is not None:
+        diagnostics: list[lsp.Diagnostic] = []
+        for record in records:
             diag = record_callback(record)
             if diag is not None:
                 diagnostics.append(diag)
-            continue
+        return diagnostics
 
-        severity = get_severity(
-            record.code,
-            record.code_type,
-            severity_map,
-            default=default_severity,
-        )
-        diagnostics.append(
-            make_diagnostic(
-                line=record.line,
-                column=record.column,
-                message=record.message,
-                severity=severity,
-                code=record.code,
-                source=source,
-            )
-        )
-
-    return diagnostics
+    return records_to_diagnostics(
+        records, severity_map, source, default_severity=default_severity
+    )

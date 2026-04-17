@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from typing import TypeAlias
 
 from packaging.version import Version, parse
 
@@ -54,7 +55,7 @@ def parse_version(version_str: str) -> Version:
     return parse(version_str)
 
 
-VersionInfo = tuple[int, int, int]
+VersionInfo: TypeAlias = tuple[int, int, int]
 """(major, minor, micro) tuple stored per-workspace."""
 
 
