@@ -135,6 +135,54 @@ suite('createToolContext', () => {
         );
     });
 
+    test('runServer stops stale client when interpreter is cleared', async () => {
+        const stopStub = sandbox.stub().resolves();
+        const mockClient = { stop: stopStub } as unknown as import('vscode-languageclient/node').LanguageClient;
+
+        // First run succeeds — sets up a client
+        (serverModule.restartServer as sinon.SinonStub).resolves({ client: mockClient, disposables: [] });
+        const ctx = createToolContext(makeOptions());
+        await ctx.runServer();
+        assert.strictEqual(ctx.lsClient, mockClient);
+
+        // Now interpreter is cleared
+        (settingsModule.getWorkspaceSettings as sinon.SinonStub).resolves({
+            cwd: '/workspace',
+            workspace: 'file:///workspace',
+            args: [],
+            path: [],
+            interpreter: [],
+            importStrategy: 'useBundled',
+            showNotifications: 'off',
+        });
+
+        await ctx.runServer();
+        assert.isTrue(stopStub.calledOnce, 'should stop the stale client');
+        assert.isUndefined(ctx.lsClient, 'client should be cleared');
+    });
+
+    test('dispose during in-flight restart prevents client assignment', async () => {
+        let resolveRestart: ((value: unknown) => void) | undefined;
+        (serverModule.restartServer as sinon.SinonStub).returns(
+            new Promise((resolve) => {
+                resolveRestart = resolve;
+            }),
+        );
+
+        const ctx = createToolContext(makeOptions());
+        const runPromise = ctx.runServer();
+
+        // Dispose while restartServer is in-flight
+        ctx.dispose();
+
+        // Now resolve the restart — should NOT assign client
+        const mockClient = { stop: sandbox.stub().resolves(), dispose: sandbox.stub() };
+        resolveRestart!({ client: mockClient, disposables: [] });
+        await runPromise;
+
+        assert.isUndefined(ctx.lsClient, 'should not assign client after dispose');
+    });
+
     test('runServer debounces rapid calls', async () => {
         const clock = sandbox.useFakeTimers();
         const restartServerStub = serverModule.restartServer as sinon.SinonStub;

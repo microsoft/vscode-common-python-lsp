@@ -37,14 +37,20 @@ import { getWorkspaceFolder } from './vscodeapi';
  * Parse `settings.workspace` into a {@link Uri}, handling both URI strings
  * (`file:///path`) and plain filesystem paths (`/path` or `C:\path`).
  *
+ * Uses the native `URL` constructor to detect valid URIs — avoids
+ * hand-rolled regexes that would miss edge cases (Windows drive letters,
+ * UNC paths, exotic URI schemes, etc.).
+ *
  * `getGlobalSettings()` sets `workspace: process.cwd()` which is a plain
  * path, so we cannot unconditionally call `Uri.parse()`.
  */
 function parseWorkspaceUri(workspace: string): Uri {
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(workspace)) {
+    try {
+        new URL(workspace); // throws for non-URI strings (plain paths)
         return Uri.parse(workspace);
+    } catch {
+        return Uri.file(workspace);
     }
-    return Uri.file(workspace);
 }
 
 /**

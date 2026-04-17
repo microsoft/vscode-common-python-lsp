@@ -101,6 +101,27 @@ suite('getServerCwd', () => {
         const result = getServerCwd(settings);
         assert.notInclude(result, '${fileDirname}');
     });
+
+    test('handles Windows drive path as workspace', () => {
+        const settings = makeSettings({
+            cwd: '${fileDirname}',
+            workspace: 'C:\\Users\\dev\\project',
+        });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${fileDirname}');
+        // Should route through Uri.file(), not misparse 'C:' as a URI scheme
+        assert.include(result, 'Users');
+    });
+
+    test('handles plain Unix path as workspace', () => {
+        const settings = makeSettings({
+            cwd: '${file}',
+            workspace: '/home/dev/project',
+        });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${file}');
+        assert.include(result, '/home/dev/project');
+    });
 });
 
 // ---------------------------------------------------------------------------

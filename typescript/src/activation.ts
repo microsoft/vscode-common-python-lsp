@@ -116,6 +116,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             isRestarting = true;
             try {
                 const projectRoot = await getProjectRoot();
+                if (disposed) {
+                    return;
+                }
                 const resolveInterpreter = pythonProvider.getInterpreterDetails.bind(pythonProvider);
                 const workspaceSetting = await getWorkspaceSettings(
                     serverId,
@@ -123,7 +126,28 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     toolConfig,
                     resolveInterpreter,
                 );
+                if (disposed) {
+                    return;
+                }
                 if (workspaceSetting.interpreter.length === 0) {
+                    // Stop any stale server running with the previous interpreter
+                    if (ctx.lsClient) {
+                        try {
+                            await ctx.lsClient.stop();
+                        } catch (ex) {
+                            traceError(`Server: Stop failed: ${ex}`);
+                        }
+                        ctx.lsClient = undefined;
+                    }
+                    for (const d of serverDisposables) {
+                        try {
+                            d.dispose();
+                        } catch (ex) {
+                            traceError(`Failed to dispose: ${ex}`);
+                        }
+                    }
+                    serverDisposables = [];
+
                     updateStatus(
                         vscode.l10n.t('Please select a Python interpreter.'),
                         vscode.LanguageStatusSeverity.Error,
@@ -146,6 +170,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     }
                     serverDisposables = [];
 
+                    if (disposed) {
+                        return;
+                    }
+
                     const restartOptions: RestartServerOptions = {
                         settings: workspaceSetting,
                         serverId,
@@ -155,6 +183,27 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         pythonProvider,
                     };
                     const result = await restartServer(restartOptions, ctx.lsClient);
+
+                    // Final disposed guard — don't assign if deactivated during restart
+                    if (disposed) {
+                        if (result.client) {
+                            try {
+                                await result.client.stop();
+                                result.client.dispose();
+                            } catch {
+                                // best-effort cleanup
+                            }
+                        }
+                        for (const d of result.disposables) {
+                            try {
+                                d.dispose();
+                            } catch {
+                                // best-effort
+                            }
+                        }
+                        return;
+                    }
+
                     ctx.lsClient = result.client;
                     serverDisposables = result.disposables;
                 }
