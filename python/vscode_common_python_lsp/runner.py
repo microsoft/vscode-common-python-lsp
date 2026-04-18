@@ -10,7 +10,7 @@ import os
 import runpy
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 from .context import change_cwd, redirect_io, substitute_attr
@@ -48,7 +48,7 @@ class CustomIO(io.TextIOWrapper):
 
 
 @contextlib.contextmanager
-def _cwd_lock(cwd):
+def _cwd_lock(cwd: str) -> Iterator[None]:
     """Acquire CWD_LOCK and optionally change directory."""
     with CWD_LOCK:
         if is_same_path(os.getcwd(), cwd):

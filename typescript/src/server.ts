@@ -29,6 +29,11 @@ import { IBaseSettings, IInitOptions, ToolConfig } from './types';
 import { getDocumentSelector, getLSClientTraceLevel } from './utilities';
 import { getWorkspaceFolder } from './vscodeapi';
 
+/** Environment variable keys managed by {@link createServer} — collision with these is logged. */
+const BUILT_IN_ENV_KEYS = new Set([
+    'USE_DEBUGPY', 'DEBUGPY_PATH', 'LS_IMPORT_STRATEGY', 'LS_SHOW_NOTIFICATION', 'PYTHONUTF8', 'PYTHONPATH',
+]);
+
 // ---------------------------------------------------------------------------
 // CWD resolution
 // ---------------------------------------------------------------------------
@@ -70,6 +75,7 @@ export function getServerCwd(settings: IBaseSettings): string {
 // Server creation
 // ---------------------------------------------------------------------------
 
+/** Options for {@link createServer}. */
 export interface CreateServerOptions {
     settings: IBaseSettings;
     serverId: string;
@@ -151,9 +157,6 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     // Tool-specific extra env vars — applied AFTER built-in assignments.
     // A warning is logged when a key collides with a built-in to surface
     // potential silent overrides.
-    const BUILT_IN_ENV_KEYS = new Set([
-        'USE_DEBUGPY', 'DEBUGPY_PATH', 'LS_IMPORT_STRATEGY', 'LS_SHOW_NOTIFICATION', 'PYTHONUTF8', 'PYTHONPATH',
-    ]);
     if (toolConfig.extraEnvVars) {
         for (const [key, val] of Object.entries(toolConfig.extraEnvVars)) {
             if (BUILT_IN_ENV_KEYS.has(key)) {
@@ -202,6 +205,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
 // Server restart lifecycle
 // ---------------------------------------------------------------------------
 
+/** Options for {@link restartServer}. */
 export interface RestartServerOptions {
     settings: IBaseSettings;
     serverId: string;
@@ -274,8 +278,8 @@ export async function restartServer(
         traceError(`Server: Start failed (CWD: ${serverCwd}): ${ex}`);
         try {
             newLSClient.dispose();
-        } catch {
-            // best-effort cleanup
+        } catch (ex) {
+            traceVerbose(`Server: Dispose after start failure: ${ex}`);
         }
         return { client: undefined, disposables: [] };
     }

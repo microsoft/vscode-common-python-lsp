@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable
 from typing import TypeAlias
 
-from packaging.version import parse
+from packaging.version import InvalidVersion, parse
 
 
 def extract_version(
@@ -46,7 +46,7 @@ def check_min_version(actual: str, minimum: str) -> bool:
     """
     try:
         return parse(actual) >= parse(minimum)
-    except Exception:
+    except InvalidVersion:
         return False
 
 

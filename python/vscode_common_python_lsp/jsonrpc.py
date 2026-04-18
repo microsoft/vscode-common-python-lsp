@@ -39,7 +39,7 @@ class JsonRpc:
 
     # -- write --------------------------------------------------------------
 
-    def write(self, data) -> None:
+    def write(self, data: object) -> None:
         """Write *data* to the stream in JSON-RPC format (thread-safe)."""
         with self._write_lock:
             if self._writer.closed:
@@ -51,13 +51,13 @@ class JsonRpc:
             )
             self._writer.flush()
 
-    def send_data(self, data) -> None:
+    def send_data(self, data: object) -> None:
         """Alias for :meth:`write` — send *data* in JSON-RPC format."""
         self.write(data)
 
     # -- read ---------------------------------------------------------------
 
-    def read(self):
+    def read(self) -> dict[str, object]:
         """Read and return the next JSON-RPC message from the stream."""
         if self._reader.closed:
             raise StreamClosedException()
@@ -74,7 +74,7 @@ class JsonRpc:
         content = self._reader.read(length).decode("utf-8")
         return json.loads(content)
 
-    def receive_data(self):
+    def receive_data(self) -> dict[str, object]:
         """Alias for :meth:`read` — receive data in JSON-RPC format."""
         return self.read()
 
@@ -91,7 +91,7 @@ class JsonRpc:
 
     # -- internal -----------------------------------------------------------
 
-    def _readline(self):
+    def _readline(self) -> bytes:
         line = self._reader.readline()
         if not line:
             raise EOFError
@@ -120,7 +120,7 @@ class ProcessManager:
                 try:
                     proc.kill()
                     proc.wait(timeout=5)
-                except Exception:
+                except (OSError, subprocess.TimeoutExpired):
                     pass
                 del self._processes[workspace]
             if workspace in self._rpc:
@@ -128,7 +128,7 @@ class ProcessManager:
                 with contextlib.suppress(Exception):
                     rpc.close()
 
-    def stop_all_processes(self):
+    def stop_all_processes(self) -> None:
         """Stop all managed processes and shutdown transport."""
         with self._lock:
             rpcs = list(self._rpc.values())

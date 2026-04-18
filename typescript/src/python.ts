@@ -215,14 +215,14 @@ export class PythonEnvironmentsProvider {
             this._api = wrapEnvironmentsApi(envsApi);
             return this._api;
         } catch {
-            // envs extension not available — try legacy
+            traceLog('Python environments extension not available — trying legacy.');
         }
         try {
             const legacyApi = await PythonExtension.api();
             this._api = wrapLegacyApi(legacyApi);
             return this._api;
         } catch {
-            // legacy extension not available either
+            traceLog('Legacy Python extension not available.');
         }
         return undefined;
     }
