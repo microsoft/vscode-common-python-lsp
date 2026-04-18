@@ -58,3 +58,23 @@ export { IInterpreterDetails, IPythonApi, PythonEnvironmentsProvider } from './p
 
 // Config file watching
 export { createConfigFileWatchers } from './configWatcher';
+
+// Server lifecycle
+export {
+    createServer,
+    CreateServerOptions,
+    getServerCwd,
+    restartServer,
+    RestartServerOptions,
+    RestartServerResult,
+} from './server';
+
+// Activation / deactivation
+export {
+    createToolContext,
+    CreateToolContextOptions,
+    deactivateServer,
+    registerCommonSubscriptions,
+    RegisterSubscriptionsOptions,
+    ToolExtensionContext,
+} from './activation';

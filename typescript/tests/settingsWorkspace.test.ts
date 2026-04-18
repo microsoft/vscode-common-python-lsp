@@ -34,6 +34,7 @@ function makeToolConfig(overrides?: Partial<ToolConfig>): ToolConfig {
             extraPaths: [],
         },
         trackedSettings: ['args', 'cwd', 'enabled', 'severity', 'path', 'interpreter', 'importStrategy'],
+        serverScript: '/path/to/server.py',
         ...overrides,
     };
 }

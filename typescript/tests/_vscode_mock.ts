@@ -19,6 +19,19 @@ export class Uri {
         return new Uri('file', filePath);
     }
 
+    static parse(value: string): Uri {
+        // Match URI schemes per RFC 3986: letter followed by letters/digits/+/-.
+        const absoluteUriMatch = value.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.*)$/);
+        if (absoluteUriMatch) {
+            return new Uri(absoluteUriMatch[1], absoluteUriMatch[2]);
+        }
+        const schemeMatch = value.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
+        if (schemeMatch) {
+            return new Uri(schemeMatch[1], schemeMatch[2]);
+        }
+        return new Uri('file', value);
+    }
+
     toString(): string {
         return `${this.scheme}://${this.fsPath}`;
     }
@@ -77,6 +90,74 @@ export type LogOutputChannel = any;
 export type LanguageStatusItem = any;
 export type StatusBarItem = any;
 export type DocumentFormattingEditProvider = any;
+export type ConfigurationChangeEvent = any;
+export type DocumentSelector = any;
+
+export enum LanguageStatusSeverity {
+    Information = 0,
+    Warning = 1,
+    Error = 2,
+}
+
+export enum LogLevel {
+    Off = 0,
+    Trace = 1,
+    Debug = 2,
+    Info = 3,
+    Warning = 4,
+    Error = 5,
+}
+
+export class CompletionItem {
+    label: string;
+    constructor(label: string) {
+        this.label = label;
+    }
+}
+
+export class CompletionList {
+    items: CompletionItem[] = [];
+}
+
+export class CodeAction {
+    title: string;
+    constructor(title: string) {
+        this.title = title;
+    }
+}
+
+export class CodeLens {
+    range: any;
+}
+
+export class DocumentLink {
+    range: any;
+}
+
+export class SymbolInformation {
+    name: string = '';
+}
+
+export class InlayHint {
+    label: string = '';
+}
+
+export class Diagnostic {
+    message: string = '';
+}
+
+export class DocumentSymbol {
+    name: string = '';
+}
+
+export const l10n = {
+    t: (s: string) => s,
+};
+
+export const env = {
+    logLevel: LogLevel.Info,
+    onDidChangeLogLevel: () => ({ dispose: () => {} }),
+};
 
 export class EventEmitter<T = void> {
     private handlers: Array<(e: T) => void> = [];

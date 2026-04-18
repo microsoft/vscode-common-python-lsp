@@ -16,6 +16,7 @@ function makeToolConfig(overrides?: Partial<ToolConfig>): ToolConfig {
         configFiles: [],
         settingsDefaults: {},
         trackedSettings: [],
+        serverScript: '/path/to/server.py',
         ...overrides,
     };
 }

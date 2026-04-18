@@ -21,5 +21,8 @@ Module._resolveFilename = function (request: string, ...args: unknown[]) {
     if (request === '@vscode/python-extension') {
         return path.resolve(__dirname, '_python_extension_mock.js');
     }
+    if (request === 'vscode-languageclient' || request === 'vscode-languageclient/node') {
+        return path.resolve(__dirname, '_languageclient_mock.js');
+    }
     return originalResolveFilename.call(this, request, ...args);
 };
