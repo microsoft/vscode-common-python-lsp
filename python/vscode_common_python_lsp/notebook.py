@@ -70,7 +70,7 @@ class SyntheticDocument:
 # Matches IPython magic lines (%, %%, !, !!) so they can be replaced with ``pass``.
 MAGIC_LINE_RE = re.compile(r"^\s*(?:%%\w|%(?!=)\w|!!|!(?!=)\w)")
 
-# Maximum character value in LSP (uint32 max per the LSP spec).
+# Maximum character value in LSP (the LSP ``uinteger`` max per the spec).
 MAX_LSP_CHARACTER = 2_147_483_647
 
 NOTEBOOK_SYNC_OPTIONS = lsp.NotebookDocumentSyncOptions(

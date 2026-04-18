@@ -190,6 +190,7 @@ export class PythonEnvironmentsProvider {
     public readonly onDidChangeInterpreter: Event<void> = this._onDidChangeInterpreter.event;
 
     private _api: IPythonApi | undefined;
+    private _apiResolved = false;
     private _serverPython: string[] | undefined;
 
     private readonly _minMajor: number;
@@ -207,12 +208,13 @@ export class PythonEnvironmentsProvider {
     // -----------------------------------------------------------------
 
     private async getApi(useCache: boolean = true): Promise<IPythonApi | undefined> {
-        if (this._api && useCache) {
+        if (useCache && this._apiResolved) {
             return this._api;
         }
         try {
             const envsApi = await PythonEnvironments.api();
             this._api = wrapEnvironmentsApi(envsApi);
+            this._apiResolved = true;
             return this._api;
         } catch {
             traceLog('Python environments extension not available — trying legacy.');
@@ -220,10 +222,12 @@ export class PythonEnvironmentsProvider {
         try {
             const legacyApi = await PythonExtension.api();
             this._api = wrapLegacyApi(legacyApi);
+            this._apiResolved = true;
             return this._api;
         } catch {
             traceLog('Legacy Python extension not available.');
         }
+        this._apiResolved = true;
         return undefined;
     }
 
