@@ -65,3 +65,9 @@ export class LanguageClient {
 
 export type LanguageClientOptions = Record<string, unknown>;
 export type ServerOptions = Record<string, unknown>;
+
+export class Command {
+    static create(title: string, command: string, ...args: unknown[]) {
+        return { title, command, arguments: args };
+    }
+}
