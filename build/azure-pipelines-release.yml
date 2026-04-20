@@ -41,7 +41,7 @@ stages:
         steps:
           - checkout: self
 
-          - bash: build/validate-version.sh
+          - script: python build/validate-version.py
             name: validate
             displayName: Validate tag matches manifests
 
@@ -168,8 +168,6 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
-          - checkout: self
-
           - download: current
             artifact: npm-package
             displayName: Download npm artifact
@@ -189,13 +187,22 @@ stages:
                 $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
                 Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
 
-          - powershell: >
-              build/publish-npm.ps1
-              -AzdoToken '$(AzdoToken)'
-              -NpmFeedUrl '$(NpmFeedUrl)'
-              -NpmFeedUrlNoProtocol '$(NpmFeedUrlNoProtocol)'
-              -ArtifactPath '$(Pipeline.Workspace)/npm-package'
-            displayName: Publish npm package
+          - script: |
+              echo "registry=$(NpmFeedUrl)" > .npmrc
+              echo "always-auth=true" >> .npmrc
+
+              cat > "$HOME/.npmrc" <<EOF
+              //$(NpmFeedUrlNoProtocol):username=VssSessionToken
+              //$(NpmFeedUrlNoProtocol):_authToken=$(AzdoToken)
+              //$(NpmFeedUrlNoProtocol):email=not-used@example.com
+              EOF
+            displayName: Configure npm auth
+
+          - script: |
+              tgz=$(ls $(Pipeline.Workspace)/npm-package/*.tgz | head -1)
+              echo "Publishing: $tgz"
+              npm publish "$tgz" --registry $(NpmFeedUrl)
+            displayName: npm publish
 
   # ---------------------------------------------------------------
   # Stage 4: Publish Python to msft_consumption PyPI
@@ -209,8 +216,6 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
-          - checkout: self
-
           - download: current
             artifact: python-package
             displayName: Download Python artifact
@@ -233,9 +238,10 @@ stages:
                 $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
                 Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
 
-          - bash: build/publish-pypi.sh
-            env:
-              AZDO_TOKEN: $(AzdoToken)
-              PYPI_FEED_URL: $(PyPiFeedUrl)
-              ARTIFACT_PATH: $(Pipeline.Workspace)/python-package
-            displayName: Publish Python package
+          - script: >
+              twine upload
+              --repository-url $(PyPiFeedUrl)
+              --username VssSessionToken
+              --password $(AzdoToken)
+              $(Pipeline.Workspace)/python-package/*
+            displayName: twine upload
