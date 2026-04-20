@@ -13,6 +13,20 @@ trigger:
 
 pr: none
 
+parameters:
+  - name: pythonVersions
+    type: object
+    default: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+  - name: operatingSystems
+    type: object
+    default:
+      - name: linux
+        image: ubuntu-latest
+      - name: windows
+        image: windows-latest
+      - name: macos
+        image: macos-latest
+
 variables:
   - name: NodeVersion
     value: "22.17.0"
@@ -95,27 +109,11 @@ stages:
           vmImage: ${{ matrix.os }}
         strategy:
           matrix:
-            linux-3.10:
-              os: ubuntu-latest
-              python: "3.10"
-            linux-3.11:
-              os: ubuntu-latest
-              python: "3.11"
-            linux-3.12:
-              os: ubuntu-latest
-              python: "3.12"
-            linux-3.13:
-              os: ubuntu-latest
-              python: "3.13"
-            linux-3.14:
-              os: ubuntu-latest
-              python: "3.14"
-            windows-3.10:
-              os: windows-latest
-              python: "3.10"
-            windows-3.14:
-              os: windows-latest
-              python: "3.14"
+            ${{ each os in parameters.operatingSystems }}:
+              ${{ each ver in parameters.pythonVersions }}:
+                ${{ os.name }}-${{ ver }}:
+                  os: ${{ os.image }}
+                  python: ${{ ver }}
         steps:
           - checkout: self
 
