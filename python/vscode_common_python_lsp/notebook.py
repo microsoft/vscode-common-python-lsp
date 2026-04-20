@@ -71,6 +71,7 @@ class SyntheticDocument:
 MAGIC_LINE_RE = re.compile(r"^\s*(?:%%\w|%(?!=)\w|!!|!(?!=)\w)")
 
 # Maximum character value in LSP (the LSP ``uinteger`` max per the spec).
+# https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#uinteger
 MAX_LSP_CHARACTER = 2_147_483_647
 
 NOTEBOOK_SYNC_OPTIONS = lsp.NotebookDocumentSyncOptions(

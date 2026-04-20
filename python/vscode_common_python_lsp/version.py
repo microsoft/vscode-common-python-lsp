@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from typing import TypeAlias
@@ -47,6 +48,9 @@ def check_min_version(actual: str, minimum: str) -> bool:
     try:
         return parse(actual) >= parse(minimum)
     except InvalidVersion:
+        logging.warning(
+            "Invalid version string: actual=%r, minimum=%r", actual, minimum
+        )
         return False
 
 
