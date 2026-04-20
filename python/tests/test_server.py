@@ -838,11 +838,10 @@ class TestToolServerInit:
         with patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls:
             mock_cls.return_value = MagicMock()
             ts = ToolServer(BASIC_CONFIG)
-            mock_cls.assert_called_once_with(
-                name="testtool-server",
-                version="v0.1.0",
-                max_workers=5,
-            )
+            call_kwargs = mock_cls.call_args
+            assert call_kwargs[1]["name"] == "testtool-server"
+            assert call_kwargs[1]["version"].startswith("v")
+            assert call_kwargs[1]["max_workers"] == 5
             assert ts.server is mock_cls.return_value
 
     def test_accepts_custom_server(self):

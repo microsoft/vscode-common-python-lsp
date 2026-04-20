@@ -1,0 +1,293 @@
+# Azure Pipelines release pipeline for vscode-common-python-lsp.
+#
+# Triggered by version tags (v*). Validates, tests, and publishes both the
+# TypeScript (npm) and Python (PyPI) packages to the Azure DevOps
+# msft_consumption feed.
+#
+# Auth uses Managed Identity — no PATs or stored secrets.
+
+trigger:
+  branches:
+    include:
+      - refs/tags/v*
+
+pr: none
+
+variables:
+  - name: NodeVersion
+    value: "22.17.0"
+  - name: PythonVersion
+    value: "3.10"
+  - name: AzureServiceConnection
+    value: "PylanceSecureVsIdePublishWithManagedIdentity"
+  - name: NpmFeedUrl
+    value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
+  - name: NpmFeedUrlNoProtocol
+    value: "pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
+  - name: PyPiFeedUrl
+    value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/pypi/upload/"
+
+stages:
+  # ---------------------------------------------------------------
+  # Stage 1: Validate version consistency
+  # ---------------------------------------------------------------
+  - stage: Validate
+    displayName: Validate Release
+    jobs:
+      - job: VersionCheck
+        displayName: Check version consistency
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - script: |
+              TAG_VERSION="${BUILD_SOURCEBRANCH#refs/tags/v}"
+              FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+              PKG_VERSION=$(node -e "console.log(require('./typescript/package.json').version)")
+              PYPROJECT_VERSION=$(python3 -c "
+              import re
+              content = open('python/pyproject.toml').read()
+              m = re.search(r'^version\s*=\"([^\"]+)\"', content, re.MULTILINE)
+              print(m.group(1) if m else 'NOT_FOUND')
+              ")
+
+              echo "Tag version:            $TAG_VERSION"
+              echo "VERSION file:           $FILE_VERSION"
+              echo "package.json version:   $PKG_VERSION"
+              echo "pyproject.toml version: $PYPROJECT_VERSION"
+
+              ERRORS=0
+              if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+                echo "##vso[task.logissue type=error]Tag ($TAG_VERSION) != VERSION file ($FILE_VERSION)"
+                ERRORS=$((ERRORS + 1))
+              fi
+              if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+                echo "##vso[task.logissue type=error]Tag ($TAG_VERSION) != package.json ($PKG_VERSION)"
+                ERRORS=$((ERRORS + 1))
+              fi
+              if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+                echo "##vso[task.logissue type=error]Tag ($TAG_VERSION) != pyproject.toml ($PYPROJECT_VERSION)"
+                ERRORS=$((ERRORS + 1))
+              fi
+
+              if [ "$ERRORS" -gt 0 ]; then
+                echo "##vso[task.logissue type=error]Version mismatch detected. Run 'python scripts/sync-version.py $TAG_VERSION' and push."
+                exit 1
+              fi
+
+              echo "##vso[task.setvariable variable=ReleaseVersion;isOutput=true]$TAG_VERSION"
+              echo "✅ All versions consistent: $TAG_VERSION"
+            name: validate
+            displayName: Validate tag matches manifests
+
+  # ---------------------------------------------------------------
+  # Stage 2: Build artifacts (once) and run tests
+  # ---------------------------------------------------------------
+  - stage: BuildAndTest
+    displayName: Build & Test
+    dependsOn: Validate
+    variables:
+      ReleaseVersion: $[ stageDependencies.Validate.VersionCheck.outputs['validate.ReleaseVersion'] ]
+    jobs:
+      # --- TypeScript build + test ---
+      - job: TypeScript
+        displayName: TypeScript build & test
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: UseNode@1
+            inputs:
+              version: $(NodeVersion)
+            displayName: Use Node.js $(NodeVersion)
+
+          - script: npm ci
+            workingDirectory: typescript
+            displayName: Install dependencies
+
+          - script: npm run build
+            workingDirectory: typescript
+            displayName: Build
+
+          - script: npm run lint
+            workingDirectory: typescript
+            displayName: Lint
+
+          - script: npm test
+            workingDirectory: typescript
+            displayName: Test
+
+          - script: npm pack
+            workingDirectory: typescript
+            displayName: Pack npm tarball
+
+          - publish: $(System.DefaultWorkingDirectory)/typescript/*.tgz
+            artifact: npm-package
+            displayName: Publish npm artifact
+
+      # --- Python build + test (matrix) ---
+      - job: PythonTest
+        displayName: Python test (${{ format('{0}', parameters.python) }})
+        pool:
+          vmImage: ${{ matrix.os }}
+        strategy:
+          matrix:
+            linux-3.10:
+              os: ubuntu-latest
+              python: "3.10"
+            linux-3.11:
+              os: ubuntu-latest
+              python: "3.11"
+            linux-3.12:
+              os: ubuntu-latest
+              python: "3.12"
+            linux-3.13:
+              os: ubuntu-latest
+              python: "3.13"
+            linux-3.14:
+              os: ubuntu-latest
+              python: "3.14"
+            windows-3.10:
+              os: windows-latest
+              python: "3.10"
+            windows-3.14:
+              os: windows-latest
+              python: "3.14"
+        steps:
+          - checkout: self
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(python)
+            displayName: Use Python $(python)
+
+          - script: pip install nox
+            displayName: Install nox
+
+          - script: nox -s tests
+            displayName: Run tests
+
+      # --- Python build (single job, produces dist artifact) ---
+      - job: PythonBuild
+        displayName: Python build
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PythonVersion)
+            displayName: Use Python $(PythonVersion)
+
+          - script: pip install build
+            displayName: Install build tool
+
+          - script: python -m build python/
+            displayName: Build sdist and wheel
+
+          - publish: $(System.DefaultWorkingDirectory)/dist
+            artifact: python-package
+            displayName: Publish Python artifact
+
+  # ---------------------------------------------------------------
+  # Stage 3: Publish npm to msft_consumption
+  # ---------------------------------------------------------------
+  - stage: PublishNpm
+    displayName: Publish npm
+    dependsOn: BuildAndTest
+    jobs:
+      - job: Publish
+        displayName: Publish to ADO npm feed
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - download: current
+            artifact: npm-package
+            displayName: Download npm artifact
+
+          - task: UseNode@1
+            inputs:
+              version: $(NodeVersion)
+            displayName: Use Node.js $(NodeVersion)
+
+          - task: AzureCLI@2
+            displayName: Acquire AAD token via Managed Identity
+            inputs:
+              azureSubscription: $(AzureServiceConnection)
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
+                Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
+
+          - powershell: |
+              @"
+              registry=$(NpmFeedUrl)
+              always-auth=true
+              "@ | Out-File -FilePath .npmrc
+
+              @"
+              ; begin auth token
+              //$(NpmFeedUrlNoProtocol):username=VssSessionToken
+              //$(NpmFeedUrlNoProtocol):_authToken=$env:AZDO_TOKEN
+              //$(NpmFeedUrlNoProtocol):email=not-used@example.com
+              ; end auth token
+              "@ | Out-File -FilePath $HOME/.npmrc
+            env:
+              AZDO_TOKEN: $(AzdoToken)
+            displayName: Create .npmrc files
+
+          - powershell: |
+              $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
+              if (-not $tgz) {
+                  Write-Error "No .tgz file found in npm-package artifact"
+                  exit 1
+              }
+              Write-Host "Publishing: $($tgz.FullName)"
+              npm publish $tgz.FullName --registry $(NpmFeedUrl)
+            displayName: npm publish
+
+  # ---------------------------------------------------------------
+  # Stage 4: Publish Python to msft_consumption PyPI
+  # ---------------------------------------------------------------
+  - stage: PublishPyPI
+    displayName: Publish PyPI
+    dependsOn: PublishNpm
+    jobs:
+      - job: Publish
+        displayName: Publish to ADO PyPI feed
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - download: current
+            artifact: python-package
+            displayName: Download Python artifact
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PythonVersion)
+            displayName: Use Python $(PythonVersion)
+
+          - script: pip install twine
+            displayName: Install twine
+
+          - task: AzureCLI@2
+            displayName: Acquire AAD token via Managed Identity
+            inputs:
+              azureSubscription: $(AzureServiceConnection)
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
+                Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
+
+          - script: |
+              twine upload \
+                --repository-url $(PyPiFeedUrl) \
+                --username VssSessionToken \
+                --password $(AzdoToken) \
+                $(Pipeline.Workspace)/python-package/*
+            displayName: twine upload

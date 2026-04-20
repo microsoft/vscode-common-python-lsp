@@ -4,7 +4,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 dist/
-build/
+/python/build/
 *.egg
 .nox/
 .pytest_cache/
@@ -16,6 +16,7 @@ node_modules/
 typescript/dist/
 typescript/out/
 *.js.map
+*.tgz
 
 # IDE
 .vscode/*

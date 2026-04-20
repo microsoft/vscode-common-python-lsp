@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import pathlib
@@ -87,9 +88,10 @@ class ToolServer:
         self.config = config
         self.workspace_settings: dict[str, Any] = {}
         self.global_settings: dict[str, Any] = {}
+        _pkg_version = importlib.metadata.version("vscode-common-python-lsp")
         self.server = server or LanguageServer(
             name=f"{config.tool_module}-server",
-            version="v0.1.0",
+            version=f"v{_pkg_version}",
             max_workers=5,
         )
 
