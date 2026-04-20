@@ -70,6 +70,10 @@ class SyntheticDocument:
 # Matches IPython magic lines (%, %%, !, !!) so they can be replaced with ``pass``.
 MAGIC_LINE_RE = re.compile(r"^\s*(?:%%\w|%(?!=)\w|!!|!(?!=)\w)")
 
+# Maximum character value in LSP (the LSP ``uinteger`` max per the spec).
+# https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#uinteger
+MAX_LSP_CHARACTER = 2_147_483_647
+
 NOTEBOOK_SYNC_OPTIONS = lsp.NotebookDocumentSyncOptions(
     notebook_selector=[
         lsp.NotebookDocumentFilterWithNotebook(
@@ -211,10 +215,9 @@ def remap_diagnostics_to_cells(
         clamped = raw_end_line > max_end_line
         local_end_line = min(raw_end_line, max_end_line)
         # Use max LSP uint32 value to cover the full last line.
-        _MAX_CHARACTER = 2_147_483_647
         local_end = lsp.Position(
             line=local_end_line,
-            character=_MAX_CHARACTER if clamped else diag.range.end.character,
+            character=MAX_LSP_CHARACTER if clamped else diag.range.end.character,
         )
 
         # Ensure end is not before start (inverted range violates LSP spec).

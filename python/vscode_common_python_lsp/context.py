@@ -8,13 +8,14 @@ import contextlib
 import logging
 import os
 import sys
+from collections.abc import Iterator
 from typing import Any
 
 from .paths import SERVER_CWD
 
 
 @contextlib.contextmanager
-def substitute_attr(obj: Any, attribute: str, new_value: Any):
+def substitute_attr(obj: object, attribute: str, new_value: Any) -> Iterator[None]:
     """Manage object attributes context when using runpy.run_module()."""
     old_value = getattr(obj, attribute)
     setattr(obj, attribute, new_value)
@@ -25,7 +26,7 @@ def substitute_attr(obj: Any, attribute: str, new_value: Any):
 
 
 @contextlib.contextmanager
-def redirect_io(stream: str, new_stream):
+def redirect_io(stream: str, new_stream: Any) -> Iterator[None]:
     """Redirect stdio streams to a custom stream."""
     old_stream = getattr(sys, stream)
     setattr(sys, stream, new_stream)
@@ -36,7 +37,7 @@ def redirect_io(stream: str, new_stream):
 
 
 @contextlib.contextmanager
-def change_cwd(new_cwd):
+def change_cwd(new_cwd: str) -> Iterator[None]:
     """Change working directory before running code.
 
     Always restores to ``SERVER_CWD`` (the working directory at process

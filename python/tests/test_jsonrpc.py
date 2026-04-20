@@ -171,7 +171,7 @@ class TestProcessManager(unittest.TestCase):
         mock_proc.stdout = io.BytesIO()
         mock_proc.stdin = io.BytesIO()
         wait_event = threading.Event()
-        mock_proc.wait = MagicMock(side_effect=lambda: wait_event.wait())
+        mock_proc.wait = MagicMock(side_effect=lambda **kw: wait_event.wait())
         mock_popen.return_value = mock_proc
 
         pm.start_process("ws1", ["python"], "/tmp")

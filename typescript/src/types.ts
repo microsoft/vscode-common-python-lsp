@@ -5,11 +5,13 @@
  * Shared type definitions for VS Code Python tool extensions.
  */
 
+/** Server identity metadata loaded from `package.json`. */
 export interface IServerInfo {
     name: string;
     module: string;
 }
 
+/** Base settings resolved per workspace by the settings module. */
 export interface IBaseSettings {
     cwd: string;
     workspace: string;
@@ -22,11 +24,13 @@ export interface IBaseSettings {
     [key: string]: unknown;
 }
 
+/** Initialization options sent to the Python LSP server. */
 export interface IInitOptions {
     settings: IBaseSettings[];
     globalSettings: IBaseSettings;
 }
 
+/** Tool-specific configuration supplied by each extension. */
 export interface ToolConfig {
     // Identity
     toolId: string;

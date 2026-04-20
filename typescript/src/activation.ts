@@ -72,6 +72,7 @@ export interface ToolExtensionContext {
     dispose(): void;
 }
 
+/** Options for {@link createToolContext}. */
 export interface CreateToolContextOptions {
     serverInfo: IServerInfo;
     outputChannel: vscode.LogOutputChannel;
@@ -190,15 +191,15 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                             try {
                                 await result.client.stop();
                                 result.client.dispose();
-                            } catch {
-                                // best-effort cleanup
+                            } catch (ex) {
+                                traceVerbose(`Dispose after deactivation: ${ex}`);
                             }
                         }
                         for (const d of result.disposables) {
                             try {
                                 d.dispose();
-                            } catch {
-                                // best-effort
+                            } catch (ex) {
+                                traceVerbose(`Dispose after deactivation: ${ex}`);
                             }
                         }
                         return;
@@ -263,6 +264,7 @@ async function safeRunServer(toolContext: ToolExtensionContext, trigger: string)
     }
 }
 
+/** Options for {@link registerCommonSubscriptions}. */
 export interface RegisterSubscriptionsOptions {
     serverInfo: IServerInfo;
     outputChannel: vscode.LogOutputChannel;
