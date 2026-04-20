@@ -41,43 +41,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: |
-              TAG_VERSION="${BUILD_SOURCEBRANCH#refs/tags/v}"
-              FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-              PKG_VERSION=$(node -e "console.log(require('./typescript/package.json').version)")
-              PYPROJECT_VERSION=$(python3 -c "
-              import re
-              content = open('python/pyproject.toml').read()
-              m = re.search(r'^version\s*=\"([^\"]+)\"', content, re.MULTILINE)
-              print(m.group(1) if m else 'NOT_FOUND')
-              ")
-
-              echo "Tag version:            $TAG_VERSION"
-              echo "VERSION file:           $FILE_VERSION"
-              echo "package.json version:   $PKG_VERSION"
-              echo "pyproject.toml version: $PYPROJECT_VERSION"
-
-              ERRORS=0
-              if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
-                echo "##vso[task.logissue type=error]Tag ($TAG_VERSION) != VERSION file ($FILE_VERSION)"
-                ERRORS=$((ERRORS + 1))
-              fi
-              if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-                echo "##vso[task.logissue type=error]Tag ($TAG_VERSION) != package.json ($PKG_VERSION)"
-                ERRORS=$((ERRORS + 1))
-              fi
-              if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
-                echo "##vso[task.logissue type=error]Tag ($TAG_VERSION) != pyproject.toml ($PYPROJECT_VERSION)"
-                ERRORS=$((ERRORS + 1))
-              fi
-
-              if [ "$ERRORS" -gt 0 ]; then
-                echo "##vso[task.logissue type=error]Version mismatch detected. Run 'python scripts/sync-version.py $TAG_VERSION' and push."
-                exit 1
-              fi
-
-              echo "##vso[task.setvariable variable=ReleaseVersion;isOutput=true]$TAG_VERSION"
-              echo "✅ All versions consistent: $TAG_VERSION"
+          - bash: build/validate-version.sh
             name: validate
             displayName: Validate tag matches manifests
 
@@ -204,6 +168,8 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
+          - checkout: self
+
           - download: current
             artifact: npm-package
             displayName: Download npm artifact
@@ -223,32 +189,13 @@ stages:
                 $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
                 Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
 
-          - powershell: |
-              @"
-              registry=$(NpmFeedUrl)
-              always-auth=true
-              "@ | Out-File -FilePath .npmrc
-
-              @"
-              ; begin auth token
-              //$(NpmFeedUrlNoProtocol):username=VssSessionToken
-              //$(NpmFeedUrlNoProtocol):_authToken=$env:AZDO_TOKEN
-              //$(NpmFeedUrlNoProtocol):email=not-used@example.com
-              ; end auth token
-              "@ | Out-File -FilePath $HOME/.npmrc
-            env:
-              AZDO_TOKEN: $(AzdoToken)
-            displayName: Create .npmrc files
-
-          - powershell: |
-              $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
-              if (-not $tgz) {
-                  Write-Error "No .tgz file found in npm-package artifact"
-                  exit 1
-              }
-              Write-Host "Publishing: $($tgz.FullName)"
-              npm publish $tgz.FullName --registry $(NpmFeedUrl)
-            displayName: npm publish
+          - powershell: >
+              build/publish-npm.ps1
+              -AzdoToken '$(AzdoToken)'
+              -NpmFeedUrl '$(NpmFeedUrl)'
+              -NpmFeedUrlNoProtocol '$(NpmFeedUrlNoProtocol)'
+              -ArtifactPath '$(Pipeline.Workspace)/npm-package'
+            displayName: Publish npm package
 
   # ---------------------------------------------------------------
   # Stage 4: Publish Python to msft_consumption PyPI
@@ -262,6 +209,8 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
+          - checkout: self
+
           - download: current
             artifact: python-package
             displayName: Download Python artifact
@@ -284,10 +233,9 @@ stages:
                 $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
                 Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
 
-          - script: |
-              twine upload \
-                --repository-url $(PyPiFeedUrl) \
-                --username VssSessionToken \
-                --password $(AzdoToken) \
-                $(Pipeline.Workspace)/python-package/*
-            displayName: twine upload
+          - bash: build/publish-pypi.sh
+            env:
+              AZDO_TOKEN: $(AzdoToken)
+              PYPI_FEED_URL: $(PyPiFeedUrl)
+              ARTIFACT_PATH: $(Pipeline.Workspace)/python-package
+            displayName: Publish Python package
