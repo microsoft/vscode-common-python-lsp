@@ -18,14 +18,11 @@ variables:
     value: "22.17.0"
   - name: PythonVersion
     value: "3.10"
-  - name: AzureServiceConnection
-    value: "PylanceSecureVsIdePublishWithManagedIdentity"
-  - name: NpmFeedUrl
-    value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
-  - name: NpmFeedUrlNoProtocol
-    value: "pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
-  - name: PyPiFeedUrl
-    value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/pypi/upload/"
+  # TODO: replace with actual msft_consumption feed GUID
+  - name: NpmFeedId
+    value: "azure-public/vside/_packaging/msft_consumption/npm/registry/"
+  - name: PyPiFeedId
+    value: "azure-public/vside/_packaging/msft_consumption/pypi/upload/"
 
 stages:
   # ---------------------------------------------------------------
@@ -177,32 +174,14 @@ stages:
               version: $(NodeVersion)
             displayName: Use Node.js $(NodeVersion)
 
-          - task: AzureCLI@2
-            displayName: Acquire AAD token via Managed Identity
-            inputs:
-              azureSubscription: $(AzureServiceConnection)
-              scriptType: pscore
-              scriptLocation: inlineScript
-              inlineScript: |
-                $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
-                Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
-
-          - script: |
-              echo "registry=$(NpmFeedUrl)" > .npmrc
-              echo "always-auth=true" >> .npmrc
-
-              cat > "$HOME/.npmrc" <<EOF
-              //$(NpmFeedUrlNoProtocol):username=VssSessionToken
-              //$(NpmFeedUrlNoProtocol):_authToken=$(AzdoToken)
-              //$(NpmFeedUrlNoProtocol):email=not-used@example.com
-              EOF
-            displayName: Configure npm auth
-
-          - script: |
-              tgz=$(ls $(Pipeline.Workspace)/npm-package/*.tgz | head -1)
-              echo "Publishing: $tgz"
-              npm publish "$tgz" --registry $(NpmFeedUrl)
+          # TODO: set customFeed to the msft_consumption feed GUID
+          - task: Npm@1
             displayName: npm publish
+            inputs:
+              command: custom
+              customCommand: publish $(Pipeline.Workspace)/npm-package/*.tgz
+              customRegistry: useFeed
+              customFeed: $(NpmFeedId)
 
   # ---------------------------------------------------------------
   # Stage 4: Publish Python to msft_consumption PyPI
@@ -228,20 +207,15 @@ stages:
           - script: pip install twine
             displayName: Install twine
 
-          - task: AzureCLI@2
-            displayName: Acquire AAD token via Managed Identity
+          # TODO: set pythonUploadServiceConnection if using service connection auth
+          - task: TwineAuthenticate@1
+            displayName: Authenticate with PyPI feed
             inputs:
-              azureSubscription: $(AzureServiceConnection)
-              scriptType: pscore
-              scriptLocation: inlineScript
-              inlineScript: |
-                $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
-                Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
+              artifactFeed: $(PyPiFeedId)
 
           - script: >
               twine upload
-              --repository-url $(PyPiFeedUrl)
-              --username VssSessionToken
-              --password $(AzdoToken)
+              -r $(PyPiFeedId)
+              --config-file $(PYPIRC_PATH)
               $(Pipeline.Workspace)/python-package/*
             displayName: twine upload
