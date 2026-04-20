@@ -18,6 +18,33 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 2. Make your changes and ensure they pass the existing tests and linting.
 3. Submit a pull request with a clear description of the changes.
 
+## Versioning
+
+Both the TypeScript and Python packages share a single version number defined in
+the `VERSION` file at the repository root. When bumping the version:
+
+```bash
+# Set the version and propagate to package.json + pyproject.toml
+python -m scripts.version.sync 0.2.0
+```
+
+To verify all manifests are in sync (also runs automatically in CI):
+
+```bash
+python -m scripts.version.validate
+```
+
+A PR will fail the **Version Check** workflow if the version in `VERSION`,
+`typescript/package.json`, or `python/pyproject.toml` don't match.
+
+### Release process
+
+1. Bump the version: `python -m scripts.version.sync X.Y.Z`
+2. Update `CHANGELOG.md` with the new version and release notes.
+3. Commit, push, and merge the PR.
+4. Create a **GitHub Release** targeting `main` with tag `vX.Y.Z`.
+5. Azure Pipelines automatically publishes both packages to the ADO feed.
+
 ## Reporting Issues
 
 Please use [GitHub Issues](https://github.com/microsoft/vscode-common-python-lsp/issues) to report

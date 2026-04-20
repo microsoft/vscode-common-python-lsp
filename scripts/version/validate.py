@@ -3,29 +3,16 @@
 # Licensed under the MIT License.
 """Validate version consistency across VERSION, package.json, and pyproject.toml.
 
-Exit 0 if all match, exit 1 on mismatch. Optionally pass a tag (e.g. v0.2.0)
-to also verify it matches.
+Usage:
+    python scripts/version/validate.py              # verify manifests match VERSION
+    python scripts/version/validate.py v0.2.0       # also verify against a git tag
 """
 
 from __future__ import annotations
 
-import json
-import re
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-
-
-def read_versions() -> dict[str, str]:
-    pkg = json.loads((ROOT / "typescript/package.json").read_text())
-    toml = (ROOT / "python/pyproject.toml").read_text()
-    m = re.search(r'^version\s*=\s*"([^"]+)"', toml, re.MULTILINE)
-    return {
-        "VERSION": (ROOT / "VERSION").read_text().strip(),
-        "package.json": pkg["version"],
-        "pyproject.toml": m.group(1) if m else "NOT_FOUND",
-    }
+from . import read_versions
 
 
 def main() -> None:
@@ -42,7 +29,11 @@ def main() -> None:
     mismatches = [s for s, v in versions.items() if v != reference]
     if mismatches:
         print(f"\nVersion mismatch in: {', '.join(mismatches)}")
-        print(f"Fix: python scripts/sync-version.py {reference}")
+        print()
+        print("To fix, run:")
+        print(f"  python -m scripts.version.sync {reference}")
+        print()
+        print("This updates VERSION, package.json, and pyproject.toml to match.")
         sys.exit(1)
 
     print(f"\nAll versions consistent: {reference}")
@@ -50,4 +41,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

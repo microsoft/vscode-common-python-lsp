@@ -52,7 +52,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: python build/validate-version.py ${BUILD_SOURCEBRANCH#refs/tags/}
+          - script: python -m scripts.version.validate ${BUILD_SOURCEBRANCH#refs/tags/}
             name: validate
             displayName: Validate tag matches manifests
 
