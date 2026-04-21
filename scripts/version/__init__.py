@@ -29,12 +29,16 @@ def read_versions() -> dict[str, str]:
     if tomllib is not None:
         with PYPROJECT_TOML.open("rb") as f:
             toml_data = tomllib.load(f)
-        toml_version = toml_data.get("project", {}).get("version", "NOT_FOUND")
+        toml_version = toml_data.get("project", {}).get("version")
+        if toml_version is None:
+            raise ValueError("pyproject.toml: [project].version key not found")
     else:
         # Fallback regex for Python < 3.11 without tomllib
         toml_text = PYPROJECT_TOML.read_text(encoding="utf-8")
         m = re.search(r'^version\s*=\s*"([^"]+)"', toml_text, re.MULTILINE)
-        toml_version = m.group(1) if m else "NOT_FOUND"
+        if m is None:
+            raise ValueError("pyproject.toml: could not find version field")
+        toml_version = m.group(1)
 
     return {
         "VERSION": VERSION_FILE.read_text(encoding="utf-8").strip(),

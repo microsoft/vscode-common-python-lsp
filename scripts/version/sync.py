@@ -46,6 +46,7 @@ def main() -> None:
             ["npm", "install", "--package-lock-only"],
             cwd=PACKAGE_JSON.parent,
             check=True,
+            shell=(sys.platform == "win32"),
         )
         changed.append("package-lock.json")
 
