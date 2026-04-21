@@ -7,9 +7,9 @@
 # Auth uses Managed Identity — no PATs or stored secrets.
 
 trigger:
-  branches:
+  tags:
     include:
-      - refs/tags/v*
+      - v*
 
 pr: none
 
@@ -104,7 +104,7 @@ stages:
 
       # --- Python build + test (matrix) ---
       - job: PythonTest
-        displayName: Python test (${{ format('{0}', parameters.python) }})
+        displayName: Python test
         pool:
           vmImage: ${{ matrix.os }}
         strategy:
@@ -144,7 +144,7 @@ stages:
           - script: pip install build
             displayName: Install build tool
 
-          - script: python -m build python/
+          - script: python -m build python/ --outdir dist
             displayName: Build sdist and wheel
 
           - publish: $(System.DefaultWorkingDirectory)/dist

@@ -10,7 +10,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 
@@ -30,11 +29,16 @@ def main() -> None:
 
     changed = []
 
-    # package.json
-    data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
-    if data.get("version") != version:
-        data["version"] = version
-        PACKAGE_JSON.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
+    # package.json — regex replacement to preserve formatting
+    pkg_text = PACKAGE_JSON.read_text(encoding="utf-8")
+    new_pkg_text = re.sub(
+        r'("version"\s*:\s*")[^"]+(")',
+        rf"\g<1>{version}\2",
+        pkg_text,
+        count=1,
+    )
+    if new_pkg_text != pkg_text:
+        PACKAGE_JSON.write_text(new_pkg_text, encoding="utf-8")
         changed.append("package.json")
 
     # pyproject.toml

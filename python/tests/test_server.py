@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import pathlib
 import sys
@@ -835,14 +836,35 @@ class TestLifecycle:
 
 class TestToolServerInit:
     def test_creates_default_server(self):
-        with patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls:
+        with (
+            patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls,
+            patch(
+                "vscode_common_python_lsp.server.importlib.metadata.version",
+                return_value="1.2.3",
+            ),
+        ):
             mock_cls.return_value = MagicMock()
             ts = ToolServer(BASIC_CONFIG)
-            call_kwargs = mock_cls.call_args
-            assert call_kwargs[1]["name"] == "testtool-server"
-            assert call_kwargs[1]["version"].startswith("v")
-            assert call_kwargs[1]["max_workers"] == 5
+            mock_cls.assert_called_once_with(
+                name="testtool-server",
+                version="v1.2.3",
+                max_workers=5,
+            )
             assert ts.server is mock_cls.return_value
+
+    def test_fallback_version_when_package_not_installed(self):
+        with (
+            patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls,
+            patch(
+                "vscode_common_python_lsp.server.importlib.metadata.version",
+                side_effect=importlib.metadata.PackageNotFoundError(
+                    "vscode-common-python-lsp"
+                ),
+            ),
+        ):
+            mock_cls.return_value = MagicMock()
+            ToolServer(BASIC_CONFIG)
+            assert mock_cls.call_args[1]["version"] == "v0.0.0-dev"
 
     def test_accepts_custom_server(self):
         custom = MagicMock()
