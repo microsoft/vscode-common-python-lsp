@@ -28,6 +28,12 @@ parameters:
   - name: pythonVersions
     type: object
     default: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+  - name: checkVersionConsistency
+    type: boolean
+    default: true
+  - name: publish
+    type: boolean
+    default: true
 
 variables:
   - name: TeamName
@@ -65,6 +71,7 @@ extends:
       # ---------------------------------------------------------------
       - stage: Validate
         displayName: Validate Release
+        condition: and(succeeded(), eq('${{ parameters.checkVersionConsistency }}', 'true'))
         jobs:
           - job: VersionCheck
             displayName: Check version consistency
@@ -86,6 +93,7 @@ extends:
       - stage: BuildAndTest
         displayName: Build & Test
         dependsOn: Validate
+        condition: not(failed('Validate'))
         jobs:
           # --- TypeScript build + test ---
           - job: TypeScript
@@ -209,6 +217,7 @@ extends:
       - stage: PublishNpm
         displayName: Publish npm
         dependsOn: BuildAndTest
+        condition: and(eq('${{ parameters.publish }}', 'true'), not(failed('BuildAndTest')))
         jobs:
           - job: Publish
             displayName: Publish to ADO npm feed
@@ -251,6 +260,7 @@ extends:
       - stage: PublishPyPI
         displayName: Publish PyPI
         dependsOn: PublishNpm
+        condition: and(eq('${{ parameters.publish }}', 'true'), not(failed('PublishNpm')))
         jobs:
           - job: Publish
             displayName: Publish to ADO PyPI feed
