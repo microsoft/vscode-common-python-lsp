@@ -8,9 +8,12 @@
 # Auth uses Managed Identity — no PATs or stored secrets.
 
 trigger:
-  tags:
+  branches:
     include:
-      - v*
+      - main
+  # tags:
+  #   include:
+  #     - v*
 
 pr: none
 
