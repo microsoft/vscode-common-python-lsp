@@ -38,10 +38,10 @@ variables:
     value: "3.10"
   # npm feed URL
   - name: NpmFeedUrl
-    value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
+    value: "https://pkgs.dev.azure.com/devdiv/_packaging/vscode-common-python-lsp/npm/registry/ / "
   # PyPI feed (project/feed format for TwineAuthenticate)
   - name: PyPiFeedName
-    value: "vside/msft_consumption"
+    value: "_packaging/vscode-common-python-lsp"
 
 extends:
   template: azure-pipelines/MicroBuild.1ES.Official.yml@MicroBuildTemplate
@@ -234,7 +234,6 @@ extends:
                 displayName: Authenticate to Azure Artifacts feed
                 inputs:
                   workingFile: .npmrc
-                  customEndpoint: PylanceSecureVsIdePublishWithManagedIdentity # Service connection with Managed Identity auth
 
               - powershell: |
                   $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
