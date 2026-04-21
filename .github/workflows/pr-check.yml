@@ -5,7 +5,6 @@ on:
     branches: [main]
 
 env:
-  NODE_VERSION: "22.17.0"
   PYTHON_VERSION: "3.10"
 
 jobs:
@@ -49,10 +48,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Use Node.js ${{ env.NODE_VERSION }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
       - name: Install dependencies
         working-directory: typescript
         run: npm ci
@@ -65,10 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Use Node.js ${{ env.NODE_VERSION }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
       - name: Install dependencies
         working-directory: typescript
         run: npm ci
