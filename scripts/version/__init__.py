@@ -12,10 +12,7 @@ from pathlib import Path
 if sys.version_info >= (3, 11):
     import tomllib
 else:
-    try:
-        import tomllib  # type: ignore[import]
-    except ImportError:
-        tomllib = None  # type: ignore[assignment]
+    tomllib = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 VERSION_FILE = ROOT / "VERSION"

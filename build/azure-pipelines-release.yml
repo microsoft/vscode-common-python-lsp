@@ -66,6 +66,11 @@ extends:
             steps:
               - checkout: self
 
+              - task: UsePythonVersion@0
+                displayName: Setup Python $(PythonVersion)
+                inputs:
+                  versionSpec: $(PythonVersion)
+
               - script: python -m scripts.version.validate ${BUILD_SOURCEBRANCH#refs/tags/}
                 name: validate
                 displayName: Validate tag matches manifests

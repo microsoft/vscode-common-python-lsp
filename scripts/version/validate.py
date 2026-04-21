@@ -12,12 +12,18 @@ from __future__ import annotations
 
 import sys
 
-from . import read_versions
+from . import SEMVER_RE, read_versions
 
 
 def main() -> None:
     versions = read_versions()
-    tag = sys.argv[1].removeprefix("v") if len(sys.argv) > 1 else None
+    tag = None
+    if len(sys.argv) > 1:
+        raw_tag = sys.argv[1]
+        tag = raw_tag.removeprefix("v")
+        if not SEMVER_RE.fullmatch(tag):
+            print(f"ERROR: Tag must be in the format vX.Y.Z; got: {raw_tag}")
+            sys.exit(1)
     reference = tag or versions["VERSION"]
 
     for source, value in versions.items():

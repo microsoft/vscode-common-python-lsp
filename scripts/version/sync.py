@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 
 from . import PACKAGE_JSON, PYPROJECT_TOML, SEMVER_RE, VERSION_FILE
@@ -40,6 +41,13 @@ def main() -> None:
     if new_pkg_text != pkg_text:
         PACKAGE_JSON.write_text(new_pkg_text, encoding="utf-8")
         changed.append("package.json")
+        # Keep package-lock.json in sync
+        subprocess.run(
+            ["npm", "install", "--package-lock-only"],
+            cwd=PACKAGE_JSON.parent,
+            check=True,
+        )
+        changed.append("package-lock.json")
 
     # pyproject.toml
     content = PYPROJECT_TOML.read_text(encoding="utf-8")
