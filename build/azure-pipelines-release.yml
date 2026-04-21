@@ -31,16 +31,10 @@ variables:
     value: vscode-common-python-lsp
   - name: PythonVersion
     value: "3.10"
-  # Managed Identity service connection (shared with Pylance / python-environments)
-  - name: AzureServiceConnection
-    value: "PylanceSecureVsIdePublishWithManagedIdentity"
-  # npm feed URLs
+  # npm feed URL
   - name: NpmFeedUrl
     value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
-  - name: NpmFeedUrlNoProtocol
-    value: "pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
   # PyPI feed (project/feed format for TwineAuthenticate)
-  # TODO: replace with actual feed identifier
   - name: PyPiFeedName
     value: "vside/msft_consumption"
 
@@ -222,32 +216,15 @@ extends:
                   versionFilePath: $(Build.SourcesDirectory)/.nvmrc
                 displayName: Setup Node.js from .nvmrc
 
-              - task: AzureCLI@2
-                displayName: Acquire AAD token via Managed Identity
+              - script: |
+                  echo "registry=$(NpmFeedUrl)" > .npmrc
+                  echo "always-auth=true" >> .npmrc
+                displayName: Create .npmrc
+
+              - task: npmAuthenticate@0
+                displayName: Authenticate to Azure Artifacts feed
                 inputs:
-                  azureSubscription: $(AzureServiceConnection)
-                  scriptType: pscore
-                  scriptLocation: inlineScript
-                  inlineScript: |
-                    $token = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
-                    Write-Host "##vso[task.setvariable variable=AzdoToken;issecret=true]$token"
-
-              - powershell: |
-                  @"
-                  registry=$(NpmFeedUrl)
-                  always-auth=true
-                  "@ | Out-File -FilePath .npmrc
-
-                  @"
-                  ; begin auth token
-                  //$(NpmFeedUrlNoProtocol):username=VssSessionToken
-                  //$(NpmFeedUrlNoProtocol):_authToken=$env:AZDO_TOKEN
-                  //$(NpmFeedUrlNoProtocol):email=not-used@example.com
-                  ; end auth token
-                  "@ | Out-File -FilePath $HOME/.npmrc
-                env:
-                  AZDO_TOKEN: $(AzdoToken)
-                displayName: Create .npmrc files
+                  workingFile: .npmrc
 
               - powershell: |
                   $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
@@ -256,7 +233,7 @@ extends:
                       exit 1
                   }
                   Write-Host "Publishing: $($tgz.FullName)"
-                  npm publish $tgz.FullName --registry $(NpmFeedUrl) --ignore-scripts
+                  npm publish $tgz.FullName --ignore-scripts
                 displayName: npm publish
 
       # ---------------------------------------------------------------
@@ -287,13 +264,10 @@ extends:
                 displayName: Install twine
 
               - task: TwineAuthenticate@1
-                displayName: Authenticate with PyPI feed
+                displayName: Twine Authenticate
                 inputs:
                   artifactFeed: $(PyPiFeedName)
 
-              - script: >
-                  twine upload
-                  -r $(PyPiFeedName)
-                  --config-file $(PYPIRC_PATH)
-                  $(Pipeline.Workspace)/python-package/*
-                displayName: twine upload
+              - script: |
+                  python -m twine upload -r msft_consumption --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
+                displayName: Upload to feed
