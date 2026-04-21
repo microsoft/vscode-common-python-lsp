@@ -10,7 +10,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import sys
 
 from . import read_versions
@@ -36,12 +35,6 @@ def main() -> None:
         print()
         print("This updates VERSION, package.json, and pyproject.toml to match.")
         sys.exit(1)
-
-    # Set output variable for Azure Pipelines
-    if os.environ.get("TF_BUILD"):
-        print(
-            f"##vso[task.setvariable variable=ReleaseVersion;isOutput=true]{reference}"
-        )
 
     print(f"\nAll versions consistent: {reference}")
 

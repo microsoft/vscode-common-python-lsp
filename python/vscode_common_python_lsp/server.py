@@ -88,15 +88,19 @@ class ToolServer:
         self.config = config
         self.workspace_settings: dict[str, Any] = {}
         self.global_settings: dict[str, Any] = {}
-        try:
-            _pkg_version = importlib.metadata.version("vscode-common-python-lsp")
-        except importlib.metadata.PackageNotFoundError:
-            _pkg_version = "0.0.0-dev"
-        self.server = server or LanguageServer(
-            name=f"{config.tool_module}-server",
-            version=f"v{_pkg_version}",
-            max_workers=5,
-        )
+        if server is None:
+            try:
+                _pkg_version = importlib.metadata.version(
+                    "vscode-common-python-lsp"
+                )
+            except importlib.metadata.PackageNotFoundError:
+                _pkg_version = "0.0.0-dev"
+            server = LanguageServer(
+                name=f"{config.tool_module}-server",
+                version=f"v{_pkg_version}",
+                max_workers=5,
+            )
+        self.server = server
 
     # -----------------------------------------------------------------
     # Settings management
