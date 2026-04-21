@@ -157,7 +157,12 @@ extends:
                   versionSpec: $(pythonVersion)
                 displayName: Use Python $(pythonVersion)
 
-              - script: pip install nox
+              - task: PipAuthenticate@1
+                displayName: Authenticate pip with ADO feed
+                inputs:
+                  artifactFeeds: $(PyPiFeedName)
+
+              - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
 
               - script: nox -s tests
@@ -182,7 +187,12 @@ extends:
                   versionSpec: $(pythonVersion)
                 displayName: Use Python $(pythonVersion)
 
-              - script: pip install nox
+              - task: PipAuthenticate@1
+                displayName: Authenticate pip with ADO feed
+                inputs:
+                  artifactFeeds: $(PyPiFeedName)
+
+              - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
 
               - script: nox -s tests
