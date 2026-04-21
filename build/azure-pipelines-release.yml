@@ -39,7 +39,7 @@ variables:
   - name: TeamName
     value: vscode-common-python-lsp
   - name: NodeVersion
-    value: "22.17.0"  # Keep in sync with .nvmrc
+    value: "22.21.1"  # Keep in sync with .nvmrc
   - name: PythonVersion
     value: "3.10"
   # npm feed URL
