@@ -28,8 +28,6 @@ parameters:
         image: macos-latest
 
 variables:
-  - name: NodeVersion
-    value: "22.17.0"
   - name: PythonVersion
     value: "3.10"
   # TODO: replace with actual msft_consumption feed GUID
@@ -72,6 +70,9 @@ stages:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
+
+          - script: echo "##vso[task.setvariable variable=NodeVersion]$(cat .nvmrc)"
+            displayName: Read Node version from .nvmrc
 
           - task: UseNode@1
             inputs:
@@ -163,9 +164,14 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
+          - checkout: self
+
           - download: current
             artifact: npm-package
             displayName: Download npm artifact
+
+          - script: echo "##vso[task.setvariable variable=NodeVersion]$(cat .nvmrc)"
+            displayName: Read Node version from .nvmrc
 
           - task: UseNode@1
             inputs:
