@@ -234,6 +234,7 @@ extends:
                 displayName: Authenticate to Azure Artifacts feed
                 inputs:
                   workingFile: .npmrc
+                  customEndpoint: PylanceSecureVsIdePublishWithManagedIdentity # Service connection with Managed Identity auth
 
               - powershell: |
                   $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
