@@ -864,7 +864,11 @@ class TestToolServerInit:
         ):
             mock_cls.return_value = MagicMock()
             ToolServer(BASIC_CONFIG)
-            assert mock_cls.call_args[1]["version"] == "v0.0.0-dev"
+            mock_cls.assert_called_once_with(
+                name="testtool-server",
+                version="v0.0.0-dev",
+                max_workers=5,
+            )
 
     def test_accepts_custom_server(self):
         custom = MagicMock()
