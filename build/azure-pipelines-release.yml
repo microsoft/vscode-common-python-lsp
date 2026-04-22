@@ -100,6 +100,16 @@ extends:
                 inputs:
                   versionSpec: $(NodeVersion)
 
+              - script: |
+                  echo "registry=$(NpmFeedUrl)" > .npmrc
+                  echo "always-auth=true" >> .npmrc
+                workingDirectory: typescript
+                displayName: Create .npmrc
+
+              - task: npmAuthenticate@0
+                inputs:
+                  workingFile: typescript/.npmrc
+
               - script: npm ci
                 workingDirectory: typescript
                 displayName: Install dependencies
@@ -131,10 +141,6 @@ extends:
                 inputs:
                   versionSpec: $(pythonVersion)
 
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: $(PyPiFeedName)
-
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
 
@@ -159,10 +165,6 @@ extends:
                 inputs:
                   versionSpec: $(pythonVersion)
 
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: $(PyPiFeedName)
-
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
 
@@ -185,7 +187,8 @@ extends:
 
               - script: |
                   pip install build
-                  python -m build python/ --outdir $(Build.ArtifactStagingDirectory)/python-package
+                  python -m build --outdir $(Build.ArtifactStagingDirectory)/python-package
+                workingDirectory: python
                 displayName: Build sdist and wheel
 
       # Stage 3a: Publish npm
