@@ -42,7 +42,7 @@ variables:
   - name: PythonVersion
     value: "3.10"
   - name: NpmFeedUrl
-    value: "https://pkgs.dev.azure.com/devdiv/_packaging/vscode-common-python-lsp/npm/registry/ / "
+    value: "https://pkgs.dev.azure.com/devdiv/_packaging/vscode-common-python-lsp/npm/registry/"
   - name: PyPiFeedName
     value: "_packaging/vscode-common-python-lsp"
 
