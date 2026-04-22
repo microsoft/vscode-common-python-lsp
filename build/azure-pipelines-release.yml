@@ -100,12 +100,6 @@ extends:
                 inputs:
                   versionSpec: $(NodeVersion)
 
-              - script: |
-                  echo "registry=$(NpmFeedUrl)" > .npmrc
-                  echo "always-auth=true" >> .npmrc
-                workingDirectory: typescript
-                displayName: Create .npmrc
-
               - task: npmAuthenticate@0
                 inputs:
                   workingFile: typescript/.npmrc
@@ -144,7 +138,6 @@ extends:
               - task: PipAuthenticate@1
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
-                  onlyAddExtraIndex: true
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -173,7 +166,6 @@ extends:
               - task: PipAuthenticate@1
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
-                  onlyAddExtraIndex: true
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -198,7 +190,6 @@ extends:
               - task: PipAuthenticate@1
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
-                  onlyAddExtraIndex: true
 
               - script: |
                   pip install build
@@ -263,6 +254,10 @@ extends:
                 inputs:
                   versionSpec: $(PythonVersion)
 
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: $(PyPiFeedName)
+
               - script: pip install twine
                 displayName: Install twine
 
@@ -270,5 +265,5 @@ extends:
                 inputs:
                   artifactFeed: $(PyPiFeedName)
 
-              - script: python -m twine upload -r msft_consumption --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
+              - script: python -m twine upload -r $(PyPiFeedName) --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
                 displayName: Upload to feed
