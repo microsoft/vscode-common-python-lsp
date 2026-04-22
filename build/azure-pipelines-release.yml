@@ -27,6 +27,11 @@ parameters:
       - "3.13"
       - "3.14"
 
+  - name: publishToConsumptionFeed
+    displayName: Publish to msft_consumption feed
+    type: boolean
+    default: false
+
 variables:
   - name: TeamName
     value: vscode-common-python-lsp
@@ -34,10 +39,33 @@ variables:
     value: "22.21.1"  # Keep in sync with .nvmrc
   - name: PythonVersion
     value: "3.10"
+  # Managed Identity service connections for Azure Artifacts auth
+  - name: AzureServiceConnectionPush
+    value: 'azure-public/vside package push'
+  - name: AzureServiceConnectionPull
+    value: 'azure-public/vside package pull'
+  # npm feed (azure-public/vside)
   - name: NpmFeedUrl
-    value: "https://pkgs.dev.azure.com/devdiv/_packaging/vscode-common-python-lsp/npm/registry/"
-  - name: PyPiFeedName
-    value: "vscode-common-python-lsp"
+    value: 'https://pkgs.dev.azure.com/azure-public/vside/_packaging/vscode-common-python-lsp/npm/registry/'
+  - name: NpmFeedUrlNoProtocol
+    value: 'pkgs.dev.azure.com/azure-public/vside/_packaging/vscode-common-python-lsp/npm/registry/'
+  # PyPI feed (azure-public/vside)
+  - name: PyPiFeedUrl
+    value: 'https://pkgs.dev.azure.com/azure-public/vside/_packaging/vscode-common-python-lsp/pypi/upload/'
+  - name: PyPiFeedSimpleUrl
+    value: 'pkgs.dev.azure.com/azure-public/vside/_packaging/vscode-common-python-lsp/pypi/simple/'
+  # Consumption feeds (msft_consumption on azure-public/vside)
+  - name: ConsumptionNpmFeedUrl
+    value: 'https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/'
+  - name: ConsumptionNpmFeedUrlNoProtocol
+    value: 'pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/'
+  - name: ConsumptionPyPiFeedSimpleUrl
+    value: 'pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/pypi/simple/'
+  # Package names for consumption pull
+  - name: NpmPackageName
+    value: 'vscode-common-python-lsp'
+  - name: PyPiPackageName
+    value: 'vscode-common-python-lsp'
   - name: GitHubServiceConnection
     value: "Github - VS Code Common Python LSP" 
 
@@ -95,15 +123,12 @@ extends:
                 inputs:
                   versionSpec: $(NodeVersion)
 
-              - script: |
-                  echo "registry=$(NpmFeedUrl)" > .npmrc
-                  echo "always-auth=true" >> .npmrc
-                workingDirectory: typescript
-                displayName: Create .npmrc
-
-              - task: npmAuthenticate@0
-                inputs:
-                  workingFile: typescript/.npmrc
+              - template: build/templates/configure-npm-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
+                  feedUrl: $(ConsumptionNpmFeedUrl)
+                  feedUrlNoProtocol: $(ConsumptionNpmFeedUrlNoProtocol)
+                  projectNpmrcPath: typescript/.npmrc
 
               - script: npm ci
                 workingDirectory: typescript
@@ -138,9 +163,11 @@ extends:
                 inputs:
                   versionSpec: $(pythonVersion)
 
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: $(PyPiFeedName)
+              - template: build/templates/configure-pip-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
+                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
+                  os: linux
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -166,9 +193,11 @@ extends:
                 inputs:
                   versionSpec: $(pythonVersion)
 
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: $(PyPiFeedName)
+              - template: build/templates/configure-pip-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
+                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
+                  os: windows
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -190,9 +219,11 @@ extends:
                 inputs:
                   versionSpec: $(PythonVersion)
 
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: $(PyPiFeedName)
+              - template: build/templates/configure-pip-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
+                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
+                  os: linux
 
               - script: |
                   pip install build
@@ -215,18 +246,18 @@ extends:
                   artifactName: npm-package
                   targetPath: $(Pipeline.Workspace)/npm-package
             steps:
+              - checkout: none
+
               - task: NodeTool@0
                 inputs:
                   versionSpec: $(NodeVersion)
+                displayName: Select Node version
 
-              - script: |
-                  echo "registry=$(NpmFeedUrl)" > .npmrc
-                  echo "always-auth=true" >> .npmrc
-                displayName: Create .npmrc
-
-              - task: npmAuthenticate@0
-                inputs:
-                  workingFile: .npmrc
+              - template: build/templates/configure-npm-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPush }}
+                  feedUrl: $(NpmFeedUrl)
+                  feedUrlNoProtocol: $(NpmFeedUrlNoProtocol)
 
               - powershell: |
                   $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
@@ -235,7 +266,7 @@ extends:
                       exit 1
                   }
                   Write-Host "Publishing: $($tgz.FullName)"
-                  npm publish $tgz.FullName --ignore-scripts
+                  npm publish $tgz.FullName --registry $(NpmFeedUrl) --ignore-scripts
                 displayName: npm publish
 
       # Stage 3b: Publish PyPI
@@ -253,30 +284,84 @@ extends:
                   artifactName: python-package
                   targetPath: $(Pipeline.Workspace)/python-package
             steps:
+              - checkout: none
+
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(PythonVersion)
 
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: $(PyPiFeedName)
+              - template: build/templates/configure-pip-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPush }}
+                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
+                  os: linux
 
               - script: pip install twine
                 displayName: Install twine
 
-              - task: TwineAuthenticate@1
-                inputs:
-                  artifactFeed: $(PyPiFeedName)
-
-              - script: python -m twine upload -r $(PyPiFeedName) --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*.tar.gz $(Pipeline.Workspace)/python-package/*.whl
+              - script: python -m twine upload --repository-url $(PyPiFeedUrl) $(Pipeline.Workspace)/python-package/*.tar.gz $(Pipeline.Workspace)/python-package/*.whl
                 displayName: Upload to feed
+                env:
+                  TWINE_USERNAME: VssSessionToken
+                  TWINE_PASSWORD: $(AzdoToken)
 
-      # Stage 4: Tag the release commit
-      - stage: TagRelease
-        displayName: Tag Release (GitHub)
+      # Stage 4a: Pull npm to msft_consumption
+      - stage: PublishConsumptionNpm
+        displayName: Pull npm to msft_consumption
+        dependsOn: PublishNpm
+        condition: and(not(failed()), eq('${{ parameters.publishToConsumptionFeed }}', 'true'))
+        jobs:
+          - job: PullToConsumption
+            displayName: Pull $(NpmPackageName) to msft_consumption
+            steps:
+              - checkout: none
+
+              - task: NodeTool@0
+                inputs:
+                  versionSpec: $(NodeVersion)
+                displayName: Select Node version
+
+              - template: build/templates/configure-npm-auth.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPush }}
+                  feedUrl: $(ConsumptionNpmFeedUrl)
+                  feedUrlNoProtocol: $(ConsumptionNpmFeedUrlNoProtocol)
+
+              - script: npm i -g $(NpmPackageName)@latest --registry $(ConsumptionNpmFeedUrl)
+                displayName: Pull to msft_consumption
+
+      # Stage 4b: Pull PyPI to msft_consumption
+      - stage: PublishConsumptionPyPI
+        displayName: Pull PyPI to msft_consumption
+        dependsOn: PublishPyPI
+        condition: and(not(failed()), eq('${{ parameters.publishToConsumptionFeed }}', 'true'))
+        jobs:
+          - job: PullToConsumption
+            displayName: Pull $(PyPiPackageName) to msft_consumption
+            steps:
+              - checkout: none
+
+              - task: UsePythonVersion@0
+                inputs:
+                  versionSpec: $(PythonVersion)
+
+              - template: build/templates/acquire-aad-token.yml@self
+                parameters:
+                  azureServiceConnection: ${{ variables.AzureServiceConnectionPush }}
+
+              - script: pip install --no-deps $(PyPiPackageName) --index-url https://VssSessionToken:${AZDO_TOKEN}@$(ConsumptionPyPiFeedSimpleUrl)
+                displayName: Pull to msft_consumption
+                env:
+                  AZDO_TOKEN: $(AzdoToken)
+
+      # Stage 5: Create GitHub Release
+      - stage: GitHubRelease
+        displayName: Create GitHub Release
         dependsOn:
           - PublishNpm
           - PublishPyPI
+          - PublishConsumptionNpm
+          - PublishConsumptionPyPI
         jobs:
           - job: CreateTag
             displayName: Create git tag

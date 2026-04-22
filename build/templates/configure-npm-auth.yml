@@ -1,0 +1,38 @@
+# Acquires an AAD token via Managed Identity and creates .npmrc files
+# for authenticated access to an Azure Artifacts npm feed.
+
+parameters:
+  # Name of the Azure service connection configured for Managed Identity authentication.
+  - name: azureServiceConnection
+    type: string
+  # Full npm registry URL including https:// (e.g. 'https://pkgs.dev.azure.com/org/project/_packaging/feed/npm/registry/').
+  - name: feedUrl
+    type: string
+  # Same registry URL without the https:// prefix, used in .npmrc auth token lines.
+  - name: feedUrlNoProtocol
+    type: string
+  # Path to the project-level .npmrc file to create. Defaults to '.npmrc' in the working directory.
+  - name: projectNpmrcPath
+    type: string
+    default: '.npmrc'
+
+steps:
+  - template: acquire-aad-token.yml@self
+    parameters:
+      azureServiceConnection: ${{ parameters.azureServiceConnection }}
+
+  - powershell: |
+      @"
+      registry=${{ parameters.feedUrl }}
+      always-auth=true
+      "@ | Out-File -FilePath "${{ parameters.projectNpmrcPath }}"
+      @"
+      ; begin auth token
+      //${{ parameters.feedUrlNoProtocol }}:username=VssSessionToken
+      //${{ parameters.feedUrlNoProtocol }}:_authToken=$env:AZDO_TOKEN
+      //${{ parameters.feedUrlNoProtocol }}:email=not-used@example.com
+      ; end auth token
+      "@ | Out-File -FilePath $HOME/.npmrc
+    env:
+      AZDO_TOKEN: $(AzdoToken)
+    displayName: Create .npmrc files
