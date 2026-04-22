@@ -144,6 +144,7 @@ extends:
               - task: PipAuthenticate@1
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
+                  onlyAddExtraIndex: true
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -172,6 +173,7 @@ extends:
               - task: PipAuthenticate@1
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
+                  onlyAddExtraIndex: true
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -196,6 +198,7 @@ extends:
               - task: PipAuthenticate@1
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
+                  onlyAddExtraIndex: true
 
               - script: |
                   pip install build
