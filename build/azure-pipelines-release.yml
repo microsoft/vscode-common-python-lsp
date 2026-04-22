@@ -267,5 +267,5 @@ extends:
                 inputs:
                   artifactFeed: $(PyPiFeedName)
 
-              - script: python -m twine upload -r $(PyPiFeedName) --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
+              - script: python -m twine upload -r $(PyPiFeedName) --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*.tar.gz $(Pipeline.Workspace)/python-package/*.whl
                 displayName: Upload to feed
