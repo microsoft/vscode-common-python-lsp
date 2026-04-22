@@ -44,7 +44,7 @@ variables:
   - name: NpmFeedUrl
     value: "https://pkgs.dev.azure.com/devdiv/_packaging/vscode-common-python-lsp/npm/registry/"
   - name: PyPiFeedName
-    value: "_packaging/vscode-common-python-lsp"
+    value: "vscode-common-python-lsp"
 
 extends:
   template: azure-pipelines/MicroBuild.1ES.Official.yml@MicroBuildTemplate
