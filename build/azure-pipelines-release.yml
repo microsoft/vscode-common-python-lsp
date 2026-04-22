@@ -27,13 +27,12 @@ resources:
 parameters:
   - name: pythonVersions
     type: object
-    default: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-  - name: checkVersionConsistency
-    type: boolean
-    default: true
-  - name: publish
-    type: boolean
-    default: true
+    default:
+      - "3.10"
+      - "3.11"
+      - "3.12"
+      - "3.13"
+      - "3.14"
 
 variables:
   - name: TeamName
@@ -42,10 +41,8 @@ variables:
     value: "22.21.1"  # Keep in sync with .nvmrc
   - name: PythonVersion
     value: "3.10"
-  # npm feed URL
   - name: NpmFeedUrl
     value: "https://pkgs.dev.azure.com/devdiv/_packaging/vscode-common-python-lsp/npm/registry/ / "
-  # PyPI feed (project/feed format for TwineAuthenticate)
   - name: PyPiFeedName
     value: "_packaging/vscode-common-python-lsp"
 
@@ -66,12 +63,9 @@ extends:
       - ES365AIMigrationTooling
 
     stages:
-      # ---------------------------------------------------------------
       # Stage 1: Validate version consistency
-      # ---------------------------------------------------------------
       - stage: Validate
-        displayName: Validate Release
-        condition: and(succeeded(), eq('${{ parameters.checkVersionConsistency }}', 'true'))
+        displayName: Validate Release Version
         jobs:
           - job: VersionCheck
             displayName: Check version consistency
@@ -79,23 +73,19 @@ extends:
               - checkout: self
 
               - task: UsePythonVersion@0
-                displayName: Setup Python $(PythonVersion)
                 inputs:
                   versionSpec: $(PythonVersion)
 
               - script: python -m scripts.version.validate ${BUILD_SOURCEBRANCH#refs/tags/}
-                name: validate
                 displayName: Validate tag matches manifests
 
-      # ---------------------------------------------------------------
-      # Stage 2: Build artifacts (once) and run tests
-      # ---------------------------------------------------------------
+      # Stage 2: Build & Test
       - stage: BuildAndTest
         displayName: Build & Test
         dependsOn: Validate
         condition: not(failed('Validate'))
         jobs:
-          # --- TypeScript build + test ---
+          # TypeScript
           - job: TypeScript
             displayName: TypeScript build & test
             templateContext:
@@ -106,13 +96,9 @@ extends:
             steps:
               - checkout: self
 
-              - script: echo "##vso[task.setvariable variable=NodeVersion]$(cat .nvmrc)"
-                displayName: Read Node version from .nvmrc
-
               - task: NodeTool@0
                 inputs:
                   versionSpec: $(NodeVersion)
-                displayName: Setup Node.js $(NodeVersion)
 
               - script: npm ci
                 workingDirectory: typescript
@@ -120,28 +106,17 @@ extends:
 
               - script: npm run build
                 workingDirectory: typescript
-                displayName: Build
 
               - script: npm run lint
                 workingDirectory: typescript
-                displayName: Lint
 
               - script: npm test
                 workingDirectory: typescript
-                displayName: Test
 
-              - script: npm pack
+              - script: npm pack --pack-destination $(Build.ArtifactStagingDirectory)/npm-package
                 workingDirectory: typescript
-                displayName: Pack npm tarball
 
-              - task: CopyFiles@2
-                displayName: Copy tarball to staging
-                inputs:
-                  sourceFolder: $(Build.SourcesDirectory)/typescript
-                  contents: "*.tgz"
-                  targetFolder: $(Build.ArtifactStagingDirectory)/npm-package
-
-          # --- Python tests (Linux + Windows matrix) ---
+          # Python tests — Linux
           - job: PythonTestLinux
             displayName: Python test (Linux)
             strategy:
@@ -155,10 +130,8 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(pythonVersion)
-                displayName: Use Python $(pythonVersion)
 
               - task: PipAuthenticate@1
-                displayName: Authenticate pip with ADO feed
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
 
@@ -166,8 +139,8 @@ extends:
                 displayName: Install nox
 
               - script: nox -s tests
-                displayName: Run tests
 
+          # Python tests — Windows
           - job: PythonTestWindows
             displayName: Python test (Windows)
             pool:
@@ -185,10 +158,8 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(pythonVersion)
-                displayName: Use Python $(pythonVersion)
 
               - task: PipAuthenticate@1
-                displayName: Authenticate pip with ADO feed
                 inputs:
                   artifactFeeds: $(PyPiFeedName)
 
@@ -196,9 +167,8 @@ extends:
                 displayName: Install nox
 
               - script: nox -s tests
-                displayName: Run tests
 
-          # --- Python build (single job, produces dist artifact) ---
+          # Python build
           - job: PythonBuild
             displayName: Python build
             templateContext:
@@ -212,22 +182,16 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(PythonVersion)
-                displayName: Use Python $(PythonVersion)
 
-              - script: pip install build
-                displayName: Install build tool
-
-              - script: python -m build python/ --outdir $(Build.ArtifactStagingDirectory)/python-package
+              - script: |
+                  pip install build
+                  python -m build python/ --outdir $(Build.ArtifactStagingDirectory)/python-package
                 displayName: Build sdist and wheel
 
-      # ---------------------------------------------------------------
-      # Stage 3: Publish npm to msft_consumption
-      # Serial with PyPI to avoid partial releases.
-      # ---------------------------------------------------------------
+      # Stage 3a: Publish npm
       - stage: PublishNpm
         displayName: Publish npm
         dependsOn: BuildAndTest
-        condition: and(eq('${{ parameters.publish }}', 'true'), not(failed('BuildAndTest')))
         jobs:
           - job: Publish
             displayName: Publish to ADO npm feed
@@ -242,7 +206,6 @@ extends:
               - task: NodeTool@0
                 inputs:
                   versionSpec: $(NodeVersion)
-                displayName: Setup Node.js $(NodeVersion)
 
               - script: |
                   echo "registry=$(NpmFeedUrl)" > .npmrc
@@ -250,7 +213,6 @@ extends:
                 displayName: Create .npmrc
 
               - task: npmAuthenticate@0
-                displayName: Authenticate to Azure Artifacts feed
                 inputs:
                   workingFile: .npmrc
 
@@ -264,13 +226,10 @@ extends:
                   npm publish $tgz.FullName --ignore-scripts
                 displayName: npm publish
 
-      # ---------------------------------------------------------------
-      # Stage 4: Publish Python to msft_consumption PyPI
-      # ---------------------------------------------------------------
+      # Stage 3b: Publish PyPI
       - stage: PublishPyPI
         displayName: Publish PyPI
-        dependsOn: PublishNpm
-        condition: and(eq('${{ parameters.publish }}', 'true'), not(failed('PublishNpm')))
+        dependsOn: BuildAndTest
         jobs:
           - job: Publish
             displayName: Publish to ADO PyPI feed
@@ -285,16 +244,13 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(PythonVersion)
-                displayName: Use Python $(PythonVersion)
 
               - script: pip install twine
                 displayName: Install twine
 
               - task: TwineAuthenticate@1
-                displayName: Twine Authenticate
                 inputs:
                   artifactFeed: $(PyPiFeedName)
 
-              - script: |
-                  python -m twine upload -r msft_consumption --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
+              - script: python -m twine upload -r msft_consumption --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
                 displayName: Upload to feed
