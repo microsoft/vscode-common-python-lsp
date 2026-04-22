@@ -1,8 +1,8 @@
 # Azure Pipelines release pipeline for vscode-common-python-lsp.
 #
-# Triggered by version tags (v*). Validates, tests, and publishes both the
+# Triggered on main branch. Validates, tests, and publishes both the
 # TypeScript (npm) and Python (PyPI) packages to the Azure DevOps
-# msft_consumption feed.
+# vscode-common-python-lsp feed.
 #
 # Uses MicroBuildTemplate for 1ES compliance (SDL, SBOM, etc).
 # Auth uses Managed Identity — no PATs or stored secrets.
@@ -117,7 +117,9 @@ extends:
               - script: npm test
                 workingDirectory: typescript
 
-              - script: npm pack --pack-destination $(Build.ArtifactStagingDirectory)/npm-package
+              - script: |
+                  mkdir -p $(Build.ArtifactStagingDirectory)/npm-package
+                  npm pack --pack-destination $(Build.ArtifactStagingDirectory)/npm-package
                 workingDirectory: typescript
 
           # Python tests — Linux
