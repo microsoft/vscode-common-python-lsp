@@ -96,7 +96,7 @@ extends:
                   command: ci
                   workingDir: typescript
                   customRegistry: useFeed
-                  customFeed: 'devdiv/vscode-common-python-lsp'
+                  customFeed: 'vscode-common-python-lsp'
 
               - task: npm@1
                 displayName: Build
@@ -141,7 +141,7 @@ extends:
 
               - task: PipAuthenticate@1
                 inputs:
-                  artifactFeeds: 'devdiv/vscode-common-python-lsp'
+                  artifactFeeds: 'vscode-common-python-lsp'
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -169,7 +169,7 @@ extends:
 
               - task: PipAuthenticate@1
                 inputs:
-                  artifactFeeds: 'devdiv/vscode-common-python-lsp'
+                  artifactFeeds: 'vscode-common-python-lsp'
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -193,7 +193,7 @@ extends:
 
               - task: PipAuthenticate@1
                 inputs:
-                  artifactFeeds: 'devdiv/vscode-common-python-lsp'
+                  artifactFeeds: 'vscode-common-python-lsp'
 
               - script: |
                   pip install build
