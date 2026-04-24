@@ -34,6 +34,8 @@ variables:
     value: "22.21.1"  # Keep in sync with .nvmrc
   - name: PythonVersion
     value: "3.10"
+  - name: RepoName
+    value: vscode-common-python-lsp
 
 
 extends:
@@ -96,7 +98,7 @@ extends:
                   command: ci
                   workingDir: typescript
                   customRegistry: useFeed
-                  customFeed: 'vscode-common-python-lsp'
+                  customFeed: '$(RepoName)'
 
               - task: npm@1
                 displayName: Build
@@ -141,7 +143,7 @@ extends:
 
               - task: PipAuthenticate@1
                 inputs:
-                  artifactFeeds: 'vscode-common-python-lsp'
+                  artifactFeeds: '$(RepoName)'
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -169,7 +171,7 @@ extends:
 
               - task: PipAuthenticate@1
                 inputs:
-                  artifactFeeds: 'vscode-common-python-lsp'
+                  artifactFeeds: '$(RepoName)'
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -193,7 +195,7 @@ extends:
 
               - task: PipAuthenticate@1
                 inputs:
-                  artifactFeeds: 'vscode-common-python-lsp'
+                  artifactFeeds: '$(RepoName)'
 
               - script: |
                   pip install build
@@ -280,7 +282,7 @@ extends:
               - task: GitHubRelease@1
                 displayName: Create GitHub Release
                 inputs:
-                  gitHubConnection: GitHub-VSCodeExtensions
+                  gitHubConnection: "Github - VS Code Common Python LSP"
                   repositoryName: $(Build.Repository.Name)
                   action: create
                   target: $(Build.SourceVersion)
