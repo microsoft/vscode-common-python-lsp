@@ -1,20 +1,13 @@
 # Azure Pipelines release pipeline for vscode-common-python-lsp.
 #
-# Triggered by version tags (v*). Validates, tests, and publishes both the
-# TypeScript (npm) and Python (PyPI) packages to the Azure DevOps
-# msft_consumption feed.
+# Triggered manually. Validates, tests, publishes both the TypeScript
+# (npm) and Python (PyPI) packages to the Azure DevOps
+# vscode-common-python-lsp feed, then tags the commit.
 #
 # Uses MicroBuildTemplate for 1ES compliance (SDL, SBOM, etc).
-# Auth uses Managed Identity — no PATs or stored secrets.
+# Auth uses built-in Azure Artifacts tasks (npmAuthenticate, PipAuthenticate).
 
-trigger:
-  branches:
-    include:
-      - main
-  # tags:
-  #   include:
-  #     - v*
-
+trigger: none
 pr: none
 
 resources:
@@ -27,22 +20,26 @@ resources:
 parameters:
   - name: pythonVersions
     type: object
-    default: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    default:
+      - "3.10"
+      - "3.11"
+      - "3.12"
+      - "3.13"
+      - "3.14"
 
 variables:
   - name: TeamName
     value: vscode-common-python-lsp
+  - name: NodeVersion
+    value: "22.21.1"  # Keep in sync with .nvmrc
   - name: PythonVersion
     value: "3.10"
-  # npm feed URL
-  - name: NpmFeedUrl
-    value: "https://pkgs.dev.azure.com/azure-public/vside/_packaging/msft_consumption/npm/registry/"
-  # PyPI feed (project/feed format for TwineAuthenticate)
-  - name: PyPiFeedName
-    value: "vside/msft_consumption"
+  - name: RepoName
+    value: vscode-common-python-lsp
+
 
 extends:
-  template: azure-pipelines/MicroBuild.1ES.Official.yml@MicroBuildTemplate
+  template: azure-pipelines/MicroBuild.1ES.Official.Publish.yml@MicroBuildTemplate
   parameters:
     sdl:
       sourceAnalysisPool: VSEngSS-MicroBuild2022-1ES
@@ -58,11 +55,9 @@ extends:
       - ES365AIMigrationTooling
 
     stages:
-      # ---------------------------------------------------------------
       # Stage 1: Validate version consistency
-      # ---------------------------------------------------------------
       - stage: Validate
-        displayName: Validate Release
+        displayName: Validate Release Version
         jobs:
           - job: VersionCheck
             displayName: Check version consistency
@@ -70,22 +65,19 @@ extends:
               - checkout: self
 
               - task: UsePythonVersion@0
-                displayName: Setup Python $(PythonVersion)
                 inputs:
                   versionSpec: $(PythonVersion)
 
-              - script: python -m scripts.version.validate ${BUILD_SOURCEBRANCH#refs/tags/}
-                name: validate
-                displayName: Validate tag matches manifests
+              - script: python -m scripts.version.validate
+                displayName: Validate version consistency
 
-      # ---------------------------------------------------------------
-      # Stage 2: Build artifacts (once) and run tests
-      # ---------------------------------------------------------------
+      # Stage 2: Build & Test
       - stage: BuildAndTest
         displayName: Build & Test
         dependsOn: Validate
+        condition: not(failed('Validate'))
         jobs:
-          # --- TypeScript build + test ---
+          # TypeScript
           - job: TypeScript
             displayName: TypeScript build & test
             templateContext:
@@ -96,42 +88,45 @@ extends:
             steps:
               - checkout: self
 
-              - script: echo "##vso[task.setvariable variable=NodeVersion]$(cat .nvmrc)"
-                displayName: Read Node version from .nvmrc
-
               - task: NodeTool@0
                 inputs:
                   versionSpec: $(NodeVersion)
-                displayName: Setup Node.js $(NodeVersion)
 
-              - script: npm ci
-                workingDirectory: typescript
+              - task: npm@1
                 displayName: Install dependencies
-
-              - script: npm run build
-                workingDirectory: typescript
-                displayName: Build
-
-              - script: npm run lint
-                workingDirectory: typescript
-                displayName: Lint
-
-              - script: npm test
-                workingDirectory: typescript
-                displayName: Test
-
-              - script: npm pack
-                workingDirectory: typescript
-                displayName: Pack npm tarball
-
-              - task: CopyFiles@2
-                displayName: Copy tarball to staging
                 inputs:
-                  sourceFolder: $(Build.SourcesDirectory)/typescript
-                  contents: "*.tgz"
-                  targetFolder: $(Build.ArtifactStagingDirectory)/npm-package
+                  command: ci
+                  workingDir: typescript
+                  customRegistry: useFeed
+                  customFeed: '$(RepoName)'
 
-          # --- Python tests (Linux + Windows matrix) ---
+              - task: npm@1
+                displayName: Build
+                inputs:
+                  command: custom
+                  customCommand: run build
+                  workingDir: typescript
+
+              - task: npm@1
+                displayName: Lint
+                inputs:
+                  command: custom
+                  customCommand: run lint
+                  workingDir: typescript
+
+              - task: npm@1
+                displayName: Test
+                inputs:
+                  command: custom
+                  customCommand: test
+                  workingDir: typescript
+
+              - script: |
+                  mkdir -p $(Build.ArtifactStagingDirectory)/npm-package
+                  npm pack --pack-destination $(Build.ArtifactStagingDirectory)/npm-package
+                workingDirectory: typescript
+
+          # Python tests — Linux
           - job: PythonTestLinux
             displayName: Python test (Linux)
             strategy:
@@ -145,14 +140,17 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(pythonVersion)
-                displayName: Use Python $(pythonVersion)
 
-              - script: pip install nox
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: '$(RepoName)'
+
+              - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
 
               - script: nox -s tests
-                displayName: Run tests
 
+          # Python tests — Windows
           - job: PythonTestWindows
             displayName: Python test (Windows)
             pool:
@@ -170,15 +168,17 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(pythonVersion)
-                displayName: Use Python $(pythonVersion)
 
-              - script: pip install nox
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: '$(RepoName)'
+
+              - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
 
               - script: nox -s tests
-                displayName: Run tests
 
-          # --- Python build (single job, produces dist artifact) ---
+          # Python build
           - job: PythonBuild
             displayName: Python build
             templateContext:
@@ -192,24 +192,24 @@ extends:
               - task: UsePythonVersion@0
                 inputs:
                   versionSpec: $(PythonVersion)
-                displayName: Use Python $(PythonVersion)
 
-              - script: pip install build
-                displayName: Install build tool
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: '$(RepoName)'
 
-              - script: python -m build python/ --outdir $(Build.ArtifactStagingDirectory)/python-package
+              - script: |
+                  pip install build
+                  python -m build --outdir $(Build.ArtifactStagingDirectory)/python-package
+                workingDirectory: python
                 displayName: Build sdist and wheel
 
-      # ---------------------------------------------------------------
-      # Stage 3: Publish npm to msft_consumption
-      # Serial with PyPI to avoid partial releases.
-      # ---------------------------------------------------------------
-      - stage: PublishNpm
+      # Stage 3a: Publish npm
+      - stage: PublishNPM
         displayName: Publish npm
         dependsOn: BuildAndTest
         jobs:
-          - job: Publish
-            displayName: Publish to ADO npm feed
+          - job: PublishPackage
+            displayName: Publish npm package
             templateContext:
               type: releaseJob
               isProduction: true
@@ -218,43 +218,20 @@ extends:
                   artifactName: npm-package
                   targetPath: $(Pipeline.Workspace)/npm-package
             steps:
-              - checkout: self
+              - template: MicroBuild.Publish.yml@MicroBuildTemplate
+                parameters:
+                  intent: 'PackageDistribution'
+                  contentType: 'npm'
+                  contentSource: 'Folder'
+                  folderLocation: '$(Pipeline.Workspace)/npm-package'
+                  waitForReleaseCompletion: true
+                  owners: 'grwheele@microsoft.com'
+                  approvers: 'eduardovil@microsoft.com'
 
-              - script: echo "##vso[task.setvariable variable=NodeVersion]$(cat .nvmrc)"
-                displayName: Read Node version from .nvmrc
-
-              - task: NodeTool@0
-                inputs:
-                  versionSpec: $(NodeVersion)
-                displayName: Setup Node.js $(NodeVersion)
-
-              - script: |
-                  echo "registry=$(NpmFeedUrl)" > .npmrc
-                  echo "always-auth=true" >> .npmrc
-                displayName: Create .npmrc
-
-              - task: npmAuthenticate@0
-                displayName: Authenticate to Azure Artifacts feed
-                inputs:
-                  workingFile: .npmrc
-                  customEndpoint: PylanceSecureVsIdePublishWithManagedIdentity # Service connection with Managed Identity auth
-
-              - powershell: |
-                  $tgz = Get-ChildItem "$(Pipeline.Workspace)/npm-package/*.tgz" | Select-Object -First 1
-                  if (-not $tgz) {
-                      Write-Error "No .tgz file found in $(Pipeline.Workspace)/npm-package/"
-                      exit 1
-                  }
-                  Write-Host "Publishing: $($tgz.FullName)"
-                  npm publish $tgz.FullName --ignore-scripts
-                displayName: npm publish
-
-      # ---------------------------------------------------------------
-      # Stage 4: Publish Python to msft_consumption PyPI
-      # ---------------------------------------------------------------
+      # Stage 3b: Publish PyPI
       - stage: PublishPyPI
         displayName: Publish PyPI
-        dependsOn: PublishNpm
+        dependsOn: BuildAndTest
         jobs:
           - job: Publish
             displayName: Publish to ADO PyPI feed
@@ -266,21 +243,56 @@ extends:
                   artifactName: python-package
                   targetPath: $(Pipeline.Workspace)/python-package
             steps:
-              - checkout: none
+              - template: MicroBuild.Publish.yml@MicroBuildTemplate
+                parameters:
+                  intent: 'PackageDistribution'
+                  contentType: 'PyPI'
+                  contentSource: 'Folder'
+                  folderLocation: '$(Pipeline.Workspace)/python-package'
+                  waitForReleaseCompletion: true
+                  owners: 'grwheele@microsoft.com'
+                  approvers: 'eduardovil@microsoft.com'
 
-              - task: UsePythonVersion@0
-                inputs:
-                  versionSpec: $(PythonVersion)
-                displayName: Use Python $(PythonVersion)
-
-              - script: pip install twine
-                displayName: Install twine
-
-              - task: TwineAuthenticate@1
-                displayName: Twine Authenticate
-                inputs:
-                  artifactFeed: $(PyPiFeedName)
+      # Stage 4: Create GitHub Release
+      - stage: GitHubRelease
+        displayName: Create GitHub Release
+        dependsOn:
+          - PublishNpm
+          - PublishPyPI
+        jobs:
+          - job: CreateTag
+            displayName: Create git tag
+            steps:
+              - checkout: self
+                persistCredentials: true
 
               - script: |
-                  python -m twine upload -r msft_consumption --config-file $(PYPIRC_PATH) $(Pipeline.Workspace)/python-package/*
-                displayName: Upload to feed
+                  VERSION=$(cat VERSION)
+                  TAG="v${VERSION}"
+                  echo "Tagging commit $(Build.SourceVersion) as ${TAG}"
+                  git tag "${TAG}" $(Build.SourceVersion)
+                  git push origin "${TAG}"
+                displayName: Create and push tag
+
+              - script: |
+                  VERSION=$(cat VERSION)
+                  echo "##vso[task.setvariable variable=ReleaseVersion]${VERSION}"
+                displayName: Read version
+
+              - task: GitHubRelease@1
+                displayName: Create GitHub Release
+                inputs:
+                  gitHubConnection: "Github - VS Code Common Python LSP"
+                  repositoryName: $(Build.Repository.Name)
+                  action: create
+                  target: $(Build.SourceVersion)
+                  tagSource: userSpecifiedTag
+                  tag: v$(ReleaseVersion)
+                  title: v$(ReleaseVersion)
+                  releaseNotesSource: inline
+                  releaseNotesInline: |
+                    ## What's Changed
+                    Auto-generated release for v$(ReleaseVersion).
+                    See [full changelog]($(Build.Repository.Uri)/compare/$(Build.SourceVersion)...v$(ReleaseVersion)) for details.
+                  changeLogCompareToRelease: lastFullRelease
+                  changeLogType: commitBased
