@@ -1,4 +1,4 @@
-# vscode-common-python-lsp (TypeScript)
+# @vscode/common-python-lsp (TypeScript)
 
 Shared TypeScript utilities for VS Code Python tool extensions.
 
