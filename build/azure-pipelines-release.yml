@@ -5,7 +5,7 @@
 # vscode-common-python-lsp feed, then tags the commit.
 #
 # Uses MicroBuildTemplate for 1ES compliance (SDL, SBOM, etc).
-# Auth uses Managed Identity — no PATs or stored secrets.
+# Auth uses built-in Azure Artifacts tasks (npmAuthenticate, PipAuthenticate).
 
 trigger: none
 pr: none
@@ -90,25 +90,34 @@ extends:
                 inputs:
                   versionSpec: $(NodeVersion)
 
-              - template: build/templates/configure-npm-auth.yml@self
-                parameters:
-                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
-                  feedUrl: $(ConsumptionNpmFeedUrl)
-                  feedUrlNoProtocol: $(ConsumptionNpmFeedUrlNoProtocol)
-                  projectNpmrcPath: typescript/.npmrc
-
-              - script: npm ci
-                workingDirectory: typescript
+              - task: npm@1
                 displayName: Install dependencies
+                inputs:
+                  command: ci
+                  workingDir: typescript
+                  customRegistry: useFeed
+                  customFeed: 'devdiv/vscode-common-python-lsp'
 
-              - script: npm run build
-                workingDirectory: typescript
+              - task: npm@1
+                displayName: Build
+                inputs:
+                  command: custom
+                  customCommand: run build
+                  workingDir: typescript
 
-              - script: npm run lint
-                workingDirectory: typescript
+              - task: npm@1
+                displayName: Lint
+                inputs:
+                  command: custom
+                  customCommand: run lint
+                  workingDir: typescript
 
-              - script: npm test
-                workingDirectory: typescript
+              - task: npm@1
+                displayName: Test
+                inputs:
+                  command: custom
+                  customCommand: test
+                  workingDir: typescript
 
               - script: |
                   mkdir -p $(Build.ArtifactStagingDirectory)/npm-package
@@ -130,11 +139,9 @@ extends:
                 inputs:
                   versionSpec: $(pythonVersion)
 
-              - template: build/templates/configure-pip-auth.yml@self
-                parameters:
-                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
-                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
-                  os: linux
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: 'devdiv/vscode-common-python-lsp'
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -160,11 +167,9 @@ extends:
                 inputs:
                   versionSpec: $(pythonVersion)
 
-              - template: build/templates/configure-pip-auth.yml@self
-                parameters:
-                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
-                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
-                  os: windows
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: 'devdiv/vscode-common-python-lsp'
 
               - script: python -m pip install --upgrade pip nox
                 displayName: Install nox
@@ -186,11 +191,9 @@ extends:
                 inputs:
                   versionSpec: $(PythonVersion)
 
-              - template: build/templates/configure-pip-auth.yml@self
-                parameters:
-                  azureServiceConnection: ${{ variables.AzureServiceConnectionPull }}
-                  feedSimpleUrl: $(PyPiFeedSimpleUrl)
-                  os: linux
+              - task: PipAuthenticate@1
+                inputs:
+                  artifactFeeds: 'devdiv/vscode-common-python-lsp'
 
               - script: |
                   pip install build
