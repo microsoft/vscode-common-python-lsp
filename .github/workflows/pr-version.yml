@@ -1,0 +1,23 @@
+name: Check version match
+on:
+  pull_request:
+    types:
+      - 'opened'
+      - 'reopened'
+      - 'labeled'
+      - 'unlabeled'
+      - 'synchronize'
+permissions:
+  pull-requests: read
+
+jobs:
+  check-version-match:
+    name: 'Check version match'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Validate version consistency
+        run: python -m scripts.version.validate
