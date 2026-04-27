@@ -1,13 +1,20 @@
 # Azure Pipelines release pipeline for vscode-common-python-lsp.
 #
-# Triggered manually. Validates, tests, publishes both the TypeScript
-# (npm) and Python (PyPI) packages to the Azure DevOps
+# Triggered automatically when the VERSION file changes on main
+# (i.e. a version bump is merged). Validates, tests, publishes both the
+# TypeScript (npm) and Python (PyPI) packages to the Azure DevOps
 # vscode-common-python-lsp feed, then tags the commit.
 #
 # Uses MicroBuildTemplate for 1ES compliance (SDL, SBOM, etc).
 # Auth uses built-in Azure Artifacts tasks (npmAuthenticate, PipAuthenticate).
 
-trigger: none
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - VERSION
 pr: none
 
 resources:

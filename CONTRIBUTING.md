@@ -20,6 +20,18 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ## Versioning
 
+This project adheres to [Semantic Versioning (SemVer)](https://semver.org/).
+In short:
+
+- **MAJOR** (`X.0.0`) – incompatible API changes.
+- **MINOR** (`0.X.0`) – new functionality that is backwards-compatible.
+- **PATCH** (`0.0.X`) – backwards-compatible bug fixes.
+
+We cut a new **patch release every week** if there are any unreleased fixes on
+`main`. If no fixes have landed since the last release, the weekly release is
+skipped. All released versions are listed on the
+[GitHub Releases](https://github.com/microsoft/vscode-common-python-lsp/releases) page.
+
 Both the TypeScript and Python packages share a single version number defined in
 the `VERSION` file at the repository root. When bumping the version:
 
