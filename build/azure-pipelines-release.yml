@@ -1,6 +1,6 @@
 # Azure Pipelines release pipeline for vscode-common-python-lsp.
 #
-# Triggered automatically when typescript/package.json changes on main
+# Triggered automatically when the VERSION file changes on main
 # (i.e. a version bump is merged). Validates, tests, publishes both the
 # TypeScript (npm) and Python (PyPI) packages to the Azure DevOps
 # vscode-common-python-lsp feed, then tags the commit.
@@ -14,7 +14,7 @@ trigger:
       - main
   paths:
     include:
-      - typescript/package.json
+      - VERSION
 pr: none
 
 resources:
