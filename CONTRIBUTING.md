@@ -29,7 +29,8 @@ In short:
 
 We cut a new **patch release every week** if there are any unreleased fixes on
 `main`. If no fixes have landed since the last release, the weekly release is
-skipped.
+skipped. All released versions are listed on the
+[GitHub Releases](https://github.com/microsoft/vscode-common-python-lsp/releases) page.
 
 Both the TypeScript and Python packages share a single version number defined in
 the `VERSION` file at the repository root. When bumping the version:
