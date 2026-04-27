@@ -1,4 +1,4 @@
-name: Check PR version
+name: Check version match
 on:
   pull_request:
     types:
@@ -11,8 +11,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  check-pr-version:
-    name: 'Check PR version'
+  check-version-match:
+    name: 'Check version match'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
