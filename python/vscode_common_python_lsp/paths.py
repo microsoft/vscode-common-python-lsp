@@ -186,6 +186,27 @@ def classify_python_file(file_path: str) -> PythonFileKind | None:
     return None
 
 
+def reset_caches() -> None:
+    """Clear all ``lru_cache`` caches in this module.
+
+    Useful in tests that need to mock ``site.getusersitepackages()`` or
+    other underlying functions and have the change take effect immediately.
+
+    Example::
+
+        from vscode_common_python_lsp import reset_caches
+
+        reset_caches()
+        with patch.object(site, "getusersitepackages", return_value=None):
+            reset_caches()
+            assert classify_python_file("/some/path") is None
+        reset_caches()  # restore real values
+    """
+    _get_stdlib_roots.cache_clear()
+    _get_user_site_root.cache_clear()
+    _get_system_site_roots.cache_clear()
+
+
 # ---------------------------------------------------------------------------
 # Path comparison and normalization
 # ---------------------------------------------------------------------------

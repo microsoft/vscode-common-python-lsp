@@ -56,6 +56,7 @@ from .paths import (
     is_match,
     is_same_path,
     normalize_path,
+    reset_caches,
 )
 from .process_runner import run_message_loop, update_sys_path
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
@@ -76,6 +77,7 @@ __all__ = [
     "classify_python_file",
     "PythonFileKind",
     "is_match",
+    "reset_caches",
     # context
     "substitute_attr",
     "redirect_io",
