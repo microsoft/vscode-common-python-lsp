@@ -39,6 +39,7 @@ from .notebook import (
     CellLike,
     CellOffset,
     SyntheticDocument,
+    TextDocumentLike,
     build_notebook_source,
     get_cell_for_line,
     remap_diagnostics_to_cells,
@@ -125,6 +126,7 @@ __all__ = [
     # notebook
     "CellLike",
     "SyntheticDocument",
+    "TextDocumentLike",
     "CellOffset",
     "MAGIC_LINE_RE",
     "NOTEBOOK_SYNC_OPTIONS",
