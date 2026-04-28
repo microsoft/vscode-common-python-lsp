@@ -45,6 +45,10 @@ class ToolServerConfig:
         Minimum supported version string.
     runner_script:
         Path to the bundled JSON-RPC runner script.
+    resolve_symlinks:
+        Whether to resolve symlinks when normalizing workspace paths.
+        All current extension repos use ``False`` to keep workspace
+        keys relative to the (possibly symlinked) workspace root.
     default_notification_level:
         Default value for the ``showNotifications`` setting.
     default_settings:
@@ -58,6 +62,7 @@ class ToolServerConfig:
     tool_args: list[str] = field(default_factory=list)
     min_version: str = ""
     runner_script: str = ""
+    resolve_symlinks: bool = False
     default_notification_level: Literal["off", "onError", "onWarning", "always"] = "off"
     default_settings: dict[str, Any] = field(default_factory=dict)
 
@@ -122,7 +127,9 @@ class ToolServer:
     def update_workspace_settings(self, settings: list[dict[str, Any]] | None) -> None:
         """Populate :attr:`workspace_settings` from the client payload."""
         if not settings:
-            key = normalize_path(os.getcwd())
+            key = normalize_path(
+                os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
+            )
             self.workspace_settings[key] = {
                 "cwd": key,
                 "workspaceFS": key,
@@ -132,7 +139,10 @@ class ToolServer:
             return
 
         for setting in settings:
-            key = normalize_path(uris.to_fs_path(setting["workspace"]))
+            key = normalize_path(
+                uris.to_fs_path(setting["workspace"]),
+                resolve_symlinks=self.config.resolve_symlinks,
+            )
             self.workspace_settings[key] = {
                 **self.get_global_defaults(),
                 **setting,
@@ -142,7 +152,9 @@ class ToolServer:
     def get_settings_by_path(self, file_path: pathlib.Path) -> dict[str, Any]:
         """Return workspace settings for the given file path."""
         if not self.workspace_settings:
-            cwd = normalize_path(os.getcwd())
+            cwd = normalize_path(
+                os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
+            )
             return {
                 "cwd": cwd,
                 "workspaceFS": cwd,
@@ -153,7 +165,9 @@ class ToolServer:
         workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
 
         while file_path != file_path.parent:
-            str_file_path = normalize_path(str(file_path))
+            str_file_path = normalize_path(
+                str(file_path), resolve_symlinks=self.config.resolve_symlinks
+            )
             if str_file_path in workspaces:
                 return self.workspace_settings[str_file_path]
             file_path = file_path.parent
@@ -167,7 +181,10 @@ class ToolServer:
             workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
 
             while document_workspace != document_workspace.parent:
-                norm_path = normalize_path(str(document_workspace))
+                norm_path = normalize_path(
+                    str(document_workspace),
+                    resolve_symlinks=self.config.resolve_symlinks,
+                )
                 if norm_path in workspaces:
                     return norm_path
                 document_workspace = document_workspace.parent
@@ -178,7 +195,9 @@ class ToolServer:
         """Return workspace settings for the given document."""
         if document is None or document.path is None:
             if not self.workspace_settings:
-                cwd = normalize_path(os.getcwd())
+                cwd = normalize_path(
+                    os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
+                )
                 return {
                     "cwd": cwd,
                     "workspaceFS": cwd,
@@ -191,7 +210,10 @@ class ToolServer:
         if key is not None:
             return self.workspace_settings[key]
 
-        key = normalize_path(str(pathlib.Path(document.path).parent))
+        key = normalize_path(
+            str(pathlib.Path(document.path).parent),
+            resolve_symlinks=self.config.resolve_symlinks,
+        )
         return {
             "cwd": key,
             "workspaceFS": key,

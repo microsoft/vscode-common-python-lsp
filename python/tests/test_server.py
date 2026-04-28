@@ -51,6 +51,7 @@ class TestToolServerConfig:
         assert cfg.tool_args == []
         assert cfg.min_version == ""
         assert cfg.runner_script == ""
+        assert cfg.resolve_symlinks is False
         assert cfg.default_notification_level == "off"
         assert cfg.default_settings == {}
 
@@ -328,6 +329,77 @@ class TestGetDocumentKey:
         }
         doc = _make_document("/other/file.py")
         assert ts.get_document_key(doc) is None
+
+
+class TestResolveSymlinks:
+    """Tests for the resolve_symlinks config propagation to normalize_path."""
+
+    def test_default_config_has_resolve_symlinks_false(self):
+        cfg = ToolServerConfig(tool_module="mod", tool_display="Mod")
+        assert cfg.resolve_symlinks is False
+
+    @patch("vscode_common_python_lsp.server.normalize_path")
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_update_workspace_settings_passes_resolve_symlinks_false(
+        self, mock_uris, mock_normalize
+    ):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        mock_normalize.return_value = "/normalized/cwd"
+        ts = _make_server()
+        ts.update_workspace_settings(None)
+        mock_normalize.assert_called_with(os.getcwd(), resolve_symlinks=False)
+
+    @patch("vscode_common_python_lsp.server.normalize_path")
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_update_workspace_settings_passes_resolve_symlinks_true(
+        self, mock_uris, mock_normalize
+    ):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        mock_normalize.return_value = "/normalized/cwd"
+        cfg = ToolServerConfig(
+            tool_module="mod", tool_display="Mod", resolve_symlinks=True
+        )
+        ts = _make_server(cfg)
+        ts.update_workspace_settings(None)
+        mock_normalize.assert_called_with(os.getcwd(), resolve_symlinks=True)
+
+    @patch("vscode_common_python_lsp.server.normalize_path")
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_update_workspace_settings_list_passes_resolve_symlinks(
+        self, mock_uris, mock_normalize
+    ):
+        mock_uris.to_fs_path.side_effect = lambda u: u.replace("file://", "")
+        mock_normalize.return_value = "/ws1"
+        ts = _make_server()
+        ts.update_workspace_settings([{"workspace": "file:///ws1"}])
+        mock_normalize.assert_called_with("/ws1", resolve_symlinks=False)
+
+    @patch("vscode_common_python_lsp.server.normalize_path")
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_get_settings_by_document_passes_resolve_symlinks(
+        self, mock_uris, mock_normalize
+    ):
+        mock_uris.from_fs_path.return_value = "file:///parent"
+        mock_normalize.return_value = "/parent"
+        ts = _make_server()
+        doc = _make_document("/parent/file.py")
+        # No workspace settings, document outside all → fallback path
+        ts.get_settings_by_document(doc)
+        mock_normalize.assert_called_with(
+            str(pathlib.Path("/parent/file.py").parent),
+            resolve_symlinks=False,
+        )
+
+    @patch("vscode_common_python_lsp.server.normalize_path")
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_get_settings_by_path_empty_passes_resolve_symlinks(
+        self, mock_uris, mock_normalize
+    ):
+        mock_uris.from_fs_path.return_value = "file:///cwd"
+        mock_normalize.return_value = "/normalized/cwd"
+        ts = _make_server()
+        ts.get_settings_by_path(pathlib.Path("/some/file.py"))
+        mock_normalize.assert_called_with(os.getcwd(), resolve_symlinks=False)
 
 
 # ---------------------------------------------------------------------------
