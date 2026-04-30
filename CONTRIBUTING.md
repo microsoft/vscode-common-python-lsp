@@ -54,9 +54,11 @@ A PR will fail the **Version Check** workflow if the version in `VERSION`,
 A GitHub Actions workflow (`.github/workflows/auto-patch-bump.yml`) runs every
 Monday at 00:00 UTC. If there are unreleased commits on `main` since the last
 GitHub Release, the workflow automatically opens a PR that increments the patch
-version and syncs all manifests. If a previous bump PR is still open and new
-commits have landed since it was created, the stale PR is closed and replaced
-with a fresh one. Maintainers review and merge the PR to trigger the release.
+version and syncs all manifests. If a previous bump PR is still open and `main`
+has advanced beyond it (new commits landed since the PR was created), the stale
+PR is closed and replaced with a fresh one. If the existing PR still covers the
+current state of `main`, no action is taken. Maintainers review and merge the
+bump PR to trigger the release.
 
 ### Release process
 

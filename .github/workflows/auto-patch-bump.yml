@@ -5,6 +5,10 @@ on:
     - cron: '0 0 * * 1' # Every Monday at 00:00 UTC
   workflow_dispatch:
 
+concurrency:
+  group: auto-patch-bump
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -21,7 +25,11 @@ jobs:
       - name: Get latest release tag
         id: release
         run: |
-          TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "")
+          if ! TAG=$(gh release view --json tagName -q '.tagName'); then
+            echo "No releases found (or API error). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$TAG" ]; then
             echo "No releases found. Skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -36,7 +44,6 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         id: check
         run: |
-          TAG="${{ steps.release.outputs.tag }}"
           COMMITS=$(git log "${TAG}..HEAD" --oneline)
           if [ -z "$COMMITS" ]; then
             echo "No new commits since $TAG. Skipping."
@@ -46,38 +53,52 @@ jobs:
             echo "$COMMITS"
             echo "has_new_commits=true" >> "$GITHUB_OUTPUT"
           fi
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
 
       - name: Handle existing bump PR
         if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
         id: existing_pr
         run: |
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
           # Find any open PR with the auto/bump-version- branch prefix
-          EXISTING_PR=$(gh pr list --head "auto/bump-version-" --state open --json number,headRefName,baseRefOid -q '.[0]' 2>/dev/null || echo "")
+          EXISTING_PR=$(gh pr list --state open --json number,headRefName,headRefOid \
+            -q '[.[] | select(.headRefName | startswith("auto/bump-version-"))] | .[0]' 2>/dev/null || echo "")
           if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
             PR_NUMBER=$(echo "$EXISTING_PR" | jq -r '.number')
             BRANCH_NAME=$(echo "$EXISTING_PR" | jq -r '.headRefName')
-            echo "Found existing bump PR #$PR_NUMBER on branch $BRANCH_NAME"
+            PR_HEAD_SHA=$(echo "$EXISTING_PR" | jq -r '.headRefOid')
+            echo "Found existing bump PR #$PR_NUMBER on branch $BRANCH_NAME at $PR_HEAD_SHA"
 
-            # Close the stale PR and delete its branch
-            gh pr close "$PR_NUMBER" --comment "Closing: new commits have landed on main since this PR was created. A fresh bump PR will be opened."
-            git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
-            echo "Closed stale PR #$PR_NUMBER and deleted branch $BRANCH_NAME"
+            git fetch origin main
+            MAIN_SHA=$(git rev-parse origin/main)
+
+            if [ "$PR_HEAD_SHA" != "$MAIN_SHA" ] && git merge-base --is-ancestor "$PR_HEAD_SHA" "$MAIN_SHA"; then
+              # main has advanced beyond the bump PR head, so replace the stale PR
+              gh pr close "$PR_NUMBER" --comment "Closing: new commits have landed on main since this PR was created. A fresh bump PR will be opened."
+              git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
+              echo "Closed stale PR #$PR_NUMBER and deleted branch $BRANCH_NAME"
+            else
+              echo "Existing bump PR #$PR_NUMBER already covers the current state of main. Skipping."
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
-        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true' && steps.existing_pr.outputs.proceed == 'true'
         with:
           python-version: '3.x'
 
       - uses: actions/setup-node@v4
-        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true' && steps.existing_pr.outputs.proceed == 'true'
         with:
           node-version-file: '.nvmrc'
 
       - name: Bump version and sync manifests
-        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true' && steps.existing_pr.outputs.proceed == 'true'
         id: version
         run: |
           python -m scripts.version.bump_patch
@@ -85,13 +106,15 @@ jobs:
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create branch, commit, and open PR
-        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true' && steps.existing_pr.outputs.proceed == 'true'
         run: |
-          NEW_VERSION="${{ steps.version.outputs.new_version }}"
           BRANCH="auto/bump-version-${NEW_VERSION}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Delete remote branch if it exists from a prior failed run
+          git push origin --delete "$BRANCH" 2>/dev/null || true
 
           git checkout -b "$BRANCH"
           git add -A
@@ -106,3 +129,4 @@ jobs:
             --label "debt"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
