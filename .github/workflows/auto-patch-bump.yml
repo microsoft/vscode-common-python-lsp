@@ -1,0 +1,108 @@
+name: Auto Patch Bump
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # Every Monday at 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-patch:
+    name: Bump patch version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest release tag
+        id: release
+        run: |
+          TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "")
+          if [ -z "$TAG" ]; then
+            echo "No releases found. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for new commits since release
+        if: steps.release.outputs.skip != 'true'
+        id: check
+        run: |
+          TAG="${{ steps.release.outputs.tag }}"
+          COMMITS=$(git log "${TAG}..HEAD" --oneline)
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits since $TAG. Skipping."
+            echo "has_new_commits=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New commits found since $TAG:"
+            echo "$COMMITS"
+            echo "has_new_commits=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Handle existing bump PR
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        id: existing_pr
+        run: |
+          # Find any open PR with the auto/bump-version- branch prefix
+          EXISTING_PR=$(gh pr list --head "auto/bump-version-" --state open --json number,headRefName,baseRefOid -q '.[0]' 2>/dev/null || echo "")
+          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
+            PR_NUMBER=$(echo "$EXISTING_PR" | jq -r '.number')
+            BRANCH_NAME=$(echo "$EXISTING_PR" | jq -r '.headRefName')
+            echo "Found existing bump PR #$PR_NUMBER on branch $BRANCH_NAME"
+
+            # Close the stale PR and delete its branch
+            gh pr close "$PR_NUMBER" --comment "Closing: new commits have landed on main since this PR was created. A fresh bump PR will be opened."
+            git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
+            echo "Closed stale PR #$PR_NUMBER and deleted branch $BRANCH_NAME"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        with:
+          python-version: '3.x'
+
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Bump version and sync manifests
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        id: version
+        run: |
+          python -m scripts.version.bump_patch
+          NEW_VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create branch, commit, and open PR
+        if: steps.release.outputs.skip != 'true' && steps.check.outputs.has_new_commits == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          BRANCH="auto/bump-version-${NEW_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Bump version to ${NEW_VERSION}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Bump version to ${NEW_VERSION}" \
+            --body "Automated weekly patch bump. New commits were found on \`main\` since the last release." \
+            --label "debt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

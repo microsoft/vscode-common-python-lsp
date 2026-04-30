@@ -49,6 +49,15 @@ python -m scripts.version.validate
 A PR will fail the **Version Check** workflow if the version in `VERSION`,
 `typescript/package.json`, or `python/pyproject.toml` don't match.
 
+### Automated weekly patch bump
+
+A GitHub Actions workflow (`.github/workflows/auto-patch-bump.yml`) runs every
+Monday at 00:00 UTC. If there are unreleased commits on `main` since the last
+GitHub Release, the workflow automatically opens a PR that increments the patch
+version and syncs all manifests. If a previous bump PR is still open and new
+commits have landed since it was created, the stale PR is closed and replaced
+with a fresh one. Maintainers review and merge the PR to trigger the release.
+
 ### Release process
 
 1. Bump the version: `python -m scripts.version.sync X.Y.Z`
