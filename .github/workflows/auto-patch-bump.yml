@@ -63,8 +63,12 @@ jobs:
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
           # Find any open PR with the auto/bump-version- branch prefix
-          EXISTING_PR=$(gh pr list --state open --json number,headRefName,headRefOid \
-            -q '[.[] | select(.headRefName | startswith("auto/bump-version-"))] | .[0]' 2>/dev/null || echo "")
+          if ! EXISTING_PR=$(gh pr list --state open --json number,headRefName,headRefOid \
+            -q '[.[] | select(.headRefName | startswith("auto/bump-version-"))] | .[0]'); then
+            echo "WARNING: Failed to list PRs; proceeding without stale-PR check." >&2
+            exit 0
+          fi
+          EXISTING_PR=${EXISTING_PR:-""}
           if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
             PR_NUMBER=$(echo "$EXISTING_PR" | jq -r '.number')
             BRANCH_NAME=$(echo "$EXISTING_PR" | jq -r '.headRefName')
@@ -74,8 +78,10 @@ jobs:
             git fetch origin main
             MAIN_SHA=$(git rev-parse origin/main)
 
-            if [ "$PR_HEAD_SHA" != "$MAIN_SHA" ] && git merge-base --is-ancestor "$PR_HEAD_SHA" "$MAIN_SHA"; then
-              # main has advanced beyond the bump PR head, so replace the stale PR
+            # Check if main advanced past where the PR branched
+            FORK_POINT=$(git merge-base "$PR_HEAD_SHA" "$MAIN_SHA")
+            if [ "$FORK_POINT" != "$MAIN_SHA" ]; then
+              # main has advanced beyond the bump PR's fork point, so replace the stale PR
               gh pr close "$PR_NUMBER" --comment "Closing: new commits have landed on main since this PR was created. A fresh bump PR will be opened."
               git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
               echo "Closed stale PR #$PR_NUMBER and deleted branch $BRANCH_NAME"
