@@ -1,6 +1,6 @@
 {
     "name": "@vscode/common-python-lsp",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "Shared TypeScript utilities for VS Code Python tool extensions",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",

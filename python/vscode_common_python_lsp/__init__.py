@@ -59,7 +59,7 @@ from .paths import (
     normalize_path,
     reset_caches,
 )
-from .process_runner import run_message_loop, update_sys_path
+from .process_runner import run_message_loop, update_environ_path, update_sys_path
 from .runner import CustomIO, RunResult, run_api, run_module, run_path
 from .server import ToolServer, ToolServerConfig
 from .version import VersionInfo, check_min_version, extract_version, version_to_tuple
@@ -98,6 +98,7 @@ __all__ = [
     "shutdown_json_rpc",
     # process_runner
     "update_sys_path",
+    "update_environ_path",
     "run_message_loop",
     # debug
     "setup_debugpy",
