@@ -19,7 +19,7 @@ VERSION_FILE = ROOT / "VERSION"
 PACKAGE_JSON = ROOT / "typescript" / "package.json"
 PYPROJECT_TOML = ROOT / "python" / "pyproject.toml"
 
-SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 def read_versions() -> dict[str, str]:
