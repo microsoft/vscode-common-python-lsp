@@ -1,0 +1,54 @@
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    labels:
+      - 'dependencies'
+      - 'debt'
+    directory: '/typescript'
+    schedule:
+      interval: 'weekly'
+    groups:
+      npm-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: '@types/vscode'
+      - dependency-name: '@types/node'
+      - dependency-name: 'vscode-languageclient'
+
+  - package-ecosystem: 'pip'
+    labels:
+      - 'dependencies'
+      - 'debt'
+    directory: '/python'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      pip-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'github-actions'
+    labels:
+      - 'dependencies'
+      - 'debt'
+      - 'no-changelog'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      github-actions-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
