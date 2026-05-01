@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -32,6 +33,24 @@ def update_sys_path(path_to_add: str, strategy: str) -> None:
             sys.path.insert(0, path_to_add)
         else:
             sys.path.append(path_to_add)
+
+
+def update_environ_path() -> None:
+    """Update PATH environment variable with the ``scripts`` directory.
+
+    Ensures tool executables installed in the virtual environment's scripts
+    directory (``Scripts`` on Windows, ``bin`` on Unix) are discoverable.
+    """
+    scripts = sysconfig.get_path("scripts")
+    if not scripts:
+        return
+    for var_name in ("Path", "PATH"):
+        if var_name in os.environ:
+            paths = os.environ[var_name].split(os.pathsep)
+            if scripts not in paths:
+                paths.insert(0, scripts)
+                os.environ[var_name] = os.pathsep.join(paths)
+            break
 
 
 def run_message_loop(

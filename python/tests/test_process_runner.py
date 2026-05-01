@@ -8,7 +8,11 @@ import unittest
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
-from vscode_common_python_lsp.process_runner import run_message_loop, update_sys_path
+from vscode_common_python_lsp.process_runner import (
+    run_message_loop,
+    update_environ_path,
+    update_sys_path,
+)
 
 
 class TestUpdateSysPath(unittest.TestCase):
@@ -58,6 +62,54 @@ class TestUpdateSysPath(unittest.TestCase):
             assert fake_dir not in sys.path
         finally:
             sys.path[:] = original
+
+
+class TestUpdateEnvironPath(unittest.TestCase):
+    """Tests for update_environ_path."""
+
+    def test_adds_scripts_to_path(self):
+        import sysconfig
+
+        scripts = sysconfig.get_path("scripts")
+        if not scripts:
+            self.skipTest("sysconfig does not report scripts path")
+
+        # Remove scripts from PATH if present
+        original_env = os.environ.copy()
+        path_var = "PATH" if "PATH" in os.environ else "Path"
+        paths = os.environ.get(path_var, "").split(os.pathsep)
+        paths = [p for p in paths if p != scripts]
+        os.environ[path_var] = os.pathsep.join(paths)
+
+        try:
+            update_environ_path()
+            new_paths = os.environ[path_var].split(os.pathsep)
+            assert scripts in new_paths
+            assert new_paths[0] == scripts
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)
+
+    def test_does_not_duplicate(self):
+        import sysconfig
+
+        scripts = sysconfig.get_path("scripts")
+        if not scripts:
+            self.skipTest("sysconfig does not report scripts path")
+
+        original_env = os.environ.copy()
+        path_var = "PATH" if "PATH" in os.environ else "Path"
+        # Ensure scripts is already in PATH
+        os.environ[path_var] = scripts + os.pathsep + os.environ.get(path_var, "")
+
+        try:
+            count_before = os.environ[path_var].split(os.pathsep).count(scripts)
+            update_environ_path()
+            count_after = os.environ[path_var].split(os.pathsep).count(scripts)
+            assert count_after == count_before
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)
 
 
 @dataclass
