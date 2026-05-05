@@ -5,6 +5,25 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { IServerInfo } from './types';
 
+/**
+ * Resolves the extension root directory from a `__dirname` value.
+ *
+ * Handles both development layout (`src/common/constants.ts` — 2 levels up)
+ * and production layout (`dist/extension.js` — 1 level up) by checking
+ * whether the immediate folder name is `'common'`.
+ *
+ * Replaces the standard boilerplate found in every extension's `constants.ts`:
+ * ```ts
+ * const folderName = path.basename(__dirname);
+ * export const EXTENSION_ROOT_DIR =
+ *     folderName === 'common' ? path.dirname(path.dirname(__dirname)) : path.dirname(__dirname);
+ * ```
+ */
+export function resolveExtensionRoot(dirname: string): string {
+    const folderName = path.basename(dirname);
+    return folderName === 'common' ? path.dirname(path.dirname(dirname)) : path.dirname(dirname);
+}
+
 export function loadServerDefaults(extensionRootDir: string): IServerInfo {
     const packageJson = path.join(extensionRootDir, 'package.json');
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import sys
 import sysconfig
 import traceback
@@ -33,6 +34,51 @@ def update_sys_path(path_to_add: str, strategy: str) -> None:
             sys.path.insert(0, path_to_add)
         else:
             sys.path.append(path_to_add)
+
+
+def resolve_bundle_path(script_file: str) -> str:
+    """Resolve the bundle directory and configure ``sys.path`` for a bundled LSP server.
+
+    Call this at the top of your ``lsp_server.py`` (before importing
+    any bundled libraries) to replace the standard 7-line boilerplate::
+
+        # Instead of:
+        BUNDLE_DIR = pathlib.Path(__file__).parent.parent
+        update_sys_path(os.fspath(BUNDLE_DIR / "tool"), "useBundled")
+        update_sys_path(
+            os.fspath(BUNDLE_DIR / "libs"),
+            os.getenv("LS_IMPORT_STRATEGY", "useBundled"),
+        )
+
+        # Use:
+        from vscode_common_python_lsp import resolve_bundle_path
+        BUNDLE_DIR = resolve_bundle_path(__file__)
+
+    Parameters
+    ----------
+    script_file:
+        The ``__file__`` of the calling script (expected to be at
+        ``<bundle>/tool/lsp_server.py``).
+
+    Returns
+    -------
+    str
+        The resolved bundle directory path (``<extension>/bundled/``),
+        for any further use by the caller.
+    """
+    bundle_dir = pathlib.Path(script_file).parent.parent
+    bundle_str = os.fspath(bundle_dir)
+
+    # Always put the tool directory first (bundled server modules)
+    update_sys_path(os.fspath(bundle_dir / "tool"), "useBundled")
+
+    # Libs follow the LS_IMPORT_STRATEGY env var
+    update_sys_path(
+        os.fspath(bundle_dir / "libs"),
+        os.getenv("LS_IMPORT_STRATEGY", "useBundled"),
+    )
+
+    return bundle_str
 
 
 def update_environ_path() -> None:

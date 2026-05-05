@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 from vscode_common_python_lsp.process_runner import (
+    resolve_bundle_path,
     run_message_loop,
     update_environ_path,
     update_sys_path,
@@ -304,6 +305,82 @@ class TestRunMessageLoop(unittest.TestCase):
         sent = rpc.send_data.call_args[0][0]
         assert sent["id"] == "7"
         assert "Unknown method: unknown_method" in sent["error"]
+
+
+class TestBootstrapSysPath(unittest.TestCase):
+    """Tests for resolve_bundle_path (and its alias bootstrap_sys_path)."""
+
+    def test_adds_tool_and_libs_dirs(self):
+        """resolve_bundle_path adds both tool/ and libs/ to sys.path."""
+        import tempfile
+
+        original = sys.path[:]
+        with tempfile.TemporaryDirectory() as tmp:
+            # Create the expected directory layout:
+            # <tmp>/tool/lsp_server.py
+            # <tmp>/libs/
+            tool_dir = os.path.join(tmp, "tool")
+            libs_dir = os.path.join(tmp, "libs")
+            os.makedirs(tool_dir)
+            os.makedirs(libs_dir)
+            script = os.path.join(tool_dir, "lsp_server.py")
+            open(script, "w").close()
+
+            try:
+                result = resolve_bundle_path(script)
+                assert result == tmp
+                assert tool_dir in sys.path
+                assert libs_dir in sys.path
+                # Both should be at the front of sys.path (before original entries)
+                assert sys.path.index(tool_dir) < len(original)
+                assert sys.path.index(libs_dir) < len(original)
+            finally:
+                sys.path[:] = original
+
+    def test_returns_bundle_dir_path(self):
+        """resolve_bundle_path returns the bundle directory."""
+        import tempfile
+
+        original = sys.path[:]
+        with tempfile.TemporaryDirectory() as tmp:
+            tool_dir = os.path.join(tmp, "tool")
+            libs_dir = os.path.join(tmp, "libs")
+            os.makedirs(tool_dir)
+            os.makedirs(libs_dir)
+            script = os.path.join(tool_dir, "lsp_server.py")
+            open(script, "w").close()
+
+            try:
+                result = resolve_bundle_path(script)
+                assert result == tmp
+            finally:
+                sys.path[:] = original
+
+    def test_respects_ls_import_strategy_env(self):
+        """When LS_IMPORT_STRATEGY=fromEnvironment, libs are appended."""
+        import tempfile
+
+        original = sys.path[:]
+        original_env = os.environ.copy()
+        with tempfile.TemporaryDirectory() as tmp:
+            tool_dir = os.path.join(tmp, "tool")
+            libs_dir = os.path.join(tmp, "libs")
+            os.makedirs(tool_dir)
+            os.makedirs(libs_dir)
+            script = os.path.join(tool_dir, "lsp_server.py")
+            open(script, "w").close()
+
+            os.environ["LS_IMPORT_STRATEGY"] = "fromEnvironment"
+            try:
+                len_before = len(sys.path)
+                resolve_bundle_path(script)
+                assert libs_dir in sys.path
+                # libs should be appended after existing entries
+                assert sys.path.index(libs_dir) >= len_before
+            finally:
+                sys.path[:] = original
+                os.environ.clear()
+                os.environ.update(original_env)
 
 
 if __name__ == "__main__":
