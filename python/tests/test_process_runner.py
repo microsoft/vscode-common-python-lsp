@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 from vscode_common_python_lsp.process_runner import (
-    bootstrap_sys_path,
+    resolve_bundle_path,
     run_message_loop,
     update_environ_path,
     update_sys_path,
@@ -308,10 +308,10 @@ class TestRunMessageLoop(unittest.TestCase):
 
 
 class TestBootstrapSysPath(unittest.TestCase):
-    """Tests for bootstrap_sys_path."""
+    """Tests for resolve_bundle_path (and its alias bootstrap_sys_path)."""
 
     def test_adds_tool_and_libs_dirs(self):
-        """bootstrap_sys_path adds both tool/ and libs/ to sys.path."""
+        """resolve_bundle_path adds both tool/ and libs/ to sys.path."""
         import tempfile
 
         original = sys.path[:]
@@ -327,7 +327,7 @@ class TestBootstrapSysPath(unittest.TestCase):
             open(script, "w").close()
 
             try:
-                result = bootstrap_sys_path(script)
+                result = resolve_bundle_path(script)
                 assert result == tmp
                 assert tool_dir in sys.path
                 assert libs_dir in sys.path
@@ -338,7 +338,7 @@ class TestBootstrapSysPath(unittest.TestCase):
                 sys.path[:] = original
 
     def test_returns_bundle_dir_path(self):
-        """bootstrap_sys_path returns the bundle directory."""
+        """resolve_bundle_path returns the bundle directory."""
         import tempfile
 
         original = sys.path[:]
@@ -351,7 +351,7 @@ class TestBootstrapSysPath(unittest.TestCase):
             open(script, "w").close()
 
             try:
-                result = bootstrap_sys_path(script)
+                result = resolve_bundle_path(script)
                 assert result == tmp
             finally:
                 sys.path[:] = original
@@ -372,7 +372,7 @@ class TestBootstrapSysPath(unittest.TestCase):
 
             os.environ["LS_IMPORT_STRATEGY"] = "fromEnvironment"
             try:
-                bootstrap_sys_path(script)
+                resolve_bundle_path(script)
                 # libs should be appended (not inserted at front)
                 assert libs_dir in sys.path
                 assert sys.path[-1] == libs_dir or sys.path.index(libs_dir) > 0

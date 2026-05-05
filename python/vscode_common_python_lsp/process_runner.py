@@ -35,8 +35,8 @@ def update_sys_path(path_to_add: str, strategy: str) -> None:
             sys.path.append(path_to_add)
 
 
-def bootstrap_sys_path(script_file: str) -> str:
-    """Set up ``sys.path`` for a bundled LSP server script.
+def resolve_bundle_path(script_file: str) -> str:
+    """Resolve the bundle directory and configure ``sys.path`` for a bundled LSP server.
 
     Call this at the top of your ``lsp_server.py`` (before importing
     any bundled libraries) to replace the standard 7-line boilerplate::
@@ -50,8 +50,8 @@ def bootstrap_sys_path(script_file: str) -> str:
         )
 
         # Use:
-        from vscode_common_python_lsp import bootstrap_sys_path
-        BUNDLE_DIR = bootstrap_sys_path(__file__)
+        from vscode_common_python_lsp import resolve_bundle_path
+        BUNDLE_DIR = resolve_bundle_path(__file__)
 
     Parameters
     ----------

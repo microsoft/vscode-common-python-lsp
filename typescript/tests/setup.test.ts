@@ -3,21 +3,9 @@
 
 import { assert } from 'chai';
 import * as path from 'path';
-import { resolveExtensionPaths, resolveExtensionRoot } from '../src/setup';
+import { resolveExtensionRoot } from '../src/setup';
 
 suite('Setup utilities', () => {
-    suite('resolveExtensionPaths', () => {
-        test('returns correct bundled paths relative to extension root', () => {
-            const root = path.join('home', 'user', '.vscode', 'extensions', 'ms-python.flake8-1.0.0');
-            const result = resolveExtensionPaths(root);
-
-            assert.strictEqual(result.extensionRoot, root);
-            assert.strictEqual(result.bundledScripts, path.join(root, 'bundled'));
-            assert.strictEqual(result.serverScript, path.join(root, 'bundled', 'tool', 'lsp_server.py'));
-            assert.strictEqual(result.debugServerScript, path.join(root, 'bundled', 'tool', '_debug_server.py'));
-        });
-    });
-
     suite('resolveExtensionRoot', () => {
         test('navigates 2 levels up when dirname is "common" (dev layout)', () => {
             // Simulates: <root>/src/common/constants.ts → __dirname = <root>/src/common → root = <root>
