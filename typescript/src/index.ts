@@ -32,7 +32,7 @@ export {
 export { getDocumentSelector, getInterpreterFromSetting, getLSClientTraceLevel, getProjectRoot } from './utilities';
 
 // Setup
-export { loadServerDefaults } from './setup';
+export { ExtensionPaths, loadServerDefaults, resolveExtensionPaths, resolveExtensionRoot } from './setup';
 
 // Status
 export { registerLanguageStatusItem, updateStatus } from './status';
