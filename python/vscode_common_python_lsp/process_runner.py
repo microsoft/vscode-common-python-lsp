@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import sys
 import sysconfig
 import traceback
@@ -65,8 +66,6 @@ def resolve_bundle_path(script_file: str) -> str:
         The resolved bundle directory path (``<extension>/bundled/``),
         for any further use by the caller.
     """
-    import pathlib
-
     bundle_dir = pathlib.Path(script_file).parent.parent
     bundle_str = os.fspath(bundle_dir)
 

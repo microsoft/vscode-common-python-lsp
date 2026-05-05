@@ -357,7 +357,7 @@ class TestBootstrapSysPath(unittest.TestCase):
                 sys.path[:] = original
 
     def test_respects_ls_import_strategy_env(self):
-        """When LS_IMPORT_STRATEGY is set, libs use that strategy."""
+        """When LS_IMPORT_STRATEGY=fromEnvironment, libs are appended."""
         import tempfile
 
         original = sys.path[:]
@@ -372,10 +372,11 @@ class TestBootstrapSysPath(unittest.TestCase):
 
             os.environ["LS_IMPORT_STRATEGY"] = "fromEnvironment"
             try:
+                len_before = len(sys.path)
                 resolve_bundle_path(script)
-                # libs should be appended (not inserted at front)
                 assert libs_dir in sys.path
-                assert sys.path[-1] == libs_dir or sys.path.index(libs_dir) > 0
+                # libs should be appended after existing entries
+                assert sys.path.index(libs_dir) >= len_before
             finally:
                 sys.path[:] = original
                 os.environ.clear()
