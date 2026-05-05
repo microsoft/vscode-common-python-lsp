@@ -204,7 +204,14 @@ export async function getWorkspaceSettings(
 
     // Tool-specific settings from ToolConfig.settingsDefaults
     for (const [key, defaultValue] of Object.entries(toolConfig.settingsDefaults)) {
-        settings[key] = config.get(key, defaultValue);
+        const value = config.get(key, defaultValue);
+        // Resolve VS Code variables in string-array settings (e.g. ignorePatterns
+        // containing ${workspaceFolder}). Scalar and object settings pass through.
+        if (Array.isArray(value) && value.length > 0 && value.every((v: unknown) => typeof v === 'string')) {
+            settings[key] = resolveVariables(value as string[], workspace);
+        } else {
+            settings[key] = value;
+        }
     }
 
     // Handle extraPaths if the tool defines it
