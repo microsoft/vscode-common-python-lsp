@@ -131,6 +131,38 @@ suite('settings — workspace & global resolution', () => {
             assert.include(result.interpreter.join(' '), '/custom/python');
         });
 
+        test('resolves variables in tool-specific string array settings', async () => {
+            const configMap: Record<string, unknown> = {
+                ignorePatterns: ['${workspaceFolder}/tests/**', '${workspaceFolder}/.venv/**'],
+            };
+            getConfigurationStub.returns({
+                get: (key: string, def?: unknown) => configMap[key] ?? def,
+            });
+
+            const toolConfig = makeToolConfig();
+            const result = await getWorkspaceSettings('flake8', ws, toolConfig);
+
+            assert.deepEqual(result['ignorePatterns'], [
+                `${ws.uri.fsPath}/tests/**`,
+                `${ws.uri.fsPath}/.venv/**`,
+            ]);
+        });
+
+        test('does not resolve variables in non-array tool-specific settings', async () => {
+            const configMap: Record<string, unknown> = {
+                severity: { E: '${workspaceFolder}' },
+            };
+            getConfigurationStub.returns({
+                get: (key: string, def?: unknown) => configMap[key] ?? def,
+            });
+
+            const toolConfig = makeToolConfig();
+            const result = await getWorkspaceSettings('flake8', ws, toolConfig);
+
+            // severity is an object, not a string array — should NOT be resolved
+            assert.deepEqual(result['severity'], { E: '${workspaceFolder}' });
+        });
+
         test('expands tilde in cwd', async () => {
             const configMap: Record<string, unknown> = {
                 cwd: '~/my-project',
