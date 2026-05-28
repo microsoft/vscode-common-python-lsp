@@ -269,6 +269,9 @@ extends:
         jobs:
           - job: CreateTag
             displayName: Create git tag
+            templateContext:
+              type: releaseJob
+              isProduction: true
             steps:
               - checkout: self
                 persistCredentials: true
