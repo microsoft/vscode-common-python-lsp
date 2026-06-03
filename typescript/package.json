@@ -11,8 +11,8 @@
         "build": "tsc",
         "watch": "tsc --watch",
         "lint": "eslint src --ext ts",
-        "format-check": "prettier --check 'src/**/*.ts'",
-        "fix-format": "prettier --write 'src/**/*.ts'",
+        "format-check": "prettier --check src/**/*.ts",
+        "fix-format": "prettier --write src/**/*.ts",
         "pretest": "tsc -p tsconfig.test.json",
         "test": "mocha --ui tdd --require out/tests/_setup.js out/tests/**/*.test.js --timeout 10000"
     },
