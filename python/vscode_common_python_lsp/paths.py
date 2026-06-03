@@ -239,6 +239,55 @@ def normalize_path(file_path: str, resolve_symlinks: bool = True) -> str:
     return str(path)
 
 
+# Maximum length of a single path component on most POSIX and Windows
+# filesystems (ext4, NTFS, APFS, …).
+_NAME_MAX = 255
+
+
+def safe_fs_path(
+    fs_path: str,
+    workspace: str = "",
+) -> str:
+    """Return *fs_path* with any overlong path components shortened.
+
+    Dev-container / tunnel URIs can embed a ``netloc`` component that far
+    exceeds the OS ``NAME_MAX`` (255 bytes on ext4, NTFS, APFS, …).  When
+    that value is used as ``--stdin-filename`` or similar, the downstream
+    tool raises ``OSError: [Errno 36] File name too long``.
+
+    This helper replaces every path component longer than 255 characters
+    with the fixed string ``_``, then — if *workspace* is supplied —
+    re-roots the path under that workspace directory, preserving only the
+    file name (basename).
+
+    If *fs_path* contains no overlong component, it is returned unchanged.
+
+    Parameters
+    ----------
+    fs_path:
+        Filesystem path derived from a document URI (e.g. via
+        ``pygls.uris.to_fs_path`` or VS Code's ``Uri.fsPath``).
+    workspace:
+        Optional workspace root path.  When provided and the path
+        needed sanitisation, the result is
+        ``<workspace>/<basename>`` which is usually a valid path
+        that downstream tools can work with.
+    """
+    parts = pathlib.PurePosixPath(fs_path).parts
+    if not any(len(part.encode("utf-8", errors="replace")) > _NAME_MAX for part in parts):
+        return fs_path
+
+    basename = pathlib.PurePosixPath(fs_path).name
+    if workspace:
+        return str(pathlib.PurePosixPath(workspace) / basename)
+
+    safe_parts = [
+        "_" if len(p.encode("utf-8", errors="replace")) > _NAME_MAX else p
+        for p in parts
+    ]
+    return str(pathlib.PurePosixPath(*safe_parts))
+
+
 def is_current_interpreter(executable: str) -> bool:
     """Returns true if the executable path is same as the current interpreter."""
     return is_same_path(executable, sys.executable)

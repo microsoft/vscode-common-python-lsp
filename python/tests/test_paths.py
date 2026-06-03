@@ -20,6 +20,7 @@ from vscode_common_python_lsp.paths import (
     is_match,
     is_same_path,
     normalize_path,
+    safe_fs_path,
 )
 
 
@@ -266,3 +267,77 @@ class TestIsMatch:
     def test_with_workspace_root(self, tmp_path):
         fp = str(tmp_path / "src" / "test.py")
         assert is_match(["src/*.py"], fp, str(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# safe_fs_path tests
+# ---------------------------------------------------------------------------
+
+# A realistic dev-container/tunnel netloc component (>255 chars).
+_LONG_NETLOC = (
+    "dev-container+7b22686f737450617468223a222f686f6d652f646f6e6e79"
+    "2f50726f6a656374732f776f72647365617263682d637370222c226c6f63"
+    "616c446f636b6572223a66616c73652c22636f6e66696746696c65223a7b"
+    "22246d6964223a312c2270617468223a222f686f6d652f646f6e6e792f50"
+    "726f6a656374732f776f72647365617263682d6373702f2e646576636f6e"
+    "7461696e65722f646576636f6e7461696e65722e6a736f6e222c22736368"
+    "656d65223a227673636f64652d66696c65486f7374227d7d"
+)
+
+
+class TestSafeFsPath:
+    """Tests for safe_fs_path() — dev-container/tunnel path sanitisation."""
+
+    def test_short_path_unchanged(self):
+        """Normal paths should pass through untouched."""
+        p = "/home/user/project/src/main.py"
+        assert safe_fs_path(p) == p
+
+    def test_overlong_component_detected(self):
+        """The fixture netloc must actually exceed NAME_MAX."""
+        assert len(_LONG_NETLOC.encode()) > 255
+
+    def test_overlong_without_workspace(self):
+        """Overlong component is replaced with '_', basename preserved."""
+        p = f"/{_LONG_NETLOC}/workspace/src/main.py"
+        result = safe_fs_path(p)
+        assert len(max(result.split("/"), key=len)) <= 255
+        assert result.endswith("main.py")
+
+    def test_overlong_with_workspace(self):
+        """With a workspace, result is <workspace>/<basename>."""
+        p = f"/{_LONG_NETLOC}/workspace/src/main.py"
+        result = safe_fs_path(p, workspace="/workspace")
+        assert result == "/workspace/main.py"
+
+    def test_overlong_with_workspace_preserves_filename(self):
+        """File name is preserved when re-rooting under workspace."""
+        p = f"/{_LONG_NETLOC}/deep/nested/path/app.py"
+        result = safe_fs_path(p, workspace="/home/user/project")
+        assert result == "/home/user/project/app.py"
+
+    def test_multiple_overlong_components(self):
+        """Multiple overlong components are all sanitised."""
+        long1 = "a" * 300
+        long2 = "b" * 400
+        p = f"/{long1}/{long2}/file.py"
+        result = safe_fs_path(p)
+        for part in result.split("/"):
+            assert len(part.encode()) <= 255
+
+    def test_empty_workspace_falls_back(self):
+        """Empty workspace string triggers component-replacement fallback."""
+        p = f"/{_LONG_NETLOC}/src/file.py"
+        result = safe_fs_path(p, workspace="")
+        assert result.endswith("file.py")
+        for part in result.split("/"):
+            assert len(part.encode()) <= 255
+
+    def test_unicode_path_component(self):
+        """Multi-byte UTF-8 components exceeding 255 bytes are sanitised."""
+        # Each emoji is 4 bytes in UTF-8; 64 emojis = 256 bytes > 255
+        long_unicode = "\U0001F600" * 64
+        p = f"/{long_unicode}/file.py"
+        result = safe_fs_path(p)
+        for part in result.split("/"):
+            assert len(part.encode("utf-8")) <= 255

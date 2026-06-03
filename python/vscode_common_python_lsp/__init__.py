@@ -58,6 +58,7 @@ from .paths import (
     is_same_path,
     normalize_path,
     reset_caches,
+    safe_fs_path,
 )
 from .process_runner import (
     resolve_bundle_path,
@@ -84,6 +85,7 @@ __all__ = [
     "PythonFileKind",
     "is_match",
     "reset_caches",
+    "safe_fs_path",
     # context
     "substitute_attr",
     "redirect_io",
