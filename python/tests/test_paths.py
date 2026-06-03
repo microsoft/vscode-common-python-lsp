@@ -3,6 +3,7 @@
 """Tests for paths module."""
 
 import os
+import pathlib
 import site
 import sys
 import sysconfig
@@ -290,7 +291,7 @@ class TestSafeFsPath:
 
     def test_short_path_unchanged(self):
         """Normal paths should pass through untouched."""
-        p = "/home/user/project/src/main.py"
+        p = os.path.join(os.sep, "home", "user", "project", "src", "main.py")
         assert safe_fs_path(p) == p
 
     def test_overlong_component_detected(self):
@@ -299,45 +300,48 @@ class TestSafeFsPath:
 
     def test_overlong_without_workspace(self):
         """Overlong component is replaced with '_', basename preserved."""
-        p = f"/{_LONG_NETLOC}/workspace/src/main.py"
+        p = os.sep + os.path.join(_LONG_NETLOC, "workspace", "src", "main.py")
         result = safe_fs_path(p)
-        assert len(max(result.split("/"), key=len)) <= 255
+        for part in pathlib.PurePath(result).parts:
+            assert len(part.encode()) <= 255
         assert result.endswith("main.py")
 
     def test_overlong_with_workspace(self):
         """With a workspace, result is <workspace>/<basename>."""
-        p = f"/{_LONG_NETLOC}/workspace/src/main.py"
-        result = safe_fs_path(p, workspace="/workspace")
-        assert result == "/workspace/main.py"
+        p = os.sep + os.path.join(_LONG_NETLOC, "workspace", "src", "main.py")
+        workspace = os.sep + "workspace"
+        result = safe_fs_path(p, workspace=workspace)
+        assert result == os.path.join(workspace, "main.py")
 
     def test_overlong_with_workspace_preserves_filename(self):
         """File name is preserved when re-rooting under workspace."""
-        p = f"/{_LONG_NETLOC}/deep/nested/path/app.py"
-        result = safe_fs_path(p, workspace="/home/user/project")
-        assert result == "/home/user/project/app.py"
+        p = os.sep + os.path.join(_LONG_NETLOC, "deep", "nested", "path", "app.py")
+        workspace = os.path.join(os.sep, "home", "user", "project")
+        result = safe_fs_path(p, workspace=workspace)
+        assert result == os.path.join(workspace, "app.py")
 
     def test_multiple_overlong_components(self):
         """Multiple overlong components are all sanitised."""
         long1 = "a" * 300
         long2 = "b" * 400
-        p = f"/{long1}/{long2}/file.py"
+        p = os.sep + os.path.join(long1, long2, "file.py")
         result = safe_fs_path(p)
-        for part in result.split("/"):
+        for part in pathlib.PurePath(result).parts:
             assert len(part.encode()) <= 255
 
     def test_empty_workspace_falls_back(self):
         """Empty workspace string triggers component-replacement fallback."""
-        p = f"/{_LONG_NETLOC}/src/file.py"
+        p = os.sep + os.path.join(_LONG_NETLOC, "src", "file.py")
         result = safe_fs_path(p, workspace="")
         assert result.endswith("file.py")
-        for part in result.split("/"):
+        for part in pathlib.PurePath(result).parts:
             assert len(part.encode()) <= 255
 
     def test_unicode_path_component(self):
         """Multi-byte UTF-8 components exceeding 255 bytes are sanitised."""
         # Each emoji is 4 bytes in UTF-8; 64 emojis = 256 bytes > 255
         long_unicode = "\U0001F600" * 64
-        p = f"/{long_unicode}/file.py"
+        p = os.sep + os.path.join(long_unicode, "file.py")
         result = safe_fs_path(p)
-        for part in result.split("/"):
+        for part in pathlib.PurePath(result).parts:
             assert len(part.encode("utf-8")) <= 255
