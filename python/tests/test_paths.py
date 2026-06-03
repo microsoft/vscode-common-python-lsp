@@ -340,7 +340,7 @@ class TestSafeFsPath:
     def test_unicode_path_component(self):
         """Multi-byte UTF-8 components exceeding 255 bytes are sanitised."""
         # Each emoji is 4 bytes in UTF-8; 64 emojis = 256 bytes > 255
-        long_unicode = "\U0001F600" * 64
+        long_unicode = "\U0001f600" * 64
         p = os.path.join(os.sep, long_unicode, "file.py")
         result = safe_fs_path(p)
         for part in pathlib.PurePath(result).parts:
