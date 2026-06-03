@@ -255,10 +255,10 @@ def safe_fs_path(
     that value is used as ``--stdin-filename`` or similar, the downstream
     tool raises ``OSError: [Errno 36] File name too long``.
 
-    This helper replaces every path component longer than 255 characters
-    with the fixed string ``_``, then — if *workspace* is supplied —
-    re-roots the path under that workspace directory, preserving only the
-    file name (basename).
+    This helper replaces every path component longer than 255 bytes
+    (UTF-8 encoded) with the fixed string ``_``, then — if *workspace*
+    is supplied — re-roots the path under that workspace directory,
+    preserving only the file name (basename).
 
     If *fs_path* contains no overlong component, it is returned unchanged.
 
@@ -273,19 +273,20 @@ def safe_fs_path(
         ``<workspace>/<basename>`` which is usually a valid path
         that downstream tools can work with.
     """
-    parts = pathlib.PurePosixPath(fs_path).parts
-    if not any(len(part.encode("utf-8", errors="replace")) > _NAME_MAX for part in parts):
+
+    def _exceeds(component: str) -> bool:
+        return len(component.encode("utf-8", errors="replace")) > _NAME_MAX
+
+    parts = pathlib.PurePath(fs_path).parts
+    if not any(_exceeds(p) for p in parts):
         return fs_path
 
-    basename = pathlib.PurePosixPath(fs_path).name
+    basename = pathlib.PurePath(fs_path).name
     if workspace:
-        return str(pathlib.PurePosixPath(workspace) / basename)
+        return str(pathlib.PurePath(workspace) / basename)
 
-    safe_parts = [
-        "_" if len(p.encode("utf-8", errors="replace")) > _NAME_MAX else p
-        for p in parts
-    ]
-    return str(pathlib.PurePosixPath(*safe_parts))
+    safe_parts = ["_" if _exceeds(p) else p for p in parts]
+    return str(pathlib.PurePath(*safe_parts))
 
 
 def is_current_interpreter(executable: str) -> bool:
