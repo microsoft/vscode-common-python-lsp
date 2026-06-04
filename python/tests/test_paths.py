@@ -308,18 +308,18 @@ class TestSafeFsPath:
         assert result.endswith("main.py")
 
     def test_overlong_with_workspace(self):
-        """With a workspace, result is <workspace>/<basename>."""
+        """With a workspace, result preserves sub-path below overlong component."""
         p = os.path.join(os.sep, _LONG_NETLOC, "workspace", "src", "main.py")
         workspace = os.path.join(os.sep, "workspace")
         result = safe_fs_path(p, workspace=workspace)
-        assert result == os.path.join(workspace, "main.py")
+        assert result == os.path.join(workspace, "workspace", "src", "main.py")
 
-    def test_overlong_with_workspace_preserves_filename(self):
-        """File name is preserved when re-rooting under workspace."""
+    def test_overlong_with_workspace_preserves_subpath(self):
+        """Sub-path below overlong component is preserved when re-rooting."""
         p = os.path.join(os.sep, _LONG_NETLOC, "deep", "nested", "path", "app.py")
         workspace = os.path.join(os.sep, "home", "user", "project")
         result = safe_fs_path(p, workspace=workspace)
-        assert result == os.path.join(workspace, "app.py")
+        assert result == os.path.join(workspace, "deep", "nested", "path", "app.py")
 
     def test_multiple_overlong_components(self):
         """Multiple overlong components are all sanitised."""
@@ -365,13 +365,13 @@ class TestSanitizePathForNameMax:
         assert result.endswith("main.py")
 
     def test_overlong_with_workspace(self):
-        """With a workspace, result is <workspace>/<basename>."""
+        """With a workspace, result preserves sub-path below overlong component."""
         p = os.path.join(os.sep, _LONG_NETLOC, "workspace", "src", "main.py")
         workspace = os.path.join(os.sep, "workspace")
         result = sanitize_path_for_name_max(p, workspace=workspace)
-        assert result == os.path.join(workspace, "main.py")
+        assert result == os.path.join(workspace, "workspace", "src", "main.py")
 
-    def test_overlong_basename_replaced_not_rerooted(self):
+    def test_overlong_basename_replaced_preserving_suffix(self):
         """If basename itself is too long, it gets replaced preserving suffix."""
         long_name = "x" * 300 + ".py"
         p = os.path.join(os.sep, "workspace", "src", long_name)
@@ -379,6 +379,22 @@ class TestSanitizePathForNameMax:
         result = sanitize_path_for_name_max(p, workspace=workspace)
         # Should replace with "_.py" not reroute under workspace
         assert pathlib.PurePath(result).name == "_.py"
+
+    def test_workspace_preserves_subpath(self):
+        """Intermediate directories below overlong component are preserved."""
+        p = os.path.join(os.sep, _LONG_NETLOC, "src", "pkg", "main.py")
+        workspace = os.path.join(os.sep, "ws")
+        result = sanitize_path_for_name_max(p, workspace=workspace)
+        assert result == os.path.join(os.sep, "ws", "src", "pkg", "main.py")
+
+    def test_workspace_with_overlong_basename_in_tail(self):
+        """Workspace branch sanitizes an overlong basename in the tail."""
+        long_name = "a" * 300 + ".py"
+        p = os.path.join(os.sep, _LONG_NETLOC, "workspace", long_name)
+        workspace = os.path.join(os.sep, "ws")
+        result = sanitize_path_for_name_max(p, workspace=workspace)
+        assert pathlib.PurePath(result).name == "_.py"
+        assert result.startswith(workspace)
 
     def test_windows_limit_kind(self):
         """Windows mode uses character count, not byte count."""

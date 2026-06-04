@@ -335,14 +335,15 @@ def sanitize_path_for_name_max(
         if not _component_exceeds_name_max(part, limit_kind=limit_kind):
             continue
 
-        # Moving basename under workspace only helps if the oversized component
-        # is in the parent path. If basename itself is too long, preserve the
-        # old behavior by replacing it with a safe placeholder.
         if workspace and i != len(parts) - 1:
-            name = path.name
-            if _component_exceeds_name_max(name, limit_kind=limit_kind):
-                name = "_" + pathlib.PurePath(name).suffix
-            return str(pathlib.PurePath(workspace) / name)
+            # Preserve the sub-path below the overlong component so that
+            # intermediate directories (used by tools to locate config files
+            # and derive module names) are retained.
+            tail_parts = list(parts[i + 1 :])
+            for j, tp in enumerate(tail_parts):
+                if _component_exceeds_name_max(tp, limit_kind=limit_kind):
+                    tail_parts[j] = "_" + pathlib.PurePath(tp).suffix
+            return str(pathlib.PurePath(workspace, *tail_parts))
 
         if safe_parts is None:
             safe_parts = list(parts)
