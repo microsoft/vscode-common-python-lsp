@@ -22,6 +22,7 @@ from vscode_common_python_lsp.paths import (
     is_same_path,
     normalize_path,
     safe_fs_path,
+    sanitize_path_for_name_max,
 )
 
 
@@ -345,3 +346,64 @@ class TestSafeFsPath:
         result = safe_fs_path(p)
         for part in pathlib.PurePath(result).parts:
             assert len(part.encode("utf-8")) <= 255
+
+
+class TestSanitizePathForNameMax:
+    """Tests for sanitize_path_for_name_max() — cross-platform implementation."""
+
+    def test_short_path_unchanged(self):
+        """Normal paths should pass through untouched."""
+        p = os.path.join(os.sep, "home", "user", "project", "src", "main.py")
+        assert sanitize_path_for_name_max(p) == p
+
+    def test_overlong_without_workspace(self):
+        """Overlong component is replaced with '_', basename preserved."""
+        p = os.path.join(os.sep, _LONG_NETLOC, "workspace", "src", "main.py")
+        result = sanitize_path_for_name_max(p)
+        for part in pathlib.PurePath(result).parts:
+            assert len(part.encode()) <= 255
+        assert result.endswith("main.py")
+
+    def test_overlong_with_workspace(self):
+        """With a workspace, result is <workspace>/<basename>."""
+        p = os.path.join(os.sep, _LONG_NETLOC, "workspace", "src", "main.py")
+        workspace = os.path.join(os.sep, "workspace")
+        result = sanitize_path_for_name_max(p, workspace=workspace)
+        assert result == os.path.join(workspace, "main.py")
+
+    def test_overlong_basename_replaced_not_rerooted(self):
+        """If basename itself is too long, it gets replaced with '_' not rerooted."""
+        long_name = "x" * 300 + ".py"
+        p = os.path.join(os.sep, "workspace", "src", long_name)
+        workspace = os.path.join(os.sep, "workspace")
+        result = sanitize_path_for_name_max(p, workspace=workspace)
+        # Should replace with "_" not reroute under workspace
+        assert pathlib.PurePath(result).name == "_"
+
+    def test_windows_limit_kind(self):
+        """Windows mode uses character count, not byte count."""
+        # 200 emoji chars = 200 characters but 800 UTF-8 bytes
+        # Should NOT exceed on windows (200 < 255) but WOULD exceed on posix (800 > 255)
+        component = "\U0001f600" * 200
+        p = os.path.join(os.sep, component, "file.py")
+        result_win = sanitize_path_for_name_max(p, limit_kind="windows")
+        result_posix = sanitize_path_for_name_max(p, limit_kind="posix")
+        # Windows: unchanged (200 chars < 255)
+        assert result_win == p
+        # POSIX: sanitized (800 bytes > 255)
+        assert result_posix != p
+        assert result_posix.endswith("file.py")
+
+    def test_root_components_ignored(self):
+        """Root/anchor parts like '/' are not flagged as overlong."""
+        p = os.path.join(os.sep, "normal", "path.py")
+        assert sanitize_path_for_name_max(p) == p
+
+    def test_unicode_posix_ascii_fast_path(self):
+        """ASCII-only strings that are short skip the byte-counting loop."""
+        p = os.path.join(os.sep, "a" * 255, "file.py")
+        # Exactly 255 is fine
+        assert sanitize_path_for_name_max(p) == p
+        # 256 exceeds
+        p2 = os.path.join(os.sep, "a" * 256, "file.py")
+        assert sanitize_path_for_name_max(p2) != p2

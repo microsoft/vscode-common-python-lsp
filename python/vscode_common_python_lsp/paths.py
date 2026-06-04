@@ -13,7 +13,7 @@ import sys
 import sysconfig
 import threading
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 # Save the working directory used when loading this module
 SERVER_CWD = os.getcwd()
@@ -243,10 +243,59 @@ def normalize_path(file_path: str, resolve_symlinks: bool = True) -> str:
 # filesystems (ext4, NTFS, APFS, …).
 _NAME_MAX = 255
 
+PathComponentLimitKind = Literal["windows", "posix"]
 
-def safe_fs_path(
+
+def _utf8_len_exceeds(s: str, limit: int) -> bool:
+    """Check if UTF-8 byte length of s exceeds limit, without allocating."""
+    total = 0
+
+    for ch in s:
+        code = ord(ch)
+
+        if code < 0x80:
+            total += 1
+        elif code < 0x800:
+            total += 2
+        elif code < 0x10000:
+            total += 3
+        else:
+            total += 4
+
+        if total > limit:
+            return True
+
+    return False
+
+
+def _component_exceeds_name_max(
+    component: str,
+    *,
+    limit_kind: PathComponentLimitKind,
+) -> bool:
+    # Ignore root/anchor-ish path parts.
+    if component in ("", "/", "\\") or component.endswith(":"):
+        return False
+
+    if limit_kind == "windows":
+        # Windows component limits are character-oriented for normal paths.
+        return len(component) > _NAME_MAX
+
+    # POSIX NAME_MAX is byte-oriented.
+    if len(component) > _NAME_MAX:
+        return True
+
+    if component.isascii():
+        return False
+
+    return _utf8_len_exceeds(component, _NAME_MAX)
+
+
+def sanitize_path_for_name_max(
     fs_path: str,
-    workspace: str = "",
+    workspace: str | None = None,
+    *,
+    limit_kind: PathComponentLimitKind = "posix",
 ) -> str:
     """Return *fs_path* with any overlong path components shortened.
 
@@ -256,9 +305,10 @@ def safe_fs_path(
     tool raises ``OSError: [Errno 36] File name too long``.
 
     This helper replaces every path component longer than 255 bytes
-    (UTF-8 encoded) with the fixed string ``_``, then — if *workspace*
-    is supplied — re-roots the path under that workspace directory,
-    preserving only the file name (basename).
+    (UTF-8 encoded on POSIX, character count on Windows) with the fixed
+    string ``_``.  If *workspace* is supplied and the overlong component
+    is not the basename, the path is re-rooted under that workspace
+    directory, preserving only the file name (basename).
 
     If *fs_path* contains no overlong component, it is returned unchanged.
 
@@ -268,25 +318,48 @@ def safe_fs_path(
         Filesystem path derived from a document URI (e.g. via
         ``pygls.uris.to_fs_path`` or VS Code's ``Uri.fsPath``).
     workspace:
-        Optional workspace root path.  When provided and the path
-        needed sanitisation, the result is
+        Optional workspace root path.  When provided and the overlong
+        component is not the basename, the result is
         ``<workspace>/<basename>`` which is usually a valid path
         that downstream tools can work with.
+    limit_kind:
+        Whether to apply Windows (character-count) or POSIX (byte-count)
+        limits.  Defaults to ``"posix"``.
     """
+    path = pathlib.PurePath(fs_path)
+    parts = path.parts
 
-    def _exceeds(component: str) -> bool:
-        return len(component.encode("utf-8", errors="replace")) > _NAME_MAX
+    safe_parts: list[str] | None = None
 
-    parts = pathlib.PurePath(fs_path).parts
-    if not any(_exceeds(p) for p in parts):
+    for i, part in enumerate(parts):
+        if not _component_exceeds_name_max(part, limit_kind=limit_kind):
+            continue
+
+        # Moving basename under workspace only helps if the oversized component
+        # is in the parent path. If basename itself is too long, preserve the
+        # old behavior by replacing it with "_".
+        if workspace and i != len(parts) - 1:
+            return str(pathlib.PurePath(workspace) / path.name)
+
+        if safe_parts is None:
+            safe_parts = list(parts)
+
+        safe_parts[i] = "_"
+
+    if safe_parts is None:
         return fs_path
 
-    basename = pathlib.PurePath(fs_path).name
-    if workspace:
-        return str(pathlib.PurePath(workspace) / basename)
-
-    safe_parts = ["_" if _exceeds(p) else p for p in parts]
     return str(pathlib.PurePath(*safe_parts))
+
+
+def safe_fs_path(
+    fs_path: str,
+    workspace: str = "",
+) -> str:
+    """Deprecated: use :func:`sanitize_path_for_name_max` instead."""
+    return sanitize_path_for_name_max(
+        fs_path, workspace=workspace or None, limit_kind="posix"
+    )
 
 
 def is_current_interpreter(executable: str) -> bool:

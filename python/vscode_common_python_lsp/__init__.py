@@ -59,6 +59,7 @@ from .paths import (
     normalize_path,
     reset_caches,
     safe_fs_path,
+    sanitize_path_for_name_max,
 )
 from .process_runner import (
     resolve_bundle_path,
@@ -86,6 +87,7 @@ __all__ = [
     "is_match",
     "reset_caches",
     "safe_fs_path",
+    "sanitize_path_for_name_max",
     # context
     "substitute_attr",
     "redirect_io",
