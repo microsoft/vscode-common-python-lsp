@@ -347,6 +347,25 @@ class TestSafeFsPath:
         for part in pathlib.PurePath(result).parts:
             assert len(part.encode("utf-8")) <= 255
 
+    def test_overlong_basename_without_workspace(self):
+        """Overlong basename without workspace is sanitized, preserving suffix."""
+        long_name = "x" * 300 + ".py"
+        p = os.path.join(os.sep, "dev", long_name)
+        result = safe_fs_path(p)
+        assert pathlib.PurePath(result).name == "_.py"
+        for part in pathlib.PurePath(result).parts:
+            assert len(part.encode()) <= 255
+
+    def test_overlong_basename_with_workspace(self):
+        """Overlong basename with workspace is sanitized, preserving suffix."""
+        long_name = "a" * 300 + ".py"
+        p = os.path.join(os.sep, _LONG_NETLOC, "src", long_name)
+        workspace = os.path.join(os.sep, "workspace")
+        result = safe_fs_path(p, workspace=workspace)
+        assert pathlib.PurePath(result).name == "_.py"
+        for part in pathlib.PurePath(result).parts:
+            assert len(part.encode()) <= 255
+
 
 class TestSanitizePathForNameMax:
     """Tests for sanitize_path_for_name_max() — cross-platform implementation."""

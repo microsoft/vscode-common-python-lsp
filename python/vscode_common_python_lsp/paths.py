@@ -239,8 +239,10 @@ def normalize_path(file_path: str, resolve_symlinks: bool = True) -> str:
     return str(path)
 
 
-# Maximum length of a single path component on most POSIX and Windows
-# filesystems (ext4, NTFS, APFS, …).
+# Conservative maximum length of a single path component.  POSIX NAME_MAX is
+# 255 *bytes* (ext4, APFS, …).  NTFS actually limits to 255 UTF-16 code units,
+# so this byte-oriented heuristic is stricter than necessary on Windows — but
+# that is safe and keeps the logic simple across platforms.
 _NAME_MAX = 255
 
 PathComponentLimitKind = Literal["windows", "posix"]
