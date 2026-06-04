@@ -337,14 +337,17 @@ def sanitize_path_for_name_max(
 
         # Moving basename under workspace only helps if the oversized component
         # is in the parent path. If basename itself is too long, preserve the
-        # old behavior by replacing it with "_".
+        # old behavior by replacing it with a safe placeholder.
         if workspace and i != len(parts) - 1:
-            return str(pathlib.PurePath(workspace) / path.name)
+            name = path.name
+            if _component_exceeds_name_max(name, limit_kind=limit_kind):
+                name = "_" + pathlib.PurePath(name).suffix
+            return str(pathlib.PurePath(workspace) / name)
 
         if safe_parts is None:
             safe_parts = list(parts)
 
-        safe_parts[i] = "_"
+        safe_parts[i] = "_" + pathlib.PurePath(part).suffix
 
     if safe_parts is None:
         return fs_path

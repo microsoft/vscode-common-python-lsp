@@ -372,13 +372,13 @@ class TestSanitizePathForNameMax:
         assert result == os.path.join(workspace, "main.py")
 
     def test_overlong_basename_replaced_not_rerooted(self):
-        """If basename itself is too long, it gets replaced with '_' not rerooted."""
+        """If basename itself is too long, it gets replaced preserving suffix."""
         long_name = "x" * 300 + ".py"
         p = os.path.join(os.sep, "workspace", "src", long_name)
         workspace = os.path.join(os.sep, "workspace")
         result = sanitize_path_for_name_max(p, workspace=workspace)
-        # Should replace with "_" not reroute under workspace
-        assert pathlib.PurePath(result).name == "_"
+        # Should replace with "_.py" not reroute under workspace
+        assert pathlib.PurePath(result).name == "_.py"
 
     def test_windows_limit_kind(self):
         """Windows mode uses character count, not byte count."""
