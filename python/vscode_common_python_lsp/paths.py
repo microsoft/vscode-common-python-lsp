@@ -371,7 +371,6 @@ def sanitize_path_for_name_max(
     return str(pathlib.PurePath(*safe_parts))
 
 
-
 def is_current_interpreter(executable: str) -> bool:
     """Returns true if the executable path is same as the current interpreter."""
     return is_same_path(executable, sys.executable)

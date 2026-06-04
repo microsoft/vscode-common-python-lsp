@@ -287,7 +287,7 @@ _LONG_NETLOC = (
 
 
 class TestSanitizePathForNameMax:
-    """Tests for sanitize_path_for_name_max() — dev-container/tunnel path sanitisation."""
+    """Tests for sanitize_path_for_name_max() — path sanitisation."""
 
     def test_short_path_unchanged(self):
         """Normal paths should pass through untouched."""
@@ -364,7 +364,6 @@ class TestSanitizePathForNameMax:
         assert pathlib.PurePath(result).name == "_.py"
         for part in pathlib.PurePath(result).parts:
             assert len(part.encode()) <= 255
-
 
     def test_overlong_basename_replaced_preserving_suffix(self):
         """If basename itself is too long, it gets replaced preserving suffix."""
