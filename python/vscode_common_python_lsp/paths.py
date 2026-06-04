@@ -302,7 +302,9 @@ def sanitize_path_for_name_max(
     """Return *fs_path* with any overlong path components shortened.
 
     Dev-container / tunnel URIs can embed a ``netloc`` component that far
-    exceeds the OS ``NAME_MAX`` (255 bytes on ext4, APFS, …).  When that
+    exceeds the conservative 255-byte ``NAME_MAX`` heuristic used here
+    (ext4 and APFS use 255 bytes; NTFS uses 255 UTF-16 code units, so
+    this byte-oriented check is stricter than necessary on Windows).  When that
     value is used as ``--stdin-filename`` or similar, the downstream tool
     raises ``OSError: [Errno 36] File name too long``.
 
