@@ -302,15 +302,23 @@ def sanitize_path_for_name_max(
     """Return *fs_path* with any overlong path components shortened.
 
     Dev-container / tunnel URIs can embed a ``netloc`` component that far
-    exceeds the OS ``NAME_MAX`` (255 bytes on ext4, NTFS, APFS, …).  When
-    that value is used as ``--stdin-filename`` or similar, the downstream
-    tool raises ``OSError: [Errno 36] File name too long``.
+    exceeds the OS ``NAME_MAX`` (255 bytes on ext4, APFS, …).  When that
+    value is used as ``--stdin-filename`` or similar, the downstream tool
+    raises ``OSError: [Errno 36] File name too long``.
 
-    This helper replaces every path component longer than 255 bytes
-    (UTF-8 encoded on POSIX, character count on Windows) with the fixed
-    string ``_``.  If *workspace* is supplied and the overlong component
-    is not the basename, the path is re-rooted under that workspace
-    directory, preserving only the file name (basename).
+    This helper replaces every overlong path component with ``_`` plus the
+    original file extension (e.g. ``_.py``), preserving the suffix that
+    downstream tools use for file-type dispatch.
+
+    If *workspace* is supplied and the overlong component is *not* the
+    basename, the path is re-rooted under the workspace while preserving
+    the full sub-path below the overlong component.  For example::
+
+        sanitize_path_for_name_max(
+            "/dev-container+<long>/workspace/src/pkg/main.py",
+            workspace="/workspace",
+        )
+        # → "/workspace/workspace/src/pkg/main.py"
 
     If *fs_path* contains no overlong component, it is returned unchanged.
 
@@ -322,11 +330,14 @@ def sanitize_path_for_name_max(
     workspace:
         Optional workspace root path.  When provided and the overlong
         component is not the basename, the result is
-        ``<workspace>/<basename>`` which is usually a valid path
-        that downstream tools can work with.
+        ``<workspace>/<sub-path>`` — the portion of the path below
+        the overlong component is preserved so that downstream tools
+        can still resolve config files and derive module names.
     limit_kind:
         Whether to apply Windows (character-count) or POSIX (byte-count)
-        limits.  Defaults to ``"posix"``.
+        limits.  Defaults to ``"posix"``.  Note: the POSIX byte-count
+        heuristic is conservative on NTFS, which actually limits to 255
+        UTF-16 code units.
     """
     path = pathlib.PurePath(fs_path)
     parts = path.parts
