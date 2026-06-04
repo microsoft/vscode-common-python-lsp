@@ -68,6 +68,11 @@ extends:
         jobs:
           - job: VersionCheck
             displayName: Check version consistency
+            templateContext:
+              outputs:
+                - output: pipelineArtifact
+                  targetPath: $(Build.ArtifactStagingDirectory)/version-info
+                  artifactName: version-info
             steps:
               - checkout: self
 
@@ -77,6 +82,11 @@ extends:
 
               - script: python -m scripts.version.validate
                 displayName: Validate version consistency
+
+              - script: |
+                  mkdir -p $(Build.ArtifactStagingDirectory)/version-info
+                  cp VERSION $(Build.ArtifactStagingDirectory)/version-info/
+                displayName: Stage VERSION file
 
       # Stage 2: Build & Test
       - stage: BuildAndTest
@@ -272,20 +282,13 @@ extends:
             templateContext:
               type: releaseJob
               isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  artifactName: version-info
+                  targetPath: $(Pipeline.Workspace)/version-info
             steps:
-              - checkout: self
-                persistCredentials: true
-
               - script: |
-                  VERSION=$(cat VERSION)
-                  TAG="v${VERSION}"
-                  echo "Tagging commit $(Build.SourceVersion) as ${TAG}"
-                  git tag "${TAG}" $(Build.SourceVersion)
-                  git push origin "${TAG}"
-                displayName: Create and push tag
-
-              - script: |
-                  VERSION=$(cat VERSION)
+                  VERSION=$(cat $(Pipeline.Workspace)/version-info/VERSION)
                   echo "##vso[task.setvariable variable=ReleaseVersion]${VERSION}"
                 displayName: Read version
 
