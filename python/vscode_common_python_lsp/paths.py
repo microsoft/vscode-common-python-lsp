@@ -371,15 +371,6 @@ def sanitize_path_for_name_max(
     return str(pathlib.PurePath(*safe_parts))
 
 
-def safe_fs_path(
-    fs_path: str,
-    workspace: str = "",
-) -> str:
-    """Deprecated: use :func:`sanitize_path_for_name_max` instead."""
-    return sanitize_path_for_name_max(
-        fs_path, workspace=workspace or None, limit_kind="posix"
-    )
-
 
 def is_current_interpreter(executable: str) -> bool:
     """Returns true if the executable path is same as the current interpreter."""

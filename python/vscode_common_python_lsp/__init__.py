@@ -58,7 +58,6 @@ from .paths import (
     is_same_path,
     normalize_path,
     reset_caches,
-    safe_fs_path,
     sanitize_path_for_name_max,
 )
 from .process_runner import (
@@ -86,7 +85,6 @@ __all__ = [
     "PythonFileKind",
     "is_match",
     "reset_caches",
-    "safe_fs_path",
     "sanitize_path_for_name_max",
     # context
     "substitute_attr",
