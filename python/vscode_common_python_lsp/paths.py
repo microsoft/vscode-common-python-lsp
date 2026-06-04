@@ -13,7 +13,7 @@ import sys
 import sysconfig
 import threading
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 # Save the working directory used when loading this module
 SERVER_CWD = os.getcwd()
@@ -237,6 +237,138 @@ def normalize_path(file_path: str, resolve_symlinks: bool = True) -> str:
     if resolve_symlinks:
         path = path.resolve()
     return str(path)
+
+
+# Conservative maximum length of a single path component.  POSIX NAME_MAX is
+# 255 *bytes* (ext4, APFS, …).  NTFS actually limits to 255 UTF-16 code units,
+# so this byte-oriented heuristic is stricter than necessary on Windows — but
+# that is safe and keeps the logic simple across platforms.
+_NAME_MAX = 255
+
+PathComponentLimitKind = Literal["windows", "posix"]
+
+
+def _utf8_len_exceeds(s: str, limit: int) -> bool:
+    """Check if UTF-8 byte length of s exceeds limit, without allocating."""
+    total = 0
+
+    for ch in s:
+        code = ord(ch)
+
+        if code < 0x80:
+            total += 1
+        elif code < 0x800:
+            total += 2
+        elif code < 0x10000:
+            total += 3
+        else:
+            total += 4
+
+        if total > limit:
+            return True
+
+    return False
+
+
+def _component_exceeds_name_max(
+    component: str,
+    *,
+    limit_kind: PathComponentLimitKind,
+) -> bool:
+    # Ignore root/anchor-ish path parts.
+    if component in ("", "/", "\\") or component.endswith(":"):
+        return False
+
+    if limit_kind == "windows":
+        # Windows component limits are character-oriented for normal paths.
+        return len(component) > _NAME_MAX
+
+    # POSIX NAME_MAX is byte-oriented.
+    if len(component) > _NAME_MAX:
+        return True
+
+    if component.isascii():
+        return False
+
+    return _utf8_len_exceeds(component, _NAME_MAX)
+
+
+def sanitize_path_for_name_max(
+    fs_path: str,
+    workspace: str | None = None,
+    *,
+    limit_kind: PathComponentLimitKind = "posix",
+) -> str:
+    """Return *fs_path* with any overlong path components shortened.
+
+    Dev-container / tunnel URIs can embed a ``netloc`` component that far
+    exceeds the conservative 255-byte ``NAME_MAX`` heuristic used here
+    (ext4 and APFS use 255 bytes; NTFS uses 255 UTF-16 code units, so
+    this byte-oriented check is stricter than necessary on Windows).  When that
+    value is used as ``--stdin-filename`` or similar, the downstream tool
+    raises ``OSError: [Errno 36] File name too long``.
+
+    This helper replaces every overlong path component with ``_`` plus the
+    original file extension (e.g. ``_.py``), preserving the suffix that
+    downstream tools use for file-type dispatch.
+
+    If *workspace* is supplied and the overlong component is *not* the
+    basename, the path is re-rooted under the workspace while preserving
+    the full sub-path below the overlong component.  For example::
+
+        sanitize_path_for_name_max(
+            "/dev-container+<long>/workspace/src/pkg/main.py",
+            workspace="/workspace",
+        )
+        # → "/workspace/workspace/src/pkg/main.py"
+
+    If *fs_path* contains no overlong component, it is returned unchanged.
+
+    Parameters
+    ----------
+    fs_path:
+        Filesystem path derived from a document URI (e.g. via
+        ``pygls.uris.to_fs_path`` or VS Code's ``Uri.fsPath``).
+    workspace:
+        Optional workspace root path.  When provided and the overlong
+        component is not the basename, the result is
+        ``<workspace>/<sub-path>`` — the portion of the path below
+        the overlong component is preserved so that downstream tools
+        can still resolve config files and derive module names.
+    limit_kind:
+        Whether to apply Windows (character-count) or POSIX (byte-count)
+        limits.  Defaults to ``"posix"``.  Note: the POSIX byte-count
+        heuristic is conservative on NTFS, which actually limits to 255
+        UTF-16 code units.
+    """
+    path = pathlib.PurePath(fs_path)
+    parts = path.parts
+
+    safe_parts: list[str] | None = None
+
+    for i, part in enumerate(parts):
+        if not _component_exceeds_name_max(part, limit_kind=limit_kind):
+            continue
+
+        if workspace and i != len(parts) - 1:
+            # Preserve the sub-path below the overlong component so that
+            # intermediate directories (used by tools to locate config files
+            # and derive module names) are retained.
+            tail_parts = list(parts[i + 1 :])
+            for j, tp in enumerate(tail_parts):
+                if _component_exceeds_name_max(tp, limit_kind=limit_kind):
+                    tail_parts[j] = "_" + pathlib.PurePath(tp).suffix
+            return str(pathlib.PurePath(workspace, *tail_parts))
+
+        if safe_parts is None:
+            safe_parts = list(parts)
+
+        safe_parts[i] = "_" + pathlib.PurePath(part).suffix
+
+    if safe_parts is None:
+        return fs_path
+
+    return str(pathlib.PurePath(*safe_parts))
 
 
 def is_current_interpreter(executable: str) -> bool:
