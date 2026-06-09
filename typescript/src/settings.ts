@@ -313,10 +313,14 @@ export function checkIfConfigurationChanged(
  *
  * This is tool-specific — each extension provides its own legacy key
  * names.  This helper provides the common logging pattern.
+ *
+ * For non-array mappings, set `defaultValue` to suppress the warning
+ * when the setting equals the tool's historical default (e.g. `'black'`,
+ * `'flake8'`).
  */
 export function logLegacySettings(
     namespace: string,
-    legacyMappings: Array<{ legacyKey: string; newKey: string; isArray?: boolean }>,
+    legacyMappings: Array<{ legacyKey: string; newKey: string; isArray?: boolean; defaultValue?: string }>,
 ): void {
     getWorkspaceFolders().forEach((workspace) => {
         try {
@@ -332,7 +336,7 @@ export function logLegacySettings(
                     }
                 } else {
                     const value = legacyConfig.get(mapping.legacyKey);
-                    if (value !== undefined) {
+                    if (value !== undefined && value !== mapping.defaultValue) {
                         traceWarn(`"python.${mapping.legacyKey}" is deprecated. Use "${namespace}.${mapping.newKey}" instead.`);
                         traceWarn(
                             `"python.${mapping.legacyKey}" value for workspace ${workspace.uri.fsPath}: ${value}`,

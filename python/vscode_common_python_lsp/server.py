@@ -55,6 +55,12 @@ class ToolServerConfig:
         Tool-specific setting keys and their default values.  These are
         merged into the base defaults returned by
         :meth:`ToolServer.get_global_defaults`.
+    hardcoded_settings:
+        Settings whose values are always fixed, regardless of what the
+        client sends in ``GLOBAL_SETTINGS``.  Applied after
+        ``default_settings`` in :meth:`ToolServer.get_global_defaults`.
+        Use this for keys like ``ignorePatterns`` that are resolved
+        per-workspace by the client and must never be read from globals.
     """
 
     tool_module: str
@@ -65,6 +71,7 @@ class ToolServerConfig:
     resolve_symlinks: bool = False
     default_notification_level: Literal["off", "onError", "onWarning", "always"] = "off"
     default_settings: dict[str, Any] = field(default_factory=dict)
+    hardcoded_settings: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +129,9 @@ class ToolServer:
         }
         for key, default in self.config.default_settings.items():
             base[key] = self.global_settings.get(key, default)
+        # Hardcoded settings always use the configured value, ignoring
+        # whatever the client sent in GLOBAL_SETTINGS.
+        base.update(self.config.hardcoded_settings)
         return base
 
     def update_workspace_settings(self, settings: list[dict[str, Any]] | None) -> None:
