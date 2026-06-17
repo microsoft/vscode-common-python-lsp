@@ -11,9 +11,11 @@
  */
 
 import * as vscode from 'vscode';
+import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { createConfigFileWatchers } from './configWatcher';
 import { traceError, traceLog, traceVerbose } from './logging';
+import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
 import { restartServer, RestartServerOptions } from './server';
 import { checkIfConfigurationChanged, getWorkspaceSettings } from './settings';
@@ -99,6 +101,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
     let restartTimer: NodeJS.Timeout | undefined;
     let disposed = false;
     let serverDisposables: vscode.Disposable[] = [];
+
+    const nullFormatter = toolConfig.isFormatter ? new NullFormatter() : undefined;
+    nullFormatter?.register();
 
     const ctx: ToolExtensionContext = {
         lsClient: undefined,
@@ -207,6 +212,25 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
                     ctx.lsClient = result.client;
                     serverDisposables = result.disposables;
+
+                    if (nullFormatter && result.client) {
+                        if (result.client.state === State.Running) {
+                            nullFormatter.unregister();
+                        }
+                        serverDisposables.push(
+                            result.client.onDidChangeState((e) => {
+                                switch (e.newState) {
+                                    case State.Running:
+                                        nullFormatter.unregister();
+                                        break;
+                                    case State.Stopped:
+                                    case State.Starting:
+                                        nullFormatter.register();
+                                        break;
+                                }
+                            }),
+                        );
+                    }
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
@@ -244,6 +268,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 }
             }
             serverDisposables = [];
+            nullFormatter?.dispose();
         },
     };
 
