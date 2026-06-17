@@ -6,6 +6,18 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-06-17
+
+### Fixed
+
+- **TypeScript** `getServerCwd`: Broadened the per-document variable guard
+  from a hardcoded `${file…}` / `${relativeFile…}` allowlist to a general
+  `${…}` check.  Any token still unresolved at spawn-time (including
+  tool-specific tokens like mypy's `${nearestConfig}`) now correctly falls
+  back to the workspace path instead of being passed verbatim to
+  `child_process.spawn`, which caused an `ENOENT` error.
+  (Fixes [microsoft/vscode-mypy#556](https://github.com/microsoft/vscode-mypy/issues/556))
+
 ## [0.4.0] - 2026-05-01
 
 ### Added
