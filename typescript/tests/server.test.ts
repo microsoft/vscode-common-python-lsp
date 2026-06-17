@@ -55,14 +55,13 @@ suite('getServerCwd', () => {
         assert.strictEqual(getServerCwd(settings), '/my/project');
     });
 
-    // ${workspaceFolder} is expanded by resolveVariables() in settings.ts before
-    // getServerCwd() is called, so it would never arrive here unresolved in
-    // production.  The broader regex now treats any remaining ${...} as a
-    // per-document token and falls back to the workspace path.
-    test('falls back for any unresolved ${...} token (e.g. ${workspaceFolder} typo)', () => {
-        const settings = makeSettings({ cwd: '${workspaceFolder}/sub', workspace: 'file:///workspace' });
+    // Any ${...} token still present when getServerCwd runs is unresolved
+    // (per-document variable, undefined env var, or typo). The broader regex
+    // falls back to the workspace path so the server can start.
+    test('falls back for any unresolved ${...} token reaching getServerCwd', () => {
+        const settings = makeSettings({ cwd: '${workspceFolder}/sub', workspace: 'file:///workspace' });
         const result = getServerCwd(settings);
-        assert.notInclude(result, '${workspaceFolder}');
+        assert.strictEqual(result, '/workspace');
     });
 
     // Regression: vscode-mypy#556 — tool-specific per-document token

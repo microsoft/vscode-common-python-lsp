@@ -78,11 +78,12 @@ function parseWorkspaceUri(workspace: string): Uri {
  * mistakes that the previous narrow allowlist would have surfaced.
  */
 export function getServerCwd(settings: IBaseSettings): string {
-    // Any ${...} token still present here must be a per-document variable
-    // (e.g. ${file*}, ${relativeFile*}, or tool-specific tokens like
-    // ${nearestConfig}). resolveVariables() in settings.ts has already
-    // expanded everything resolvable at spawn time, so we fall back to
-    // the workspace path to allow the server to start.
+    // Any ${...} token still present here is unresolved — it may be a
+    // per-document variable (e.g. ${file*}, ${relativeFile*}), a tool-specific
+    // token like ${nearestConfig}, an undefined ${env:KEY}, or even a typo.
+    // resolveVariables() in settings.ts has already expanded everything it
+    // can at spawn time, so we fall back to the workspace path to allow the
+    // server to start.
     const hasUnresolvedVariable = /\$\{/.test(settings.cwd);
     return hasUnresolvedVariable ? parseWorkspaceUri(settings.workspace).fsPath : settings.cwd;
 }
