@@ -542,10 +542,10 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         );
     });
 
-    // Test 4b: isFormatter unset — no placeholder
+    // Test 5: isFormatter unset — no placeholder
     test('does not register placeholder when isFormatter is unset', async () => {
         const options = makeFormatterOptions();
-        const { isFormatter: _f, ...configWithoutFormatter } = options.toolConfig;
+        const { isFormatter, ...configWithoutFormatter } = options.toolConfig;
         options.toolConfig = configWithoutFormatter as ToolConfig;
         sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
 
@@ -557,7 +557,7 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         );
     });
 
-    // Test 5: ctx.dispose() disposes placeholder
+    // Test 6: ctx.dispose() disposes placeholder
     test('ctx.dispose() disposes the placeholder when it is registered', () => {
         const ctx = createToolContext(makeFormatterOptions());
         assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
