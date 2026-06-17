@@ -55,9 +55,29 @@ suite('getServerCwd', () => {
         assert.strictEqual(getServerCwd(settings), '/my/project');
     });
 
-    test('returns cwd unchanged for ${workspaceFolder}', () => {
-        const settings = makeSettings({ cwd: '${workspaceFolder}/sub' });
-        assert.strictEqual(getServerCwd(settings), '${workspaceFolder}/sub');
+    // ${workspaceFolder} is expanded by resolveVariables() in settings.ts before
+    // getServerCwd() is called, so it would never arrive here unresolved in
+    // production.  The broader regex now treats any remaining ${...} as a
+    // per-document token and falls back to the workspace path.
+    test('falls back for any unresolved ${...} token (e.g. ${workspaceFolder} typo)', () => {
+        const settings = makeSettings({ cwd: '${workspaceFolder}/sub', workspace: 'file:///workspace' });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${workspaceFolder}');
+    });
+
+    // Regression: vscode-mypy#556 — tool-specific per-document token
+    test('falls back to workspace path for ${nearestConfig}', () => {
+        const settings = makeSettings({ cwd: '${nearestConfig}', workspace: 'file:///workspace' });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${nearestConfig}');
+        assert.strictEqual(result, '/workspace');
+    });
+
+    test('falls back for path combining literal prefix with ${nearestConfig}', () => {
+        const settings = makeSettings({ cwd: '${nearestConfig}/src', workspace: 'file:///workspace' });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${nearestConfig}');
+        assert.strictEqual(result, '/workspace');
     });
 
     test('falls back to workspace path for ${file}', () => {

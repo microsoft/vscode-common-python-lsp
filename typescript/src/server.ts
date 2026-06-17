@@ -61,14 +61,30 @@ function parseWorkspaceUri(workspace: string): Uri {
 /**
  * Resolve the working directory for spawning the server process.
  *
- * File-based variables (`${file*}`, `${relativeFile*}`) are resolved
- * per-document by the Python server at lint-time, not at spawn-time.
- * When the configured CWD still contains such a variable we fall back
- * to the workspace path so the process can start successfully.
+ * `resolveVariables()` in `settings.ts` has already expanded every variable
+ * that can be resolved at spawn-time (`${workspaceFolder}`, `${userHome}`,
+ * `${env:…}`, etc.).  Any `${…}` token still present at this point must
+ * therefore be a per-document variable — one that is resolved per-file by
+ * the Python server at lint-time rather than at spawn-time.  This includes
+ * the standard file-path variables (`${file*}`, `${relativeFile*}`) as well
+ * as tool-specific tokens like mypy's `${nearestConfig}`.
+ *
+ * For all such tokens the only sensible spawn-time CWD is the workspace
+ * path, so we fall back to it whenever any `${…}` remains unresolved.
+ *
+ * **Trade-off:** this check is intentionally permissive.  A typo such as
+ * `"${workspceFolder}"` will silently fall back to the workspace path rather
+ * than failing with ENOENT, which is better UX but does hide configuration
+ * mistakes that the previous narrow allowlist would have surfaced.
  */
 export function getServerCwd(settings: IBaseSettings): string {
-    const hasFileVariable = /\$\{(file|relativeFile)/.test(settings.cwd);
-    return hasFileVariable ? parseWorkspaceUri(settings.workspace).fsPath : settings.cwd;
+    // Any ${...} token still present here must be a per-document variable
+    // (e.g. ${file*}, ${relativeFile*}, or tool-specific tokens like
+    // ${nearestConfig}). resolveVariables() in settings.ts has already
+    // expanded everything resolvable at spawn time, so we fall back to
+    // the workspace path to allow the server to start.
+    const hasUnresolvedVariable = /\$\{/.test(settings.cwd);
+    return hasUnresolvedVariable ? parseWorkspaceUri(settings.workspace).fsPath : settings.cwd;
 }
 
 // ---------------------------------------------------------------------------
