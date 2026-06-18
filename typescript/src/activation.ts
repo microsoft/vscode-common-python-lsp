@@ -132,7 +132,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 //     client: undefined the state-listener block is skipped
                 //     entirely.
                 // The guard avoids re-introducing the duplicate-formatter
-                // symptom (#752): if the old client is still Running (serving
+                // symptom: if the old client is still Running (serving
                 // formatting requests), re-registering the placeholder would
                 // make the extension appear twice in the formatter picker
                 // until restartServer() stops the old client.
@@ -172,6 +172,11 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         }
                     }
                     serverDisposables = [];
+
+                    // Re-register the placeholder so the extension stays
+                    // visible in the formatter picker while there is no
+                    // interpreter (and therefore no running LSP formatter).
+                    nullFormatter?.register();
 
                     updateStatus(
                         vscode.l10n.t('Please select a Python interpreter.'),
