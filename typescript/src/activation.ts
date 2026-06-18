@@ -121,6 +121,19 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             isRestarting = true;
             try {
+                // Re-register the placeholder at the start of each restart
+                // cycle.  This covers two gaps the per-state listener misses:
+                //  1. Extension-driven restarts (config/interpreter change):
+                //     runServer() disposes the old state listener *before*
+                //     restartServer() stops the previous client, so
+                //     Stopped/Starting transitions fire into a dead listener.
+                //  2. Failure paths: if restartServer() throws or returns
+                //     client: undefined the state-listener block is skipped
+                //     entirely.
+                // register() is a no-op when the placeholder is already
+                // registered, so this is always safe to call.
+                nullFormatter?.register();
+
                 const projectRoot = await getProjectRoot();
                 if (disposed) {
                     return;
