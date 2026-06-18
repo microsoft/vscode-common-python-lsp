@@ -564,10 +564,11 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on ctx.dispose()');
     });
 
-    // Test 7: extension-driven restart — second runServer() disposes the old
-    // state listener before restartServer() stops the previous client. The
-    // placeholder must be re-registered at the start of the restart cycle so
-    // it is visible while the new server starts.
+    // Test 7: extension-driven restart — second runServer() is called while
+    // the first client is still Running.  The guard at the top of runServer
+    // skips re-registration to avoid the transient duplicate-formatter issue.
+    // The placeholder is re-registered only after restartServer returns the
+    // new (not-yet-Running) client.
     test('re-registers placeholder on extension-driven restart (second runServer call)', async () => {
         const firstClient = makeMockClient(State.Stopped);
         const secondClient = makeMockClient(State.Stopped);
@@ -584,13 +585,14 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed after first Running');
 
         // Second runServer() — simulates config/interpreter-driven restart.
-        // The old state listener is disposed, so transitions on firstClient
-        // no longer trigger re-registration.  The placeholder must be
-        // re-registered at the top of runServer().
+        // firstClient is still Running, so the guard at the top of runServer
+        // skips register (avoiding transient duplicate).  After restartServer
+        // returns the new client (Stopped), the placeholder is re-registered.
         await ctx.runServer();
-        // After second runServer, placeholder should have been re-registered
-        // (call count goes from 1 → 2 during runServer)
-        assert.strictEqual(registerFormattingProviderStub.callCount, 2, 'placeholder re-registered at start of second runServer');
+        assert.strictEqual(
+            registerFormattingProviderStub.callCount, 2,
+            'placeholder re-registered after restartServer returns non-Running client',
+        );
 
         // Transition second client to Running — placeholder disposed again
         secondClient.simulateStateChange(State.Running);

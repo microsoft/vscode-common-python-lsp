@@ -66,7 +66,13 @@ export interface ToolConfig {
      *     `Running` (so VS Code does not see two providers for the same selector
      *     and list the extension twice in the formatter picker),
      *   - re-register it if the client transitions back to `Stopped` / `Starting`
-     *     during a restart, then dispose it again on the next `Running`.
+     *     during a crash/recovery restart, then dispose it again on the next
+     *     `Running`,
+     *   - re-register it at the start of each extension-driven restart cycle
+     *     (config change, interpreter change, restart command) when the previous
+     *     client is no longer `Running`, ensuring the placeholder is visible
+     *     while the new server starts — and in failure paths where
+     *     `restartServer()` throws or returns no client.
      *
      * Defaults to `false`. Linter-only tools (pylint, flake8, mypy, …) should
      * leave this unset.

@@ -122,7 +122,8 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             isRestarting = true;
             try {
                 // Re-register the placeholder at the start of each restart
-                // cycle.  This covers two gaps the per-state listener misses:
+                // cycle when there is no healthy running client.  This covers
+                // two gaps the per-state listener misses:
                 //  1. Extension-driven restarts (config/interpreter change):
                 //     runServer() disposes the old state listener *before*
                 //     restartServer() stops the previous client, so
@@ -130,9 +131,14 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 //  2. Failure paths: if restartServer() throws or returns
                 //     client: undefined the state-listener block is skipped
                 //     entirely.
-                // register() is a no-op when the placeholder is already
-                // registered, so this is always safe to call.
-                nullFormatter?.register();
+                // The guard avoids re-introducing the duplicate-formatter
+                // symptom (#752): if the old client is still Running (serving
+                // formatting requests), re-registering the placeholder would
+                // make the extension appear twice in the formatter picker
+                // until restartServer() stops the old client.
+                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                    nullFormatter.register();
+                }
 
                 const projectRoot = await getProjectRoot();
                 if (disposed) {
@@ -229,6 +235,13 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     if (nullFormatter && result.client) {
                         if (result.client.state === State.Running) {
                             nullFormatter.unregister();
+                        } else {
+                            // New client not yet Running — ensure placeholder is
+                            // visible while the server finishes starting.  This
+                            // covers the extension-driven restart path where the
+                            // guard at the top skipped register() because the
+                            // *old* client was still Running at that point.
+                            nullFormatter.register();
                         }
                         serverDisposables.push(
                             result.client.onDidChangeState((e) => {
@@ -243,10 +256,17 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                                 }
                             }),
                         );
+                    } else if (nullFormatter && !result.client) {
+                        // No client available — ensure placeholder is visible
+                        // so the extension remains in the formatter picker.
+                        nullFormatter.register();
                     }
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
+                // Ensure placeholder stays visible after a failure so the
+                // extension doesn't vanish from the formatter picker.
+                nullFormatter?.register();
             } finally {
                 isRestarting = false;
             }
