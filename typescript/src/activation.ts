@@ -264,9 +264,12 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
-                // Ensure placeholder stays visible after a failure so the
-                // extension doesn't vanish from the formatter picker.
-                nullFormatter?.register();
+                // Ensure placeholder stays visible after a failure — but only
+                // when there is no healthy running client (same guard as the
+                // top of runServer to avoid the duplicate-formatter symptom).
+                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                    nullFormatter.register();
+                }
             } finally {
                 isRestarting = false;
             }
