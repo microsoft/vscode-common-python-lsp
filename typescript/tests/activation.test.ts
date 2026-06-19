@@ -5,6 +5,7 @@ import { assert } from 'chai';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
+import { State } from 'vscode-languageclient';
 import {
     createToolContext,
     CreateToolContextOptions,
@@ -374,5 +375,241 @@ suite('deactivateServer', () => {
         };
         await deactivateServer(ctx);
         assert.isTrue(dispose.calledOnce);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// NullFormatter lifecycle (via createToolContext with isFormatter: true)
+// ---------------------------------------------------------------------------
+
+suite('createToolContext – NullFormatter lifecycle', () => {
+    let sandbox: sinon.SinonSandbox;
+    let registerFormattingProviderStub: sinon.SinonStub;
+    let providerDispose: sinon.SinonStub;
+
+    setup(() => {
+        sandbox = sinon.createSandbox();
+        sandbox.stub(utilities, 'getProjectRoot').resolves(undefined);
+        sandbox.stub(utilities, 'getInterpreterFromSetting').returns(['/usr/bin/python3']);
+        sandbox.stub(settingsModule, 'getWorkspaceSettings').resolves({
+            cwd: '/workspace',
+            workspace: 'file:///workspace',
+            args: [],
+            path: [],
+            interpreter: ['/usr/bin/python3'],
+            importStrategy: 'useBundled',
+            showNotifications: 'off',
+        });
+
+        providerDispose = sandbox.stub();
+        registerFormattingProviderStub = sandbox
+            .stub(vscodeapi, 'registerDocumentFormattingEditProvider')
+            .returns({ dispose: providerDispose });
+    });
+
+    teardown(() => {
+        sandbox.restore();
+    });
+
+    function makeFormatterOptions(overrides?: Partial<CreateToolContextOptions>): CreateToolContextOptions {
+        return {
+            serverInfo: { name: 'Black', module: 'black' },
+            outputChannel: {
+                logLevel: vscode.LogLevel.Info,
+                show: sinon.stub(),
+                onDidChangeLogLevel: sinon.stub().returns({ dispose: sinon.stub() }),
+            } as unknown as vscode.LogOutputChannel,
+            toolConfig: {
+                toolId: 'black',
+                toolDisplayName: 'Black',
+                toolModule: 'black',
+                minimumPythonVersion: { major: 3, minor: 8 },
+                configFiles: ['pyproject.toml'],
+                settingsDefaults: {},
+                trackedSettings: ['args'],
+                serverScript: '/path/to/server.py',
+                isFormatter: true,
+            },
+            pythonProvider: {
+                getInterpreterDetails: sandbox.stub().resolves({ path: ['/usr/bin/python3'] }),
+                getDebuggerPath: sandbox.stub().resolves(undefined),
+                initializePython: sandbox.stub().resolves(),
+                onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
+            } as unknown as PythonEnvironmentsProvider,
+            ...overrides,
+        };
+    }
+
+    // Uses the shared LanguageClient mock from _languageclient_mock.ts
+    // (wired in by _setup.ts) so production and test getter semantics
+    // stay in sync.  At compile-time, LanguageClient resolves to the real
+    // vscode-languageclient type; at runtime it is replaced by the mock
+    // (which exposes simulateStateChange).  We import the mock type for
+    // the helper return type so callers get proper type-checking.
+    type MockClient = import('./_languageclient_mock').LanguageClient;
+
+    function makeMockClient(initialState: State = State.Stopped): MockClient {
+        const MockLC = LanguageClient as unknown as typeof import('./_languageclient_mock').LanguageClient;
+        const client = new MockLC('test', 'Test', {}, {});
+        // Drive the mock to the desired initial state.
+        if (initialState !== State.Stopped) {
+            client.simulateStateChange(initialState);
+        }
+        return client;
+    }
+
+    /** Cast a mock client to the real LanguageClient type for stub return values. */
+    function asLC(mock: MockClient): LanguageClient {
+        return mock as unknown as LanguageClient;
+    }
+
+    // Test 1: provider registered once at createToolContext, disposed on State.Running
+    test('registers placeholder once at activation and disposes it on State.Running', async () => {
+        const mockClient = makeMockClient(State.Stopped);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+        assert.isFalse(providerDispose.called, 'not yet disposed before server starts');
+
+        await ctx.runServer();
+
+        // Client is Stopped — "already Running" guard does not fire
+        assert.isFalse(providerDispose.called, 'not disposed before Running transition');
+
+        // Emit Running — state listener should dispose the placeholder
+        mockClient.simulateStateChange(State.Running);
+        assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on State.Running');
+    });
+
+    // Test 2: crash/recovery — server stops while running, placeholder restored
+    test('re-registers placeholder on server crash (Stopped while running) and disposes on recovery', async () => {
+        const mockClient = makeMockClient(State.Stopped);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+
+        await ctx.runServer();
+
+        // Simulate Running — placeholder disposed
+        mockClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed on Running');
+
+        // Simulate Stopped — placeholder re-registered
+        mockClient.simulateStateChange(State.Stopped);
+        assert.strictEqual(registerFormattingProviderStub.callCount, 2, 'placeholder re-registered on Stopped');
+
+        // Simulate Starting — placeholder already registered, no double-registration
+        mockClient.simulateStateChange(State.Starting);
+        assert.strictEqual(registerFormattingProviderStub.callCount, 2, 'no double-registration on Starting');
+
+        // Simulate Running again — placeholder disposed again
+        mockClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 2, 'placeholder disposed again on Running');
+    });
+
+    // Test 3: already-Running guard — client is Running when runServer() returns
+    test('disposes placeholder immediately when client is already Running at runServer return', async () => {
+        const mockClient = makeMockClient(State.Running);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+
+        await ctx.runServer();
+
+        assert.isTrue(
+            providerDispose.calledOnce,
+            'placeholder must be disposed even when client is already Running (missed initial transition)',
+        );
+    });
+
+    // Test 4: isFormatter: false — no placeholder, no state listener
+    test('does not register placeholder when isFormatter is false', async () => {
+        const options = makeFormatterOptions();
+        options.toolConfig = { ...options.toolConfig, isFormatter: false };
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+
+        createToolContext(options);
+
+        assert.isFalse(
+            registerFormattingProviderStub.called,
+            'should not register provider when isFormatter is false',
+        );
+    });
+
+    // Test 5: isFormatter unset — no placeholder
+    test('does not register placeholder when isFormatter is unset', async () => {
+        const options = makeFormatterOptions();
+        const { isFormatter, ...configWithoutFormatter } = options.toolConfig;
+        options.toolConfig = configWithoutFormatter as ToolConfig;
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+
+        createToolContext(options);
+
+        assert.isFalse(
+            registerFormattingProviderStub.called,
+            'should not register provider when isFormatter is unset',
+        );
+    });
+
+    // Test 6: ctx.dispose() disposes placeholder
+    test('ctx.dispose() disposes the placeholder when it is registered', () => {
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+
+        ctx.dispose();
+        assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on ctx.dispose()');
+    });
+
+    // Test 7: extension-driven restart — second runServer() is called while
+    // the first client is still Running.  The guard at the top of runServer
+    // skips re-registration to avoid the transient duplicate-formatter issue.
+    // The placeholder is re-registered only after restartServer returns the
+    // new (not-yet-Running) client.
+    test('re-registers placeholder on extension-driven restart (second runServer call)', async () => {
+        const firstClient = makeMockClient(State.Stopped);
+        const secondClient = makeMockClient(State.Stopped);
+        const restartStub = sandbox.stub(serverModule, 'restartServer');
+        restartStub.onFirstCall().resolves({ client: asLC(firstClient), disposables: [] });
+        restartStub.onSecondCall().resolves({ client: asLC(secondClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.strictEqual(registerFormattingProviderStub.callCount, 1, 'registered at activation');
+
+        // First run — transition to Running disposes placeholder
+        await ctx.runServer();
+        firstClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed after first Running');
+
+        // Second runServer() — simulates config/interpreter-driven restart.
+        // firstClient is still Running, so the guard at the top of runServer
+        // skips register (avoiding transient duplicate).  After restartServer
+        // returns the new client (Stopped), the placeholder is re-registered.
+        await ctx.runServer();
+        assert.strictEqual(
+            registerFormattingProviderStub.callCount, 2,
+            'placeholder re-registered after restartServer returns non-Running client',
+        );
+
+        // Transition second client to Running — placeholder disposed again
+        secondClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 2, 'placeholder disposed after second Running');
+    });
+
+    // Test 8: restartServer returns no client — placeholder stays registered
+    test('keeps placeholder registered when restartServer returns no client', async () => {
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.strictEqual(registerFormattingProviderStub.callCount, 1, 'registered at activation');
+
+        await ctx.runServer();
+
+        // Placeholder should still be registered (register() called again at
+        // top of runServer as a no-op, and never unregistered).
+        assert.isFalse(providerDispose.called, 'placeholder must stay registered when no client');
     });
 });

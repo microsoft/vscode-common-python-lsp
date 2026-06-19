@@ -53,6 +53,31 @@ export interface ToolConfig {
 
     // Environment
     extraEnvVars?: Record<string, string>;
+
+    /**
+     * Set to `true` for tools that provide LSP formatting (textDocument/formatting,
+     * rangeFormatting, rangesFormatting).
+     *
+     * When enabled, the common activation pattern will:
+     *   - register a placeholder DocumentFormattingEditProvider at activation time
+     *     (so VS Code lists the extension as a formatter *before* the LSP has
+     *     finished starting),
+     *   - dispose it automatically when the language client transitions to
+     *     `Running` (so VS Code does not see two providers for the same selector
+     *     and list the extension twice in the formatter picker),
+     *   - re-register it if the client transitions back to `Stopped` / `Starting`
+     *     during a crash/recovery restart, then dispose it again on the next
+     *     `Running`,
+     *   - re-register it at the start of each extension-driven restart cycle
+     *     (config change, interpreter change, restart command) when the previous
+     *     client is no longer `Running`, ensuring the placeholder is visible
+     *     while the new server starts — and in failure paths where
+     *     `restartServer()` throws or returns no client.
+     *
+     * Defaults to `false`. Linter-only tools (pylint, flake8, mypy, …) should
+     * leave this unset.
+     */
+    isFormatter?: boolean;
 }
 
 /**

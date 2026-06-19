@@ -69,6 +69,9 @@ export {
     RestartServerResult,
 } from './server';
 
+// Null formatter helper
+export { NullFormatter } from './nullFormatter';
+
 // Activation / deactivation
 export {
     createToolContext,

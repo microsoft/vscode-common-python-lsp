@@ -11,9 +11,11 @@
  */
 
 import * as vscode from 'vscode';
+import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { createConfigFileWatchers } from './configWatcher';
 import { traceError, traceLog, traceVerbose } from './logging';
+import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
 import { restartServer, RestartServerOptions } from './server';
 import { checkIfConfigurationChanged, getWorkspaceSettings } from './settings';
@@ -100,6 +102,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
     let disposed = false;
     let serverDisposables: vscode.Disposable[] = [];
 
+    const nullFormatter = toolConfig.isFormatter ? new NullFormatter() : undefined;
+    nullFormatter?.register();
+
     const ctx: ToolExtensionContext = {
         lsClient: undefined,
 
@@ -116,6 +121,25 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             isRestarting = true;
             try {
+                // Re-register the placeholder at the start of each restart
+                // cycle when there is no healthy running client.  This covers
+                // two gaps the per-state listener misses:
+                //  1. Extension-driven restarts (config/interpreter change):
+                //     runServer() disposes the old state listener *before*
+                //     restartServer() stops the previous client, so
+                //     Stopped/Starting transitions fire into a dead listener.
+                //  2. Failure paths: if restartServer() throws or returns
+                //     client: undefined the state-listener block is skipped
+                //     entirely.
+                // The guard avoids re-introducing the duplicate-formatter
+                // symptom: if the old client is still Running (serving
+                // formatting requests), re-registering the placeholder would
+                // make the extension appear twice in the formatter picker
+                // until restartServer() stops the old client.
+                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                    nullFormatter.register();
+                }
+
                 const projectRoot = await getProjectRoot();
                 if (disposed) {
                     return;
@@ -148,6 +172,11 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         }
                     }
                     serverDisposables = [];
+
+                    // Re-register the placeholder so the extension stays
+                    // visible in the formatter picker while there is no
+                    // interpreter (and therefore no running LSP formatter).
+                    nullFormatter?.register();
 
                     updateStatus(
                         vscode.l10n.t('Please select a Python interpreter.'),
@@ -207,9 +236,45 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
                     ctx.lsClient = result.client;
                     serverDisposables = result.disposables;
+
+                    if (nullFormatter && result.client) {
+                        if (result.client.state === State.Running) {
+                            nullFormatter.unregister();
+                        } else {
+                            // New client not yet Running — ensure placeholder is
+                            // visible while the server finishes starting.  This
+                            // covers the extension-driven restart path where the
+                            // guard at the top skipped register() because the
+                            // *old* client was still Running at that point.
+                            nullFormatter.register();
+                        }
+                        serverDisposables.push(
+                            result.client.onDidChangeState((e) => {
+                                switch (e.newState) {
+                                    case State.Running:
+                                        nullFormatter.unregister();
+                                        break;
+                                    case State.Stopped:
+                                    case State.Starting:
+                                        nullFormatter.register();
+                                        break;
+                                }
+                            }),
+                        );
+                    } else if (nullFormatter && !result.client) {
+                        // No client available — ensure placeholder is visible
+                        // so the extension remains in the formatter picker.
+                        nullFormatter.register();
+                    }
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
+                // Ensure placeholder stays visible after a failure — but only
+                // when there is no healthy running client (same guard as the
+                // top of runServer to avoid the duplicate-formatter symptom).
+                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                    nullFormatter.register();
+                }
             } finally {
                 isRestarting = false;
             }
@@ -244,6 +309,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 }
             }
             serverDisposables = [];
+            nullFormatter?.dispose();
         },
     };
 
