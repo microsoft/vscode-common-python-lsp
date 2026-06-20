@@ -44,10 +44,12 @@ export { getEnvFileVars } from './envFile';
 export {
     checkIfConfigurationChanged,
     expandTilde,
+    getEnabledWorkspaceFolders,
     getExtensionSettings,
     getExtraPaths,
     getGlobalSettings,
     getWorkspaceSettings,
+    isToolEnabledForWorkspace,
     logLegacySettings,
     resolvePathSetting,
     resolveVariables,

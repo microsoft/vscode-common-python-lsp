@@ -271,7 +271,64 @@ export async function getGlobalSettings(
 }
 
 /**
+ * Setting key used to enable/disable a tool per workspace folder.
+ *
+ * Tool extensions conventionally expose an `<namespace>.enabled` boolean
+ * (see {@link ToolConfig.settingsDefaults}). Override via the `settingKey`
+ * argument of {@link isToolEnabledForWorkspace} when a tool uses a different
+ * key (e.g. `enable`).
+ */
+const DEFAULT_ENABLE_SETTING_KEY = 'enabled';
+
+/**
+ * Determine whether the tool is enabled for a specific workspace folder.
+ *
+ * In a multi-root workspace a single language server is shared across all
+ * folders (see {@link getProjectRoot} / {@link getExtensionSettings}). This
+ * helper lets extensions honour a per-folder opt-out — e.g. `pylint.enabled:
+ * false` in one folder — so the shared server can skip work for that folder
+ * instead of spawning a redundant process per folder.
+ *
+ * Reads the `<namespace>.<settingKey>` boolean setting scoped to the folder
+ * and defaults to enabled (`true`) when unset, so behaviour is unchanged for
+ * tools that don't define the setting.
+ *
+ * @param namespace - Extension configuration namespace (e.g. `"pylint"`).
+ * @param workspace - The workspace folder to check (omit for global scope).
+ * @param settingKey - The boolean setting key (defaults to `"enabled"`).
+ */
+export function isToolEnabledForWorkspace(
+    namespace: string,
+    workspace?: WorkspaceFolder,
+    settingKey: string = DEFAULT_ENABLE_SETTING_KEY,
+): boolean {
+    const config = getConfiguration(namespace, workspace?.uri);
+    return config.get<boolean>(settingKey, true) !== false;
+}
+
+/**
+ * Return the subset of workspace folders for which the tool is enabled.
+ *
+ * Useful for extensions that want to register per-folder providers or skip
+ * disabled folders when deciding whether to start the shared server.
+ *
+ * @param namespace - Extension configuration namespace (e.g. `"pylint"`).
+ * @param settingKey - The boolean setting key (defaults to `"enabled"`).
+ */
+export function getEnabledWorkspaceFolders(
+    namespace: string,
+    settingKey: string = DEFAULT_ENABLE_SETTING_KEY,
+): WorkspaceFolder[] {
+    return getWorkspaceFolders().filter((w) => isToolEnabledForWorkspace(namespace, w, settingKey));
+}
+
+/**
  * Resolve settings for all workspace folders.
+ *
+ * Folders where the tool is disabled (`<namespace>.enabled: false`) are
+ * omitted, so the shared (singleton) language server never receives — and
+ * therefore never lints — folders the user has opted out of. This avoids
+ * redundant diagnostics in multi-root workspaces.
  */
 export function getExtensionSettings(
     namespace: string,
@@ -279,7 +336,9 @@ export function getExtensionSettings(
     resolveInterpreter?: (resource?: import('vscode').Uri) => Promise<{ path?: string[] }>,
 ): Promise<IBaseSettings[]> {
     return Promise.all(
-        getWorkspaceFolders().map((w) => getWorkspaceSettings(namespace, w, toolConfig, resolveInterpreter)),
+        getEnabledWorkspaceFolders(namespace).map((w) =>
+            getWorkspaceSettings(namespace, w, toolConfig, resolveInterpreter),
+        ),
     );
 }
 
