@@ -70,6 +70,30 @@ class TestRunPath:
         )
         assert result.exit_code == 42
 
+    def test_timeout_returns_str_stdout_stderr(self, tmp_path):
+        """When the subprocess exceeds the timeout, partial output is
+        returned as decoded str (matching the success path) rather than
+        the raw bytes that subprocess.TimeoutExpired carries by default.
+        """
+        result = run_path(
+            [
+                sys.executable,
+                "-u",
+                "-c",
+                "import time; print('partial line'); time.sleep(5)",
+            ],
+            use_stdin=False,
+            cwd=str(tmp_path),
+            timeout=1,
+        )
+        # exit_code is None on timeout (process was killed)
+        assert result.exit_code is None
+        # stdout/stderr must be str, not bytes, regardless of whether
+        # the subprocess had produced any output before being killed
+        assert isinstance(result.stdout, str)
+        assert isinstance(result.stderr, str)
+        assert "partial line" in result.stdout
+
     def test_with_env(self, tmp_path):
         import os
 
