@@ -70,6 +70,17 @@ git submodule add https://github.com/microsoft/vscode-common-python-lsp.git subm
 **Python side** — install into `bundled/libs/` via noxfile.
 **TypeScript side** — `file:` dependency in `package.json`.
 
+### Optional settings
+
+`registerCommonSubscriptions` listens for package changes reported by the
+[Python Environments extension](https://github.com/microsoft/vscode-python-environments)
+(`onDidChangePackages`). To restart the language server whenever packages are
+installed or removed, an extension can expose a boolean
+`<toolId>.refreshOnPackageChange` setting (e.g. `flake8.refreshOnPackageChange`)
+in its `package.json` `contributes.configuration`. The setting defaults to
+`false`; when set to `true`, the shared activation logic restarts the server on
+each package-change event.
+
 ## Version Requirements
 
 | Runtime    | Minimum Version |

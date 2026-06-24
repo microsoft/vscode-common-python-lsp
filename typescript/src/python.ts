@@ -51,6 +51,16 @@ export interface IPythonApi {
     onDidChangeEnvironment(handler: () => void): Disposable;
 
     /**
+     * Subscribe to package changes detected by the environment's package
+     * managers.
+     *
+     * Only fired by the newer `ms-python.python-environments` extension.
+     * The legacy `ms-python.python` extension does not expose package
+     * change events, so its adapter returns a no-op {@link Disposable}.
+     */
+    onDidChangePackages(handler: () => void): Disposable;
+
+    /**
      * Get the debugger package path.
      *
      * Only available via the legacy `ms-python.python` extension.
@@ -113,6 +123,10 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
             return api.onDidChangeEnvironment(handler);
         },
 
+        onDidChangePackages(handler: () => void) {
+            return api.onDidChangePackages(handler);
+        },
+
         async getDebuggerPath() {
             // TODO: Not yet supported by the environments extension. Implement when it is.
             return undefined;
@@ -167,6 +181,12 @@ function wrapLegacyApi(api: PythonExtension): IPythonApi {
             return api.environments.onDidChangeActiveEnvironmentPath(handler);
         },
 
+        onDidChangePackages() {
+            // The legacy ms-python.python API does not expose package change
+            // events, so there is nothing to subscribe to.
+            return { dispose: () => undefined };
+        },
+
         async getDebuggerPath() {
             return api.debug.getDebuggerPackagePath();
         },
@@ -188,6 +208,16 @@ export class PythonEnvironmentsProvider {
     private readonly _onDidChangeInterpreter = new EventEmitter<void>();
     /** Fires when the active Python interpreter changes. */
     public readonly onDidChangeInterpreter: Event<void> = this._onDidChangeInterpreter.event;
+
+    private readonly _onDidChangePackages = new EventEmitter<void>();
+    /**
+     * Fires when the active environment's package managers report a package
+     * change (install/uninstall).
+     *
+     * Only emitted when the newer `ms-python.python-environments` extension
+     * is providing the API.
+     */
+    public readonly onDidChangePackages: Event<void> = this._onDidChangePackages.event;
 
     private _api: IPythonApi | undefined;
     private _apiResolved = false;
@@ -281,6 +311,12 @@ export class PythonEnvironmentsProvider {
                 }),
             );
 
+            disposables.push(
+                api.onDidChangePackages(() => {
+                    this._onDidChangePackages.fire();
+                }),
+            );
+
             traceLog(`Waiting for interpreter from ${api.extension} extension.`);
             await this.refreshServerPython();
         } catch (error) {
@@ -360,6 +396,7 @@ export class PythonEnvironmentsProvider {
     /** Dispose internal resources. */
     dispose(): void {
         this._onDidChangeInterpreter.dispose();
+        this._onDidChangePackages.dispose();
     }
 }
 

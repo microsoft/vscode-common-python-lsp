@@ -59,6 +59,7 @@ function makeMockProvider(sandbox: sinon.SinonSandbox): PythonEnvironmentsProvid
         getDebuggerPath: sandbox.stub().resolves(undefined),
         initializePython: sandbox.stub().resolves(),
         onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
+        onDidChangePackages: sinon.stub().returns({ dispose: sinon.stub() }),
     } as unknown as PythonEnvironmentsProvider;
 }
 
@@ -324,6 +325,49 @@ suite('registerCommonSubscriptions', () => {
             (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).calledOnce,
         );
     });
+
+    test('subscribes to package change events', () => {
+        const options = makeRegisterOptions();
+        registerCommonSubscriptions(context, options);
+        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
+        assert.isTrue(onDidChangePackages.calledOnce, 'should subscribe to package change events');
+    });
+
+    test('restarts server on package change when refreshOnPackageChange is enabled', async () => {
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: () => true,
+        } as unknown as vscode.WorkspaceConfiguration);
+
+        const options = makeRegisterOptions();
+        registerCommonSubscriptions(context, options);
+
+        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
+        const handler = onDidChangePackages.firstCall.args[0] as () => Promise<void>;
+        await handler();
+
+        assert.isTrue(
+            (options.toolContext.runServer as sinon.SinonStub).called,
+            'runServer should be called on package change when enabled',
+        );
+    });
+
+    test('does not restart server on package change when refreshOnPackageChange is disabled', async () => {
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: () => false,
+        } as unknown as vscode.WorkspaceConfiguration);
+
+        const options = makeRegisterOptions();
+        registerCommonSubscriptions(context, options);
+
+        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
+        const handler = onDidChangePackages.firstCall.args[0] as () => Promise<void>;
+        await handler();
+
+        assert.isFalse(
+            (options.toolContext.runServer as sinon.SinonStub).called,
+            'runServer should not be called on package change when disabled',
+        );
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -435,6 +479,7 @@ suite('createToolContext – NullFormatter lifecycle', () => {
                 getDebuggerPath: sandbox.stub().resolves(undefined),
                 initializePython: sandbox.stub().resolves(),
                 onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
+                onDidChangePackages: sinon.stub().returns({ dispose: sinon.stub() }),
             } as unknown as PythonEnvironmentsProvider,
             ...overrides,
         };

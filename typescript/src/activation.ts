@@ -22,7 +22,7 @@ import { checkIfConfigurationChanged, getWorkspaceSettings } from './settings';
 import { registerLanguageStatusItem, updateStatus } from './status';
 import { IServerInfo, ToolConfig } from './types';
 import { getInterpreterFromSetting, getLSClientTraceLevel, getProjectRoot } from './utilities';
-import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
+import { getConfiguration, onDidChangeConfiguration, registerCommand } from './vscodeapi';
 
 // ---------------------------------------------------------------------------
 // Default restart delay
@@ -30,6 +30,13 @@ import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
 
 /** Fallback when {@link ToolConfig.restartDelay} is not set. */
 const DEFAULT_RESTART_DELAY = 1000;
+
+/**
+ * Setting key (relative to the tool namespace) that opts in to restarting the
+ * server when the Python environment's package managers report a package
+ * change.  Defaults to `false`.
+ */
+const REFRESH_ON_PACKAGE_CHANGE_SETTING = 'refreshOnPackageChange';
 
 // ---------------------------------------------------------------------------
 // ToolExtensionContext
@@ -377,6 +384,21 @@ export function registerCommonSubscriptions(
     context.subscriptions.push(
         pythonProvider.onDidChangeInterpreter(async () => {
             await safeRunServer(toolContext, 'interpreter change');
+        }),
+    );
+
+    // Package change — opt-in via the `<serverId>.refreshOnPackageChange`
+    // setting.  When enabled, restart the server whenever the Python
+    // environment's package managers report a package install/uninstall.
+    context.subscriptions.push(
+        pythonProvider.onDidChangePackages(async () => {
+            const refreshOnPackageChange = getConfiguration(serverId).get<boolean>(
+                REFRESH_ON_PACKAGE_CHANGE_SETTING,
+                false,
+            );
+            if (refreshOnPackageChange) {
+                await safeRunServer(toolContext, 'package change');
+            }
         }),
     );
 

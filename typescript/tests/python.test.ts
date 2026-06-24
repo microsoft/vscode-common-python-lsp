@@ -127,6 +127,14 @@ suite('PythonEnvironmentsProvider', () => {
         });
     });
 
+    suite('onDidChangePackages', () => {
+        test('event is defined', () => {
+            const config = makeToolConfig();
+            const provider = new PythonEnvironmentsProvider(config);
+            assert.isDefined(provider.onDidChangePackages);
+        });
+    });
+
     suite('dispose', () => {
         test('does not throw', () => {
             const config = makeToolConfig();

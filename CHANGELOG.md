@@ -6,6 +6,22 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **TypeScript** `PythonEnvironmentsProvider.onDidChangePackages` — event that
+  fires when the active environment's package managers report a package change
+  (install/uninstall), surfaced from the Python Environments extension's
+  `onDidChangePackages` API. The legacy `ms-python.python` extension does not
+  expose package events, so the event never fires when only that extension is
+  available.
+
+- **TypeScript** `registerCommonSubscriptions` now restarts the language server
+  on package-change events when the extension's `<toolId>.refreshOnPackageChange`
+  setting is `true`. The setting defaults to `false`, so existing extensions are
+  unaffected until they opt in.
+
 ## [0.7.0] - 2026-06-17
 
 ### Added
