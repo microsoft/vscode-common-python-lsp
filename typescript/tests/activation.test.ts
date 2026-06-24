@@ -249,9 +249,11 @@ suite('createToolContext', () => {
         const onPackageChange = initializePython.firstCall.args[1] as (() => void) | undefined;
         assert.isFunction(onPackageChange, 'should pass a package-change callback');
 
-        // Invoking the callback restarts the server.
+        // Invoking the callback restarts the server. runServer awaits three
+        // pre-resolved stubs (getProjectRoot, getWorkspaceSettings,
+        // restartServer) before restartServer is reached, so flush the
+        // macrotask queue twice to let the whole chain settle.
         onPackageChange?.();
-        // Flush the async runServer chain (all stubbed promises resolve).
         await new Promise((resolve) => setTimeout(resolve, 0));
         await new Promise((resolve) => setTimeout(resolve, 0));
         assert.isTrue(
