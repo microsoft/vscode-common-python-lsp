@@ -55,6 +55,20 @@ export interface ToolConfig {
     extraEnvVars?: Record<string, string>;
 
     /**
+     * Set to `true` to restart the language server whenever the active Python
+     * environment's package managers report a package change (install or
+     * uninstall), as surfaced by {@link PythonEnvironmentsProvider.onDidChangePackages}.
+     *
+     * The legacy `ms-python.python` extension does not expose package events,
+     * so this has no effect unless the Python Environments extension is
+     * available.
+     *
+     * Defaults to `false`, so existing extensions are unaffected until they
+     * opt in.
+     */
+    refreshOnPackageChange?: boolean;
+
+    /**
      * Set to `true` for tools that provide LSP formatting (textDocument/formatting,
      * rangeFormatting, rangesFormatting).
      *

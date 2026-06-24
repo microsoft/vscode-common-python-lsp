@@ -326,19 +326,22 @@ suite('registerCommonSubscriptions', () => {
         );
     });
 
-    test('subscribes to package change events', () => {
-        const options = makeRegisterOptions();
+    test('subscribes to package change events when refreshOnPackageChange is enabled', () => {
+        const options = makeRegisterOptions({ toolConfig: makeToolConfig({ refreshOnPackageChange: true }) });
         registerCommonSubscriptions(context, options);
         const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
         assert.isTrue(onDidChangePackages.calledOnce, 'should subscribe to package change events');
     });
 
-    test('restarts server on package change when refreshOnPackageChange is enabled', async () => {
-        sandbox.stub(vscodeapi, 'getConfiguration').returns({
-            get: () => true,
-        } as unknown as vscode.WorkspaceConfiguration);
-
+    test('does not subscribe to package change events when refreshOnPackageChange is disabled', () => {
         const options = makeRegisterOptions();
+        registerCommonSubscriptions(context, options);
+        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
+        assert.isFalse(onDidChangePackages.called, 'should not subscribe to package change events');
+    });
+
+    test('restarts server on package change when refreshOnPackageChange is enabled', async () => {
+        const options = makeRegisterOptions({ toolConfig: makeToolConfig({ refreshOnPackageChange: true }) });
         registerCommonSubscriptions(context, options);
 
         const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
@@ -348,24 +351,6 @@ suite('registerCommonSubscriptions', () => {
         assert.isTrue(
             (options.toolContext.runServer as sinon.SinonStub).called,
             'runServer should be called on package change when enabled',
-        );
-    });
-
-    test('does not restart server on package change when refreshOnPackageChange is disabled', async () => {
-        sandbox.stub(vscodeapi, 'getConfiguration').returns({
-            get: () => false,
-        } as unknown as vscode.WorkspaceConfiguration);
-
-        const options = makeRegisterOptions();
-        registerCommonSubscriptions(context, options);
-
-        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
-        const handler = onDidChangePackages.firstCall.args[0] as () => Promise<void>;
-        await handler();
-
-        assert.isFalse(
-            (options.toolContext.runServer as sinon.SinonStub).called,
-            'runServer should not be called on package change when disabled',
         );
     });
 });

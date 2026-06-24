@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available.
 
 - **TypeScript** `registerCommonSubscriptions` now restarts the language server
-  on package-change events when the extension's `<toolId>.refreshOnPackageChange`
-  setting is `true`. The setting defaults to `false`, so existing extensions are
+  on package-change events when the extension's `ToolConfig.refreshOnPackageChange`
+  key is `true`. The key defaults to `false`, so existing extensions are
   unaffected until they opt in.
 
 ## [0.7.0] - 2026-06-17
