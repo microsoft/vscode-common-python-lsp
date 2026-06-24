@@ -209,16 +209,6 @@ export class PythonEnvironmentsProvider {
     /** Fires when the active Python interpreter changes. */
     public readonly onDidChangeInterpreter: Event<void> = this._onDidChangeInterpreter.event;
 
-    private readonly _onDidChangePackages = new EventEmitter<void>();
-    /**
-     * Fires when the active environment's package managers report a package
-     * change (install/uninstall).
-     *
-     * Only emitted when the newer `ms-python.python-environments` extension
-     * is providing the API.
-     */
-    public readonly onDidChangePackages: Event<void> = this._onDidChangePackages.event;
-
     private _api: IPythonApi | undefined;
     private _apiResolved = false;
     private _serverPython: string[] | undefined;
@@ -293,8 +283,17 @@ export class PythonEnvironmentsProvider {
     /**
      * Set up event listeners for Python interpreter changes and resolve
      * the initial interpreter.
+     *
+     * @param disposables - Collected disposables for the registered listeners.
+     * @param onPackageChange - Optional callback invoked whenever the active
+     *   environment's package managers report a package change
+     *   (install/uninstall).  When provided, this method subscribes to the
+     *   underlying package-change event once and forwards each notification to
+     *   the callback — typically used to refresh the language server.  Only the
+     *   newer `ms-python.python-environments` extension emits these events; the
+     *   legacy `ms-python.python` adapter is a no-op.
      */
-    async initializePython(disposables: Disposable[]): Promise<void> {
+    async initializePython(disposables: Disposable[], onPackageChange?: () => void): Promise<void> {
         try {
             const api = await this.getApi();
             if (!api) {
@@ -311,11 +310,9 @@ export class PythonEnvironmentsProvider {
                 }),
             );
 
-            disposables.push(
-                api.onDidChangePackages(() => {
-                    this._onDidChangePackages.fire();
-                }),
-            );
+            if (onPackageChange) {
+                disposables.push(api.onDidChangePackages(() => onPackageChange()));
+            }
 
             traceLog(`Waiting for interpreter from ${api.extension} extension.`);
             await this.refreshServerPython();
@@ -396,7 +393,6 @@ export class PythonEnvironmentsProvider {
     /** Dispose internal resources. */
     dispose(): void {
         this._onDidChangeInterpreter.dispose();
-        this._onDidChangePackages.dispose();
     }
 }
 

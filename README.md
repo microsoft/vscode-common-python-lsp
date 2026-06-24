@@ -72,13 +72,13 @@ git submodule add https://github.com/microsoft/vscode-common-python-lsp.git subm
 
 ### Optional configuration
 
-`registerCommonSubscriptions` can listen for package changes reported by the
+To restart the language server whenever packages are installed or removed,
+an extension sets `refreshOnPackageChange: true` on the `ToolConfig` it passes
+in. The key defaults to `false`; when set to `true`, the shared activation logic
+subscribes once to the package-change events reported by the
 [Python Environments extension](https://github.com/microsoft/vscode-python-environments)
-(`onDidChangePackages`). To restart the language server whenever packages are
-installed or removed, an extension sets `refreshOnPackageChange: true` on the
-`ToolConfig` it passes in. The key defaults to `false`; when set to `true`, the
-shared activation logic subscribes to package-change events and restarts the
-server on each one.
+during initialization and restarts the server on each one. The subscription is
+handled internally — it is not exposed as public API.
 
 ## Version Requirements
 

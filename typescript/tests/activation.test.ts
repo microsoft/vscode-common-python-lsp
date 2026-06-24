@@ -59,7 +59,6 @@ function makeMockProvider(sandbox: sinon.SinonSandbox): PythonEnvironmentsProvid
         getDebuggerPath: sandbox.stub().resolves(undefined),
         initializePython: sandbox.stub().resolves(),
         onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
-        onDidChangePackages: sinon.stub().returns({ dispose: sinon.stub() }),
     } as unknown as PythonEnvironmentsProvider;
 }
 
@@ -235,6 +234,43 @@ suite('createToolContext', () => {
         );
     });
 
+    test('initialize passes a package-change callback when refreshOnPackageChange is enabled', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                toolConfig: makeToolConfig({ refreshOnPackageChange: true }),
+            }),
+        );
+        await ctx.initialize([]);
+
+        const initializePython = provider.initializePython as sinon.SinonStub;
+        const onPackageChange = initializePython.firstCall.args[1] as (() => void) | undefined;
+        assert.isFunction(onPackageChange, 'should pass a package-change callback');
+
+        // Invoking the callback restarts the server.
+        onPackageChange?.();
+        // Flush the async runServer chain (all stubbed promises resolve).
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.isTrue(
+            (serverModule.restartServer as sinon.SinonStub).called,
+            'package-change callback should restart the server',
+        );
+    });
+
+    test('initialize omits the package-change callback when refreshOnPackageChange is disabled', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(makeOptions({ pythonProvider: provider }));
+        await ctx.initialize([]);
+
+        const initializePython = provider.initializePython as sinon.SinonStub;
+        const onPackageChange = initializePython.firstCall.args[1] as (() => void) | undefined;
+        assert.isUndefined(onPackageChange, 'should not pass a package-change callback');
+    });
+
     test('dispose prevents further runServer calls', async () => {
         const ctx = createToolContext(makeOptions());
         ctx.dispose();
@@ -323,34 +359,6 @@ suite('registerCommonSubscriptions', () => {
         registerCommonSubscriptions(context, makeRegisterOptions());
         assert.isTrue(
             (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).calledOnce,
-        );
-    });
-
-    test('subscribes to package change events when refreshOnPackageChange is enabled', () => {
-        const options = makeRegisterOptions({ toolConfig: makeToolConfig({ refreshOnPackageChange: true }) });
-        registerCommonSubscriptions(context, options);
-        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
-        assert.isTrue(onDidChangePackages.calledOnce, 'should subscribe to package change events');
-    });
-
-    test('does not subscribe to package change events when refreshOnPackageChange is disabled', () => {
-        const options = makeRegisterOptions();
-        registerCommonSubscriptions(context, options);
-        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
-        assert.isFalse(onDidChangePackages.called, 'should not subscribe to package change events');
-    });
-
-    test('restarts server on package change when refreshOnPackageChange is enabled', async () => {
-        const options = makeRegisterOptions({ toolConfig: makeToolConfig({ refreshOnPackageChange: true }) });
-        registerCommonSubscriptions(context, options);
-
-        const onDidChangePackages = options.pythonProvider.onDidChangePackages as unknown as sinon.SinonStub;
-        const handler = onDidChangePackages.firstCall.args[0] as () => Promise<void>;
-        await handler();
-
-        assert.isTrue(
-            (options.toolContext.runServer as sinon.SinonStub).called,
-            'runServer should be called on package change when enabled',
         );
     });
 });
@@ -464,7 +472,6 @@ suite('createToolContext – NullFormatter lifecycle', () => {
                 getDebuggerPath: sandbox.stub().resolves(undefined),
                 initializePython: sandbox.stub().resolves(),
                 onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
-                onDidChangePackages: sinon.stub().returns({ dispose: sinon.stub() }),
             } as unknown as PythonEnvironmentsProvider,
             ...overrides,
         };

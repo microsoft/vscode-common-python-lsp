@@ -127,11 +127,16 @@ suite('PythonEnvironmentsProvider', () => {
         });
     });
 
-    suite('onDidChangePackages', () => {
-        test('event is defined', () => {
+    suite('initializePython', () => {
+        test('accepts an optional package-change callback without throwing', async () => {
             const config = makeToolConfig();
             const provider = new PythonEnvironmentsProvider(config);
-            assert.isDefined(provider.onDidChangePackages);
+            // No Python extension is available in the test environment, so
+            // getApi() resolves to undefined and initializePython returns
+            // early — the call must not throw with or without the callback.
+            const disposables: { dispose: () => void }[] = [];
+            await provider.initializePython(disposables, () => undefined);
+            assert.isArray(disposables);
         });
     });
 

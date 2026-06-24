@@ -10,17 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **TypeScript** `PythonEnvironmentsProvider.onDidChangePackages` — event that
-  fires when the active environment's package managers report a package change
-  (install/uninstall), surfaced from the Python Environments extension's
-  `onDidChangePackages` API. The legacy `ms-python.python` extension does not
-  expose package events, so the event never fires when only that extension is
-  available.
-
-- **TypeScript** `registerCommonSubscriptions` now restarts the language server
-  on package-change events when the extension's `ToolConfig.refreshOnPackageChange`
-  key is `true`. The key defaults to `false`, so existing extensions are
-  unaffected until they opt in.
+- **TypeScript** `ToolConfig.refreshOnPackageChange` — opt-in key that, when
+  set to `true`, makes the shared activation logic restart the language server
+  whenever the active environment's package managers report a package change
+  (install/uninstall). The provider subscribes to the underlying package-change
+  event once during initialization; the event is handled entirely inside the
+  package and is not exposed as public API. The key defaults to `false`, so
+  existing extensions are unaffected until they opt in. The legacy
+  `ms-python.python` extension does not expose package events, so this has no
+  effect unless the Python Environments extension is available.
 
 ## [0.7.0] - 2026-06-17
 

@@ -285,7 +285,15 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 const interpreter = getInterpreterFromSetting(serverId);
                 if (interpreter === undefined || interpreter.length === 0) {
                     traceLog('Python extension loading');
-                    await pythonProvider.initializePython(subscriptions);
+                    // Opt-in via the `refreshOnPackageChange` key on the
+                    // extension's ToolConfig: when enabled, restart the server
+                    // whenever the Python environment's package managers report
+                    // a package install/uninstall.  The provider subscribes to
+                    // the underlying event once and invokes this callback.
+                    const onPackageChange = toolConfig.refreshOnPackageChange
+                        ? () => void safeRunServer(ctx, 'package change')
+                        : undefined;
+                    await pythonProvider.initializePython(subscriptions, onPackageChange);
                     traceLog('Python extension loaded');
                 } else {
                     await ctx.runServer();
@@ -379,17 +387,6 @@ export function registerCommonSubscriptions(
             await safeRunServer(toolContext, 'interpreter change');
         }),
     );
-
-    // Package change — opt-in via the `refreshOnPackageChange` key on the
-    // extension's ToolConfig.  When enabled, restart the server whenever the
-    // Python environment's package managers report a package install/uninstall.
-    if (toolConfig.refreshOnPackageChange) {
-        context.subscriptions.push(
-            pythonProvider.onDidChangePackages(async () => {
-                await safeRunServer(toolContext, 'package change');
-            }),
-        );
-    }
 
     // Commands
     context.subscriptions.push(

@@ -57,11 +57,13 @@ export interface ToolConfig {
     /**
      * Set to `true` to restart the language server whenever the active Python
      * environment's package managers report a package change (install or
-     * uninstall), as surfaced by {@link PythonEnvironmentsProvider.onDidChangePackages}.
+     * uninstall).
      *
-     * The legacy `ms-python.python` extension does not expose package events,
-     * so this has no effect unless the Python Environments extension is
-     * available.
+     * When enabled, the shared activation logic subscribes to the underlying
+     * package-change event during initialization and restarts the server on
+     * each notification. The legacy `ms-python.python` extension does not
+     * expose package events, so this has no effect unless the Python
+     * Environments extension is available.
      *
      * Defaults to `false`, so existing extensions are unaffected until they
      * opt in.
