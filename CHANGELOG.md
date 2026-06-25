@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **TypeScript** `ToolConfig.refreshExtensionOnPackageChange` — opt-in key that,
+- **TypeScript** `ToolConfig.refreshExtensionOnPackagesChange` — opt-in key that,
   when set to `true`, makes the shared activation logic restart the language
   server whenever the active environment's package managers report a package
   change (install/uninstall). The provider subscribes to the underlying

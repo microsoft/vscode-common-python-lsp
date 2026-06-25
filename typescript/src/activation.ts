@@ -285,13 +285,13 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 const interpreter = getInterpreterFromSetting(serverId);
                 if (interpreter === undefined || interpreter.length === 0) {
                     traceLog('Python extension loading');
-                    // Opt-in via the `refreshExtensionOnPackageChange` key on
+                    // Opt-in via the `refreshExtensionOnPackagesChange` key on
                     // the extension's ToolConfig: when enabled, restart the
                     // server whenever the Python environment's package managers
                     // report a package install/uninstall.  The provider
                     // subscribes to the underlying event once and invokes this
                     // callback.
-                    const onPackageChange = toolConfig.refreshExtensionOnPackageChange
+                    const onPackageChange = toolConfig.refreshExtensionOnPackagesChange
                         ? () => void safeRunServer(ctx, 'package change')
                         : undefined;
                     await pythonProvider.initializePython(subscriptions, onPackageChange);

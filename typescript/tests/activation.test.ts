@@ -234,13 +234,13 @@ suite('createToolContext', () => {
         );
     });
 
-    test('initialize passes a package-change callback when refreshExtensionOnPackageChange is enabled', async () => {
+    test('initialize passes a package-change callback when refreshExtensionOnPackagesChange is enabled', async () => {
         (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
         const provider = makeMockProvider(sandbox);
         const ctx = createToolContext(
             makeOptions({
                 pythonProvider: provider,
-                toolConfig: makeToolConfig({ refreshExtensionOnPackageChange: true }),
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true }),
             }),
         );
         await ctx.initialize([]);
@@ -262,7 +262,7 @@ suite('createToolContext', () => {
         );
     });
 
-    test('initialize omits the package-change callback when refreshExtensionOnPackageChange is disabled', async () => {
+    test('initialize omits the package-change callback when refreshExtensionOnPackagesChange is disabled', async () => {
         (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
         const provider = makeMockProvider(sandbox);
         const ctx = createToolContext(makeOptions({ pythonProvider: provider }));
