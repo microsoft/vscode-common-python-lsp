@@ -51,25 +51,6 @@ export interface IPythonApi {
     onDidChangeEnvironment(handler: () => void): Disposable;
 
     /**
-     * Get the debugger package path.
-     *
-     * Only available via the legacy `ms-python.python` extension.
-     * Returns `undefined` when provided by `ms-python.python-environments`.
-     */
-    getDebuggerPath(): Promise<string | undefined>;
-}
-
-/**
- * Internal extension of {@link IPythonApi} that adds the package-change
- * subscription.
- *
- * This is intentionally **not** exported from the package: the package-change
- * event is an internal implementation detail used to refresh the language
- * server (see {@link PythonEnvironmentsProvider.initializePython}) and must not
- * become part of the public API surface.
- */
-interface IPythonApiInternal extends IPythonApi {
-    /**
      * Subscribe to package changes detected by the environment's package
      * managers.
      *
@@ -78,6 +59,14 @@ interface IPythonApiInternal extends IPythonApi {
      * change events, so its adapter returns a no-op {@link Disposable}.
      */
     onDidChangePackages(handler: () => void): Disposable;
+
+    /**
+     * Get the debugger package path.
+     *
+     * Only available via the legacy `ms-python.python` extension.
+     * Returns `undefined` when provided by `ms-python.python-environments`.
+     */
+    getDebuggerPath(): Promise<string | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +74,7 @@ interface IPythonApiInternal extends IPythonApi {
 // ---------------------------------------------------------------------------
 
 /** Wrap the newer `@vscode/python-environments` API. */
-function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApiInternal {
+function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
     return {
         extension: 'ms-python.python-environments',
 
@@ -146,7 +135,7 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApiInternal {
 }
 
 /** Wrap the legacy `@vscode/python-extension` API. */
-function wrapLegacyApi(api: PythonExtension): IPythonApiInternal {
+function wrapLegacyApi(api: PythonExtension): IPythonApi {
     return {
         extension: 'ms-python.python',
 
@@ -220,7 +209,7 @@ export class PythonEnvironmentsProvider {
     /** Fires when the active Python interpreter changes. */
     public readonly onDidChangeInterpreter: Event<void> = this._onDidChangeInterpreter.event;
 
-    private _api: IPythonApiInternal | undefined;
+    private _api: IPythonApi | undefined;
     private _apiResolved = false;
     private _serverPython: string[] | undefined;
 
@@ -238,7 +227,7 @@ export class PythonEnvironmentsProvider {
     // API acquisition (cached, envs preferred → legacy fallback)
     // -----------------------------------------------------------------
 
-    private async getApi(useCache: boolean = true): Promise<IPythonApiInternal | undefined> {
+    private async getApi(useCache: boolean = true): Promise<IPythonApi | undefined> {
         if (useCache && this._apiResolved) {
             return this._api;
         }

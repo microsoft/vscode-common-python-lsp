@@ -77,8 +77,9 @@ an extension sets `refreshExtensionOnPackageChange: true` on the `ToolConfig` it
 passes in. The key defaults to `false`; when set to `true`, the shared activation logic
 subscribes once to the package-change events reported by the
 [Python Environments extension](https://github.com/microsoft/vscode-python-environments)
-during initialization and restarts the server on each one. The subscription is
-handled internally — it is not exposed as public API.
+during initialization and restarts the server on each one. The automatic refresh
+wiring is internal; the underlying `IPythonApi.onDidChangePackages` event remains
+available for consumers that need it.
 
 ## Version Requirements
 
