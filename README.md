@@ -73,8 +73,8 @@ git submodule add https://github.com/microsoft/vscode-common-python-lsp.git subm
 ### Optional configuration
 
 To restart the language server whenever packages are installed or removed,
-an extension sets `refreshOnPackageChange: true` on the `ToolConfig` it passes
-in. The key defaults to `false`; when set to `true`, the shared activation logic
+an extension sets `refreshExtensionOnPackageChange: true` on the `ToolConfig` it
+passes in. The key defaults to `false`; when set to `true`, the shared activation logic
 subscribes once to the package-change events reported by the
 [Python Environments extension](https://github.com/microsoft/vscode-python-environments)
 during initialization and restarts the server on each one. The subscription is

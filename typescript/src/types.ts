@@ -68,7 +68,7 @@ export interface ToolConfig {
      * Defaults to `false`, so existing extensions are unaffected until they
      * opt in.
      */
-    refreshOnPackageChange?: boolean;
+    refreshExtensionOnPackageChange?: boolean;
 
     /**
      * Set to `true` for tools that provide LSP formatting (textDocument/formatting,

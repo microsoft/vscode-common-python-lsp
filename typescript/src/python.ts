@@ -51,16 +51,6 @@ export interface IPythonApi {
     onDidChangeEnvironment(handler: () => void): Disposable;
 
     /**
-     * Subscribe to package changes detected by the environment's package
-     * managers.
-     *
-     * Only fired by the newer `ms-python.python-environments` extension.
-     * The legacy `ms-python.python` extension does not expose package
-     * change events, so its adapter returns a no-op {@link Disposable}.
-     */
-    onDidChangePackages(handler: () => void): Disposable;
-
-    /**
      * Get the debugger package path.
      *
      * Only available via the legacy `ms-python.python` extension.
@@ -69,12 +59,33 @@ export interface IPythonApi {
     getDebuggerPath(): Promise<string | undefined>;
 }
 
+/**
+ * Internal extension of {@link IPythonApi} that adds the package-change
+ * subscription.
+ *
+ * This is intentionally **not** exported from the package: the package-change
+ * event is an internal implementation detail used to refresh the language
+ * server (see {@link PythonEnvironmentsProvider.initializePython}) and must not
+ * become part of the public API surface.
+ */
+interface IPythonApiInternal extends IPythonApi {
+    /**
+     * Subscribe to package changes detected by the environment's package
+     * managers.
+     *
+     * Only fired by the newer `ms-python.python-environments` extension.
+     * The legacy `ms-python.python` extension does not expose package
+     * change events, so its adapter returns a no-op {@link Disposable}.
+     */
+    onDidChangePackages(handler: () => void): Disposable;
+}
+
 // ---------------------------------------------------------------------------
 // API adapters
 // ---------------------------------------------------------------------------
 
 /** Wrap the newer `@vscode/python-environments` API. */
-function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
+function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApiInternal {
     return {
         extension: 'ms-python.python-environments',
 
@@ -135,7 +146,7 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
 }
 
 /** Wrap the legacy `@vscode/python-extension` API. */
-function wrapLegacyApi(api: PythonExtension): IPythonApi {
+function wrapLegacyApi(api: PythonExtension): IPythonApiInternal {
     return {
         extension: 'ms-python.python',
 
@@ -209,7 +220,7 @@ export class PythonEnvironmentsProvider {
     /** Fires when the active Python interpreter changes. */
     public readonly onDidChangeInterpreter: Event<void> = this._onDidChangeInterpreter.event;
 
-    private _api: IPythonApi | undefined;
+    private _api: IPythonApiInternal | undefined;
     private _apiResolved = false;
     private _serverPython: string[] | undefined;
 
@@ -227,7 +238,7 @@ export class PythonEnvironmentsProvider {
     // API acquisition (cached, envs preferred → legacy fallback)
     // -----------------------------------------------------------------
 
-    private async getApi(useCache: boolean = true): Promise<IPythonApi | undefined> {
+    private async getApi(useCache: boolean = true): Promise<IPythonApiInternal | undefined> {
         if (useCache && this._apiResolved) {
             return this._api;
         }
