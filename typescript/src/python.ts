@@ -51,6 +51,16 @@ export interface IPythonApi {
     onDidChangeEnvironment(handler: () => void): Disposable;
 
     /**
+     * Subscribe to package changes detected by the environment's package
+     * managers.
+     *
+     * Only fired by the newer `ms-python.python-environments` extension.
+     * The legacy `ms-python.python` extension does not expose package
+     * change events, so its adapter returns a no-op {@link Disposable}.
+     */
+    onDidChangePackages(handler: () => void): Disposable;
+
+    /**
      * Get the debugger package path.
      *
      * Only available via the legacy `ms-python.python` extension.
@@ -113,6 +123,10 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
             return api.onDidChangeEnvironment(handler);
         },
 
+        onDidChangePackages(handler: () => void) {
+            return api.onDidChangePackages(handler);
+        },
+
         async getDebuggerPath() {
             // TODO: Not yet supported by the environments extension. Implement when it is.
             return undefined;
@@ -165,6 +179,12 @@ function wrapLegacyApi(api: PythonExtension): IPythonApi {
 
         onDidChangeEnvironment(handler: () => void) {
             return api.environments.onDidChangeActiveEnvironmentPath(handler);
+        },
+
+        onDidChangePackages() {
+            // The legacy ms-python.python API does not expose package change
+            // events, so there is nothing to subscribe to.
+            return { dispose: () => undefined };
         },
 
         async getDebuggerPath() {
@@ -263,6 +283,8 @@ export class PythonEnvironmentsProvider {
     /**
      * Set up event listeners for Python interpreter changes and resolve
      * the initial interpreter.
+     *
+     * @param disposables - Collected disposables for the registered listeners.
      */
     async initializePython(disposables: Disposable[]): Promise<void> {
         try {
@@ -285,6 +307,36 @@ export class PythonEnvironmentsProvider {
             await this.refreshServerPython();
         } catch (error) {
             traceError('Error initializing Python: ', error);
+        }
+    }
+
+    /**
+     * Subscribe to package changes reported by the active environment's package
+     * managers and invoke {@link handler} on each one.
+     *
+     * This is intentionally decoupled from {@link initializePython} so it can be
+     * wired regardless of how the interpreter was selected (resolved by the
+     * Python extension *or* pinned via the `<serverId>.interpreter` setting).
+     *
+     * Subscription failures are non-fatal: if no API is available, the runtime
+     * does not expose `onDidChangePackages` (e.g. the legacy `ms-python.python`
+     * extension or a version-skewed runtime), or subscribing throws, this
+     * resolves to `undefined` and logs rather than propagating — a refresh
+     * feature must never block or break activation.
+     *
+     * @returns A {@link Disposable} for the subscription, or `undefined` when no
+     *   package-change event is available.
+     */
+    async subscribeToPackageChanges(handler: () => void): Promise<Disposable | undefined> {
+        try {
+            const api = await this.getApi();
+            if (!api || typeof api.onDidChangePackages !== 'function') {
+                return undefined;
+            }
+            return api.onDidChangePackages(() => handler());
+        } catch (error) {
+            traceError('Error subscribing to Python package changes: ', error);
+            return undefined;
         }
     }
 

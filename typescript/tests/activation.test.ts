@@ -58,6 +58,7 @@ function makeMockProvider(sandbox: sinon.SinonSandbox): PythonEnvironmentsProvid
         getInterpreterDetails: sandbox.stub().resolves({ path: ['/usr/bin/python3'] }),
         getDebuggerPath: sandbox.stub().resolves(undefined),
         initializePython: sandbox.stub().resolves(),
+        subscribeToPackageChanges: sandbox.stub().resolves(undefined),
         onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
     } as unknown as PythonEnvironmentsProvider;
 }
@@ -231,6 +232,87 @@ suite('createToolContext', () => {
         assert.isFalse(
             (serverModule.restartServer as sinon.SinonStub).called,
             'should not call restartServer directly',
+        );
+    });
+
+    test('subscribes to package changes and restarts the server when refreshExtensionOnPackagesChange is enabled', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        const provider = makeMockProvider(sandbox);
+
+        // Capture the handler the activation logic registers so we can fire it.
+        let capturedHandler: (() => void) | undefined;
+        const disposeStub = sinon.stub();
+        (provider.subscribeToPackageChanges as sinon.SinonStub).callsFake((handler: () => void) => {
+            capturedHandler = handler;
+            return Promise.resolve({ dispose: disposeStub });
+        });
+
+        // Resolve a deferred when restartServer is reached instead of counting
+        // macrotasks — decouples the test from runServer's internal await chain.
+        let signalRestart: () => void = () => undefined;
+        const restarted = new Promise<void>((resolve) => {
+            signalRestart = resolve;
+        });
+        (serverModule.restartServer as sinon.SinonStub).callsFake(() => {
+            signalRestart();
+            return Promise.resolve({ client: undefined, disposables: [] });
+        });
+
+        const subscriptions: vscode.Disposable[] = [];
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                // restartDelay: 0 keeps the trailing-edge debounce on the next tick.
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 0 }),
+            }),
+        );
+        await ctx.initialize(subscriptions);
+
+        assert.isTrue(
+            (provider.subscribeToPackageChanges as sinon.SinonStub).calledOnce,
+            'should subscribe to package changes',
+        );
+        assert.isFunction(capturedHandler, 'should register a package-change handler');
+        assert.lengthOf(subscriptions, 1, 'should register the subscription disposable');
+
+        capturedHandler?.();
+        await restarted;
+        assert.isTrue(
+            (serverModule.restartServer as sinon.SinonStub).called,
+            'package-change handler should restart the server',
+        );
+    });
+
+    test('subscribes to package changes even when the interpreter is pinned via setting', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(['/usr/bin/python3']);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true }),
+            }),
+        );
+        await ctx.initialize([]);
+
+        assert.isFalse(
+            (provider.initializePython as sinon.SinonStub).called,
+            'pinned interpreter path should skip initializePython',
+        );
+        assert.isTrue(
+            (provider.subscribeToPackageChanges as sinon.SinonStub).calledOnce,
+            'should still wire the package-change subscription when pinned',
+        );
+    });
+
+    test('does not subscribe to package changes when refreshExtensionOnPackagesChange is disabled', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(makeOptions({ pythonProvider: provider }));
+        await ctx.initialize([]);
+
+        assert.isFalse(
+            (provider.subscribeToPackageChanges as sinon.SinonStub).called,
+            'should not subscribe when the option is disabled',
         );
     });
 
