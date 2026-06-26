@@ -285,15 +285,8 @@ export class PythonEnvironmentsProvider {
      * the initial interpreter.
      *
      * @param disposables - Collected disposables for the registered listeners.
-     * @param onPackageChange - Optional callback invoked whenever the active
-     *   environment's package managers report a package change
-     *   (install/uninstall).  When provided, this method subscribes to the
-     *   underlying package-change event once and forwards each notification to
-     *   the callback — typically used to refresh the language server.  Only the
-     *   newer `ms-python.python-environments` extension emits these events; the
-     *   legacy `ms-python.python` adapter is a no-op.
      */
-    async initializePython(disposables: Disposable[], onPackageChange?: () => void): Promise<void> {
+    async initializePython(disposables: Disposable[]): Promise<void> {
         try {
             const api = await this.getApi();
             if (!api) {
@@ -310,14 +303,40 @@ export class PythonEnvironmentsProvider {
                 }),
             );
 
-            if (onPackageChange) {
-                disposables.push(api.onDidChangePackages(() => onPackageChange()));
-            }
-
             traceLog(`Waiting for interpreter from ${api.extension} extension.`);
             await this.refreshServerPython();
         } catch (error) {
             traceError('Error initializing Python: ', error);
+        }
+    }
+
+    /**
+     * Subscribe to package changes reported by the active environment's package
+     * managers and invoke {@link handler} on each one.
+     *
+     * This is intentionally decoupled from {@link initializePython} so it can be
+     * wired regardless of how the interpreter was selected (resolved by the
+     * Python extension *or* pinned via the `<serverId>.interpreter` setting).
+     *
+     * Subscription failures are non-fatal: if no API is available, the runtime
+     * does not expose `onDidChangePackages` (e.g. the legacy `ms-python.python`
+     * extension or a version-skewed runtime), or subscribing throws, this
+     * resolves to `undefined` and logs rather than propagating — a refresh
+     * feature must never block or break activation.
+     *
+     * @returns A {@link Disposable} for the subscription, or `undefined` when no
+     *   package-change event is available.
+     */
+    async subscribeToPackageChanges(handler: () => void): Promise<Disposable | undefined> {
+        try {
+            const api = await this.getApi();
+            if (!api || typeof api.onDidChangePackages !== 'function') {
+                return undefined;
+            }
+            return api.onDidChangePackages(() => handler());
+        } catch (error) {
+            traceError('Error subscribing to Python package changes: ', error);
+            return undefined;
         }
     }
 

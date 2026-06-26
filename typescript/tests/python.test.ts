@@ -128,15 +128,59 @@ suite('PythonEnvironmentsProvider', () => {
     });
 
     suite('initializePython', () => {
-        test('accepts an optional package-change callback without throwing', async () => {
+        test('returns without throwing when no API is available', async () => {
             const config = makeToolConfig();
             const provider = new PythonEnvironmentsProvider(config);
             // No Python extension is available in the test environment, so
-            // getApi() resolves to undefined and initializePython returns
-            // early — the call must not throw with or without the callback.
+            // getApi() resolves to undefined and initializePython returns early.
             const disposables: { dispose: () => void }[] = [];
-            await provider.initializePython(disposables, () => undefined);
+            await provider.initializePython(disposables);
             assert.isArray(disposables);
+        });
+    });
+
+    suite('subscribeToPackageChanges', () => {
+        function injectApi(provider: PythonEnvironmentsProvider, api: unknown): void {
+            const internal = provider as unknown as { _api: unknown; _apiResolved: boolean };
+            internal._api = api;
+            internal._apiResolved = true;
+        }
+
+        test('subscribes to onDidChangePackages and forwards events to the handler', async () => {
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+
+            let firePackages: (() => void) | undefined;
+            const disposeStub = sinon.stub();
+            injectApi(provider, {
+                extension: 'ms-python.python-environments',
+                onDidChangePackages: (handler: () => void) => {
+                    firePackages = handler;
+                    return { dispose: disposeStub };
+                },
+            });
+
+            const handler = sinon.stub();
+            const disposable = await provider.subscribeToPackageChanges(handler);
+
+            assert.isDefined(disposable, 'should return a disposable');
+            assert.isFunction(firePackages, 'should subscribe to the event');
+
+            firePackages?.();
+            assert.isTrue(handler.calledOnce, 'should forward the event to the handler');
+        });
+
+        test('returns undefined when the API does not expose onDidChangePackages', async () => {
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+            injectApi(provider, { extension: 'ms-python.python' });
+
+            const disposable = await provider.subscribeToPackageChanges(sinon.stub());
+            assert.isUndefined(disposable);
+        });
+
+        test('returns undefined when no API is available', async () => {
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+            const disposable = await provider.subscribeToPackageChanges(sinon.stub());
+            assert.isUndefined(disposable);
         });
     });
 
