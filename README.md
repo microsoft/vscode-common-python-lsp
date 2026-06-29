@@ -60,6 +60,30 @@ npm run build
 npm test
 ```
 
+### Multi-root workspaces
+
+The TypeScript package uses a **singleton** language-server model: a single
+server is started for the whole window (rooted at the folder returned by
+`getProjectRoot()`), and settings for every workspace folder are forwarded to it
+via `getExtensionSettings()`. This avoids spawning a redundant server process
+per folder in multi-root workspaces.
+
+To let users disable a tool for individual folders (e.g. `pylint.enabled: false`
+in one folder of a multi-root workspace), the package honours a per-folder
+`<namespace>.enabled` boolean:
+
+- `getExtensionSettings(namespace, toolConfig, resolveInterpreter)` automatically
+  omits folders where the tool is disabled, so the shared server never lints
+  opted-out folders.
+- `isToolEnabledForWorkspace(namespace, workspaceFolder, settingKey?)` reports
+  whether the tool is enabled for a single folder. Pass `settingKey` when a tool
+  uses a different key (e.g. `'enable'`); it defaults to `'enabled'`.
+- `getEnabledWorkspaceFolders(namespace, settingKey?)` returns only the folders
+  for which the tool is enabled — useful when registering per-folder providers.
+
+Folders default to enabled when the setting is unset, so behaviour is unchanged
+for tools that don't expose an `enabled` setting.
+
 ## Consuming in Extensions
 
 **Git submodule (current):**
