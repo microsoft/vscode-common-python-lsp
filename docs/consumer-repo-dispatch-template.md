@@ -40,24 +40,29 @@ jobs:
       - name: Update npm dependency
         env:
           NPM_DEP: ${{ github.event.client_payload.npm_dependency }}
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
         run: |
           set -euo pipefail
-          npm install "$NPM_DEP@latest"
+          npm install "$NPM_DEP@${RELEASE_TAG#v}"
 
       - name: Update pip dependency reference (example: requirements file)
         env:
           PIP_DEP: ${{ github.event.client_payload.pip_dependency }}
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import os
           import re
 
-          dep = "vscode-common-python-lsp"
+          dep = os.environ["PIP_DEP"]
+          tag = os.environ["RELEASE_TAG"]
+          pinned = f"{dep}=={tag.lstrip('v')}"
           req = Path("requirements.txt")
           if req.exists():
               txt = req.read_text(encoding="utf-8")
-              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", dep, txt, flags=re.MULTILINE)
+              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", pinned, txt, flags=re.MULTILINE)
               req.write_text(updated, encoding="utf-8")
           PY
 
@@ -102,4 +107,5 @@ The dispatcher sends these `client_payload` fields:
 ## Template notes
 
 - This is a starter template. Each consumer repo should adjust file paths and update commands to match its actual layout.
+- The npm step is pinned to `release_tag` to avoid drifting to newer publishes.
 - The pip step must update tracked files (for example `requirements.txt`, `pyproject.toml`, or lock files), not just install locally.

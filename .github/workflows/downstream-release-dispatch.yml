@@ -6,7 +6,7 @@ on:
 
 concurrency:
   group: downstream-release-dispatch-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -26,13 +26,18 @@ jobs:
     steps:
       - name: Send repository_dispatch to each consumer repo
         env:
-          GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN }}
           SOURCE_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
           RELEASE_NAME: ${{ github.event.release.name || '' }}
         run: |
           set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::DOWNSTREAM_REPO_TOKEN is required for cross-repo dispatch"
+            exit 1
+          fi
 
           failures=""
 
