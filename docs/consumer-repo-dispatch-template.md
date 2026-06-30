@@ -1,0 +1,89 @@
+# Consumer Repo Workflow Template
+
+Use this workflow in each consumer repository to handle `repository_dispatch` events sent by:
+- [.github/workflows/downstream-release-dispatch.yml](../.github/workflows/downstream-release-dispatch.yml)
+
+```yaml
+name: Shared Package Release Handler
+
+on:
+  repository_dispatch:
+    types: [shared-package-release]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-shared-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Create branch for this release
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
+        run: |
+          set -euo pipefail
+          BRANCH="shared-package-v${RELEASE_TAG#v}"
+          git checkout -B "$BRANCH"
+
+      - name: Update npm dependency
+        env:
+          NPM_DEP: ${{ github.event.client_payload.npm_dependency }}
+        run: |
+          set -euo pipefail
+          npm install "$NPM_DEP@latest"
+
+      - name: Update pip dependency
+        env:
+          PIP_DEP: ${{ github.event.client_payload.pip_dependency }}
+        run: |
+          set -euo pipefail
+          python -m pip install "$PIP_DEP"
+
+      - name: Commit and open PR if changed
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
+          RELEASE_URL: ${{ github.event.client_payload.release_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "No changes detected."
+            exit 0
+          fi
+
+          BRANCH="shared-package-v${RELEASE_TAG#v}"
+          git add -A
+          git commit -m "Upgrade shared package to ${RELEASE_TAG}"
+          git push --set-upstream origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "[Shared Package] Upgrade to ${RELEASE_TAG}" \
+            --body "Automated update from ${RELEASE_URL}"
+```
+
+## Dispatch payload fields
+
+The dispatcher sends these `client_payload` fields:
+- `source_repo`
+- `release_tag`
+- `release_url`
+- `release_name`
+- `npm_dependency`
+- `pip_dependency`
