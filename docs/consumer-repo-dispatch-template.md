@@ -58,7 +58,8 @@ jobs:
 
           dep = os.environ["PIP_DEP"]
           tag = os.environ["RELEASE_TAG"]
-          pinned = f"{dep}=={tag.lstrip('v')}"
+            version = tag[1:] if tag.startswith("v") else tag
+            pinned = f"{dep}=={version}"
           req = Path("requirements.txt")
           if req.exists():
               txt = req.read_text(encoding="utf-8")
@@ -107,5 +108,5 @@ The dispatcher sends these `client_payload` fields:
 ## Template notes
 
 - This is a starter template. Each consumer repo should adjust file paths and update commands to match its actual layout.
-- The npm step is pinned to `release_tag` to avoid drifting to newer publishes.
+- The `release_tag` is expected to be `v`-prefixed (for example, `v1.2.3`); npm/pip examples strip a single leading `v` when pinning the dependency version.
 - The pip step must update tracked files (for example `requirements.txt`, `pyproject.toml`, or lock files), not just install locally.
