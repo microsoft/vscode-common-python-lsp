@@ -40,15 +40,13 @@ jobs:
       - name: Update npm dependency
         env:
           NPM_DEP: ${{ github.event.client_payload.npm_dependency }}
-          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
         run: |
           set -euo pipefail
-          npm install "$NPM_DEP@${RELEASE_TAG#v}"
+          npm install "$NPM_DEP@latest"
 
       - name: Update pip dependency reference (example: requirements file)
         env:
           PIP_DEP: ${{ github.event.client_payload.pip_dependency }}
-          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -57,13 +55,10 @@ jobs:
           import re
 
           dep = os.environ["PIP_DEP"]
-          tag = os.environ["RELEASE_TAG"]
-            version = tag[1:] if tag.startswith("v") else tag
-            pinned = f"{dep}=={version}"
           req = Path("requirements.txt")
           if req.exists():
               txt = req.read_text(encoding="utf-8")
-              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", pinned, txt, flags=re.MULTILINE)
+              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", dep, txt, flags=re.MULTILINE)
               req.write_text(updated, encoding="utf-8")
           PY
 
@@ -108,5 +103,5 @@ The dispatcher sends these `client_payload` fields:
 ## Template notes
 
 - This is a starter template. Each consumer repo should adjust file paths and update commands to match its actual layout.
-- The `release_tag` is expected to be `v`-prefixed (for example, `v1.2.3`); npm/pip examples strip a single leading `v` when pinning the dependency version.
+- The npm/pip steps intentionally target `latest` so consumer repos stay continuously up to date with the newest shared package release.
 - The pip step must update tracked files (for example `requirements.txt`, `pyproject.toml`, or lock files), not just install locally.
