@@ -1,0 +1,83 @@
+name: Downstream Release Dispatch
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: downstream-release-dispatch-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CONSUMER_REPOS: |
+    microsoft/vscode-isort
+    microsoft/vscode-flake8
+    microsoft/vscode-pylint
+    microsoft/vscode-mypy
+    microsoft/vscode-black-formatter
+  NPM_DEPENDENCY: "@vscode/common-python-lsp"
+  PIP_DEPENDENCY: "vscode-common-python-lsp"
+
+jobs:
+  dispatch-to-consumers:
+    name: Dispatch Release Event To Consumer Repos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to each consumer repo
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN }}
+          SOURCE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_NAME: ${{ github.event.release.name || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::DOWNSTREAM_REPO_TOKEN is required for cross-repo dispatch"
+            exit 1
+          fi
+
+          failures=""
+
+          for repo in $CONSUMER_REPOS; do
+            echo "Dispatching shared-package-release event to $repo"
+
+            payload=$(jq -n \
+              --arg source_repo "$SOURCE_REPO" \
+              --arg release_tag "$RELEASE_TAG" \
+              --arg release_url "$RELEASE_URL" \
+              --arg release_name "$RELEASE_NAME" \
+              --arg npm_dependency "$NPM_DEPENDENCY" \
+              --arg pip_dependency "$PIP_DEPENDENCY" \
+              '{
+                event_type: "shared-package-release",
+                client_payload: {
+                  source_repo: $source_repo,
+                  release_tag: $release_tag,
+                  release_url: $release_url,
+                  release_name: $release_name,
+                  npm_dependency: $npm_dependency,
+                  pip_dependency: $pip_dependency
+                }
+              }')
+
+            if ! gh api "/repos/$repo/dispatches" \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              --input - <<< "$payload"; then
+              echo "Dispatch failed for $repo"
+              failures+="$repo "$'\n'
+              continue
+            fi
+          done
+
+          if [ -n "$failures" ]; then
+            echo "Dispatch failed for the following repositories:"
+            echo "$failures"
+            exit 1
+          fi
