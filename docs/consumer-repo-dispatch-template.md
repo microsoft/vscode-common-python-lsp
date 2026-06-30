@@ -37,16 +37,27 @@ jobs:
           git fetch origin main
           git checkout -B "$BRANCH" origin/main
 
+      - name: Normalize release tag
+        id: release_version
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Update npm dependency
         env:
           NPM_DEP: ${{ github.event.client_payload.npm_dependency }}
+          RELEASE_VERSION: ${{ steps.release_version.outputs.value }}
         run: |
           set -euo pipefail
-          npm install "$NPM_DEP@latest"
+          npm install "$NPM_DEP@$RELEASE_VERSION"
 
       - name: Update pip dependency reference (example: requirements file)
         env:
           PIP_DEP: ${{ github.event.client_payload.pip_dependency }}
+          RELEASE_VERSION: ${{ steps.release_version.outputs.value }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -55,10 +66,12 @@ jobs:
           import re
 
           dep = os.environ["PIP_DEP"]
+          version = os.environ["RELEASE_VERSION"]
+          pinned = f"{dep}=={version}"
           req = Path("requirements.txt")
           if req.exists():
               txt = req.read_text(encoding="utf-8")
-              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", dep, txt, flags=re.MULTILINE)
+              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", pinned, txt, flags=re.MULTILINE)
               req.write_text(updated, encoding="utf-8")
           PY
 
@@ -103,5 +116,5 @@ The dispatcher sends these `client_payload` fields:
 ## Template notes
 
 - This is a starter template. Each consumer repo should adjust file paths and update commands to match its actual layout.
-- The npm/pip steps intentionally target `latest` so consumer repos stay continuously up to date with the newest shared package release.
+- The `Normalize release tag` step strips a single leading `v` (for example, `v1.2.3` -> `1.2.3`) and the npm/pip steps pin to that normalized version.
 - The pip step must update tracked files (for example `requirements.txt`, `pyproject.toml`, or lock files), not just install locally.
