@@ -34,7 +34,8 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="shared-package-v${RELEASE_TAG#v}"
-          git checkout -B "$BRANCH"
+          git fetch origin main
+          git checkout -B "$BRANCH" origin/main
 
       - name: Update npm dependency
         env:
@@ -43,12 +44,22 @@ jobs:
           set -euo pipefail
           npm install "$NPM_DEP@latest"
 
-      - name: Update pip dependency
+      - name: Update pip dependency reference (example: requirements file)
         env:
           PIP_DEP: ${{ github.event.client_payload.pip_dependency }}
         run: |
           set -euo pipefail
-          python -m pip install "$PIP_DEP"
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          dep = "vscode-common-python-lsp"
+          req = Path("requirements.txt")
+          if req.exists():
+              txt = req.read_text(encoding="utf-8")
+              updated = re.sub(rf"^{re.escape(dep)}([<>=!~].*)?$", dep, txt, flags=re.MULTILINE)
+              req.write_text(updated, encoding="utf-8")
+          PY
 
       - name: Commit and open PR if changed
         env:
@@ -87,3 +98,8 @@ The dispatcher sends these `client_payload` fields:
 - `release_name`
 - `npm_dependency`
 - `pip_dependency`
+
+## Template notes
+
+- This is a starter template. Each consumer repo should adjust file paths and update commands to match its actual layout.
+- The pip step must update tracked files (for example `requirements.txt`, `pyproject.toml`, or lock files), not just install locally.
