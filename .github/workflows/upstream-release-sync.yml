@@ -1,19 +1,18 @@
-name: Upstream Release Sync
+name: Downstream Dependabot Trigger
 
 on:
   release:
     types: [published]
 
 concurrency:
-  group: upstream-release-sync
+  group: downstream-dependabot-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  issues: write
 
 env:
-  DOWNSTREAM_REPOS: |
+  CONSUMER_REPOS: |
     microsoft/vscode-isort
     microsoft/vscode-flake8
     microsoft/vscode-pylint
@@ -21,34 +20,29 @@ env:
     microsoft/vscode-black-formatter
 
 jobs:
-  create-downstream-issues:
-    name: Create downstream issues
+  trigger-dependabot:
+    name: Trigger Dependabot Updates
     runs-on: ubuntu-latest
-    outputs:
-      created_issue_numbers: ${{ steps.create_issues.outputs.created_issue_numbers }}
-      created_issue_map: ${{ steps.create_issues.outputs.created_issue_map }}
-      dependabot_update_jobs: ${{ steps.trigger_dependabot.outputs.dependabot_update_jobs }}
-      dependabot_update_job_map: ${{ steps.trigger_dependabot.outputs.dependabot_update_job_map }}
     steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
-
-      - name: Trigger Dependabot updates in each downstream repo
-        id: trigger_dependabot
+      - name: Trigger npm and pip updates for each consumer repo
         env:
           GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          DEPENDABOT_PACKAGE_ECOSYSTEMS: npm,pip
           DEPENDABOT_DIRECTORY: /
-        run: python -m scripts.downstream.trigger_dependabot_updates
+        run: |
+          set -euo pipefail
 
-      - name: Create issue in each downstream repo
-        id: create_issues
-        env:
-          GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_URL: ${{ github.event.release.html_url }}
-        run: python -m scripts.downstream.create_release_issues
+          for repo in $CONSUMER_REPOS; do
+            echo "Triggering npm update for $repo"
+            gh api "repos/$repo/dependabot/updates" \
+              -X POST \
+              -f package-ecosystem='npm' \
+              -f dependency-name='@vscode/common-python-lsp' \
+              -f directory="$DEPENDABOT_DIRECTORY"
+
+            echo "Triggering pip update for $repo"
+            gh api "repos/$repo/dependabot/updates" \
+              -X POST \
+              -f package-ecosystem='pip' \
+              -f dependency-name='vscode-common-python-lsp' \
+              -f directory="$DEPENDABOT_DIRECTORY"
+          done
