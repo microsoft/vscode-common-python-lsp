@@ -18,6 +18,8 @@ env:
     microsoft/vscode-pylint
     microsoft/vscode-mypy
     microsoft/vscode-black-formatter
+  NPM_DEPENDENCY: "@vscode/common-python-lsp"
+  PIP_DEPENDENCY: "vscode-common-python-lsp"
 
 jobs:
   dispatch-to-consumers:
@@ -49,8 +51,8 @@ jobs:
               --arg release_tag "$RELEASE_TAG" \
               --arg release_url "$RELEASE_URL" \
               --arg release_name "$RELEASE_NAME" \
-              --arg npm_dependency "@vscode/common-python-lsp" \
-              --arg pip_dependency "vscode-common-python-lsp" \
+              --arg npm_dependency "$NPM_DEPENDENCY" \
+              --arg pip_dependency "$PIP_DEPENDENCY" \
               '{
                 event_type: "shared-package-release",
                 client_payload: {
