@@ -1,0 +1,54 @@
+name: Upstream Release Sync
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: upstream-release-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  DOWNSTREAM_REPOS: |
+    microsoft/vscode-isort
+    microsoft/vscode-flake8
+    microsoft/vscode-pylint
+    microsoft/vscode-mypy
+    microsoft/vscode-black-formatter
+
+jobs:
+  create-downstream-issues:
+    name: Create downstream issues
+    runs-on: ubuntu-latest
+    outputs:
+      created_issue_numbers: ${{ steps.create_issues.outputs.created_issue_numbers }}
+      created_issue_map: ${{ steps.create_issues.outputs.created_issue_map }}
+      dependabot_update_jobs: ${{ steps.trigger_dependabot.outputs.dependabot_update_jobs }}
+      dependabot_update_job_map: ${{ steps.trigger_dependabot.outputs.dependabot_update_job_map }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Trigger Dependabot updates in each downstream repo
+        id: trigger_dependabot
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DEPENDABOT_PACKAGE_ECOSYSTEMS: npm,pip
+          DEPENDABOT_DIRECTORY: /
+        run: python -m scripts.downstream.trigger_dependabot_updates
+
+      - name: Create issue in each downstream repo
+        id: create_issues
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+        run: python -m scripts.downstream.create_release_issues
