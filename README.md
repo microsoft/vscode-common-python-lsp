@@ -70,6 +70,17 @@ git submodule add https://github.com/microsoft/vscode-common-python-lsp.git subm
 **Python side** — install into `bundled/libs/` via noxfile.
 **TypeScript side** — `file:` dependency in `package.json`.
 
+### Optional configuration
+
+To restart the language server whenever packages are installed or removed,
+an extension sets `refreshExtensionOnPackagesChange: true` on the `ToolConfig` it
+passes in. The key defaults to `false`; when set to `true`, the shared activation logic
+subscribes once to the package-change events reported by the
+[Python Environments extension](https://github.com/microsoft/vscode-python-environments)
+during initialization and restarts the server on each one. The automatic refresh
+wiring is internal; the underlying `IPythonApi.onDidChangePackages` event remains
+available for consumers that need it.
+
 ## Version Requirements
 
 | Runtime    | Minimum Version |

@@ -6,6 +6,19 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-25
+
+### Added
+
+- **TypeScript** `ToolConfig.refreshExtensionOnPackagesChange` — opt-in key that,
+  when set to `true`, makes the shared activation logic restart the language
+  server whenever the active environment's package managers report a package
+  change (install/uninstall). The provider subscribes to the underlying
+  `IPythonApi.onDidChangePackages` event once during initialization. The key
+  defaults to `false`, so existing extensions are unaffected until they opt in.
+  The legacy `ms-python.python` extension does not expose package events, so this
+  has no effect unless the Python Environments extension is available.
+
 ## [0.7.0] - 2026-06-17
 
 ### Added

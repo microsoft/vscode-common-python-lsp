@@ -99,6 +99,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
     let isRestarting = false;
     let restartTimer: NodeJS.Timeout | undefined;
+    let packageChangeTimer: NodeJS.Timeout | undefined;
     let disposed = false;
     let serverDisposables: vscode.Disposable[] = [];
 
@@ -290,6 +291,23 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 } else {
                     await ctx.runServer();
                 }
+
+                // Opt-in via the `refreshExtensionOnPackagesChange` key on the
+                // extension's ToolConfig: restart the server whenever the active
+                // environment's package managers report a package
+                // install/uninstall.  Wired here — after the interpreter is
+                // resolved — regardless of *how* the interpreter was chosen
+                // (resolved by the Python extension or pinned via the
+                // `<serverId>.interpreter` setting), so the option is never
+                // silently inert.  Subscription is best-effort: a missing or
+                // version-skewed API resolves to `undefined` and never blocks
+                // startup.
+                if (toolConfig.refreshExtensionOnPackagesChange) {
+                    const disposable = await pythonProvider.subscribeToPackageChanges(triggerPackageRefresh);
+                    if (disposable) {
+                        subscriptions.push(disposable);
+                    }
+                }
             } catch (ex) {
                 traceError(`Extension initialization failed: ${ex}`);
             }
@@ -300,6 +318,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             if (restartTimer) {
                 clearTimeout(restartTimer);
                 restartTimer = undefined;
+            }
+            if (packageChangeTimer) {
+                clearTimeout(packageChangeTimer);
+                packageChangeTimer = undefined;
             }
             for (const d of serverDisposables) {
                 try {
@@ -312,6 +334,27 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             nullFormatter?.dispose();
         },
     };
+
+    /**
+     * Trailing-edge debounce for package-change refreshes.
+     *
+     * A single install can emit several package-change events in quick
+     * succession, and slow multi-package installs may space them out past the
+     * time a single restart takes — `runServer`'s in-flight coalescing only
+     * collapses the former.  Debouncing here collapses bursts into one restart.
+     */
+    function triggerPackageRefresh(): void {
+        if (disposed) {
+            return;
+        }
+        if (packageChangeTimer) {
+            clearTimeout(packageChangeTimer);
+        }
+        packageChangeTimer = setTimeout(() => {
+            packageChangeTimer = undefined;
+            void safeRunServer(ctx, 'package change');
+        }, restartDelay);
+    }
 
     return ctx;
 }
