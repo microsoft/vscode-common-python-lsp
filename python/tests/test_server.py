@@ -201,6 +201,24 @@ class TestUpdateWorkspaceSettings:
             assert "args" in ws_settings
             assert "importStrategy" in ws_settings
 
+    @patch("vscode_common_python_lsp.server.uris")
+    def test_workspace_without_filesystem_path_is_skipped(self, mock_uris):
+        mock_uris.to_fs_path.side_effect = lambda u: (
+            "/local-workspace" if u == "file:///local-workspace" else None
+        )
+        ts = _make_server()
+        ts.update_workspace_settings(
+            [
+                {"workspace": "file:///local-workspace", "args": []},
+                {"workspace": "pico:", "args": []},
+            ]
+        )
+
+        assert len(ts.workspace_settings) == 1
+        settings = next(iter(ts.workspace_settings.values()))
+        assert settings["workspace"] == "file:///local-workspace"
+        assert settings["workspaceFS"]
+
 
 class TestGetSettingsByPath:
     def test_matches_closest_workspace(self):
