@@ -34,7 +34,7 @@
         "@types/mocha": "^10.0.10",
         "@types/node": "22.x",
         "@types/semver": "^7.7.1",
-        "@types/sinon": "^21.0.0",
+        "@types/sinon": "^22.0.0",
         "@types/vscode": "^1.74.0",
         "@typescript-eslint/eslint-plugin": "^7.18.0",
         "@typescript-eslint/parser": "^7.18.0",
