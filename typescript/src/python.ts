@@ -73,8 +73,27 @@ export interface IPythonApi {
 // API adapters
 // ---------------------------------------------------------------------------
 
+type UsableEnvironmentsApi = Pick<
+    PythonEnvironmentApi,
+    'getEnvironment' | 'resolveEnvironment' | 'onDidChangeEnvironment'
+> & {
+    onDidChangePackages?: unknown;
+};
+
+function isUsableEnvironmentsApi(api: unknown): api is UsableEnvironmentsApi {
+    if (typeof api !== 'object' || api === null) {
+        return false;
+    }
+    const candidate = api as Partial<UsableEnvironmentsApi>;
+    return (
+        typeof candidate.getEnvironment === 'function' &&
+        typeof candidate.resolveEnvironment === 'function' &&
+        typeof candidate.onDidChangeEnvironment === 'function'
+    );
+}
+
 /** Wrap the newer `@vscode/python-environments` API. */
-function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
+function wrapEnvironmentsApi(api: UsableEnvironmentsApi): IPythonApi {
     return {
         extension: 'ms-python.python-environments',
 
@@ -124,6 +143,9 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
         },
 
         onDidChangePackages(handler: () => void) {
+            if (typeof api.onDidChangePackages !== 'function') {
+                return { dispose: () => undefined };
+            }
             return api.onDidChangePackages(handler);
         },
 
@@ -233,9 +255,12 @@ export class PythonEnvironmentsProvider {
         }
         try {
             const envsApi = await PythonEnvironments.api();
-            this._api = wrapEnvironmentsApi(envsApi);
-            this._apiResolved = true;
-            return this._api;
+            if (isUsableEnvironmentsApi(envsApi)) {
+                this._api = wrapEnvironmentsApi(envsApi);
+                this._apiResolved = true;
+                return this._api;
+            }
+            traceLog('Python environments API is incomplete — trying legacy.');
         } catch {
             traceLog('Python environments extension not available — trying legacy.');
         }
@@ -318,14 +343,14 @@ export class PythonEnvironmentsProvider {
      * wired regardless of how the interpreter was selected (resolved by the
      * Python extension *or* pinned via the `<serverId>.interpreter` setting).
      *
-     * Subscription failures are non-fatal: if no API is available, the runtime
-     * does not expose `onDidChangePackages` (e.g. the legacy `ms-python.python`
-     * extension or a version-skewed runtime), or subscribing throws, this
-     * resolves to `undefined` and logs rather than propagating — a refresh
-     * feature must never block or break activation.
+     * Subscription failures are non-fatal: adapters without package events
+     * (e.g. the legacy `ms-python.python` extension or a version-skewed runtime)
+     * return a no-op disposable. If no API is available, or subscribing throws,
+     * this resolves to `undefined` rather than propagating — a refresh feature
+     * must never block or break activation.
      *
-     * @returns A {@link Disposable} for the subscription, or `undefined` when no
-     *   package-change event is available.
+     * @returns A real or no-op {@link Disposable}, or `undefined` when no API is
+     *   available or subscription fails.
      */
     async subscribeToPackageChanges(handler: () => void): Promise<Disposable | undefined> {
         try {

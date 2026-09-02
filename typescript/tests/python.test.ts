@@ -3,6 +3,8 @@
 
 import { assert } from 'chai';
 import * as sinon from 'sinon';
+import { PythonEnvironments } from '@vscode/python-environments';
+import { PythonExtension } from '@vscode/python-extension';
 import { PythonEnvironmentsProvider, IInterpreterDetails } from '../src/python';
 import { IResolvedPythonEnvironment, ToolConfig } from '../src/types';
 import * as utilities from '../src/utilities';
@@ -136,6 +138,75 @@ suite('PythonEnvironmentsProvider', () => {
             const disposables: { dispose: () => void }[] = [];
             await provider.initializePython(disposables);
             assert.isArray(disposables);
+        });
+
+        for (const [description, incompleteApi] of [
+            ['undefined', undefined],
+            ['an empty object', {}],
+        ] as const) {
+            test(`falls back to the legacy API when the environments API returns ${description}`, async () => {
+                const environmentsApi = sinon.stub(PythonEnvironments, 'api').resolves(incompleteApi as never);
+
+                const onDidChangeActiveEnvironmentPath = sinon.stub().returns({ dispose: sinon.stub() });
+                const resolveEnvironment = sinon.stub().resolves({
+                    executable: { uri: { fsPath: '/usr/bin/python3' } },
+                    version: { major: 3, minor: 12, micro: 1 },
+                });
+                const legacyApi = sinon.stub(PythonExtension, 'api').resolves({
+                    environments: {
+                        getActiveEnvironmentPath: sinon.stub().returns('/usr/bin/python3'),
+                        onDidChangeActiveEnvironmentPath,
+                        resolveEnvironment,
+                    },
+                    debug: {
+                        getDebuggerPackagePath: sinon.stub().resolves(undefined),
+                    },
+                } as never);
+
+                const provider = new PythonEnvironmentsProvider(makeToolConfig());
+                const disposables: { dispose: () => void }[] = [];
+
+                await provider.initializePython(disposables);
+
+                assert.isTrue(environmentsApi.calledOnce, 'should try the environments API first');
+                assert.isTrue(legacyApi.calledOnce, 'should try the legacy API');
+                assert.isTrue(
+                    onDidChangeActiveEnvironmentPath.calledOnce,
+                    'should subscribe through the legacy API',
+                );
+                assert.lengthOf(disposables, 1);
+
+                const interpreter = await provider.getInterpreterDetails();
+                assert.deepEqual(interpreter.path, ['/usr/bin/python3']);
+                assert.isTrue(resolveEnvironment.calledTwice, 'should cache and reuse the legacy API');
+                assert.isTrue(environmentsApi.calledOnce, 'should not retry the environments API');
+                assert.isTrue(legacyApi.calledOnce, 'should reuse the cached legacy API');
+            });
+        }
+
+        test('uses the environments API when only the optional package event is unavailable', async () => {
+            const onDidChangeEnvironment = sinon.stub().returns({ dispose: sinon.stub() });
+            const environmentsApi = sinon.stub(PythonEnvironments, 'api').resolves({
+                getEnvironment: sinon.stub().resolves(undefined),
+                resolveEnvironment: sinon.stub().resolves(undefined),
+                onDidChangeEnvironment,
+            } as never);
+            const legacyApi = sinon.stub(PythonExtension, 'api');
+
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+            const disposables: { dispose: () => void }[] = [];
+
+            await provider.initializePython(disposables);
+
+            assert.isTrue(environmentsApi.calledOnce);
+            assert.isFalse(legacyApi.called);
+            assert.isTrue(onDidChangeEnvironment.calledOnce);
+            assert.lengthOf(disposables, 1);
+
+            const packageDisposable = await provider.subscribeToPackageChanges(sinon.stub());
+            assert.isDefined(packageDisposable);
+            assert.isTrue(environmentsApi.calledOnce, 'should reuse the cached environments API');
+            packageDisposable?.dispose();
         });
     });
 
