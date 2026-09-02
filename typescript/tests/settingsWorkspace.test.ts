@@ -7,9 +7,12 @@ import { Uri, WorkspaceFolder } from 'vscode';
 import {
     checkIfConfigurationChanged,
     expandTilde,
+    getEnabledWorkspaceFolders,
+    getExtensionSettings,
     getExtraPaths,
     getGlobalSettings,
     getWorkspaceSettings,
+    isToolEnabledForWorkspace,
     logLegacySettings,
     resolveVariables,
 } from '../src/settings';
@@ -292,6 +295,67 @@ suite('settings — workspace & global resolution', () => {
                     { legacyKey: 'linting.flake8Args', newKey: 'args', isArray: true },
                 ]),
             );
+        });
+    });
+
+    suite('per-folder enable / multi-root', () => {
+        const wsA = makeWorkspace('folder-a', '/home/user/projects/a', 0);
+        const wsB = makeWorkspace('folder-b', '/home/user/projects/b', 1);
+
+        function stubEnabledByPath(enabledByPath: Record<string, boolean>) {
+            getConfigurationStub.callsFake((_namespace: string, scope?: { fsPath?: string }) => ({
+                get: (key: string, def?: unknown) => {
+                    if (key === 'enabled' && scope?.fsPath !== undefined && scope.fsPath in enabledByPath) {
+                        return enabledByPath[scope.fsPath];
+                    }
+                    return def;
+                },
+            }));
+        }
+
+        test('isToolEnabledForWorkspace defaults to enabled when unset', () => {
+            getConfigurationStub.returns({ get: (_key: string, def?: unknown) => def });
+            assert.isTrue(isToolEnabledForWorkspace('flake8', wsA));
+        });
+
+        test('isToolEnabledForWorkspace returns false when explicitly disabled', () => {
+            stubEnabledByPath({ [wsA.uri.fsPath]: false });
+            assert.isFalse(isToolEnabledForWorkspace('flake8', wsA));
+        });
+
+        test('isToolEnabledForWorkspace honours a custom setting key', () => {
+            getConfigurationStub.callsFake(() => ({
+                get: (key: string, def?: unknown) => (key === 'enable' ? false : def),
+            }));
+            assert.isFalse(isToolEnabledForWorkspace('pylint', wsA, 'enable'));
+        });
+
+        test('getEnabledWorkspaceFolders filters out disabled folders', () => {
+            getWorkspaceFoldersStub.returns([wsA, wsB]);
+            stubEnabledByPath({ [wsB.uri.fsPath]: false });
+
+            const result = getEnabledWorkspaceFolders('flake8');
+            assert.deepEqual(
+                result.map((w) => w.name),
+                ['folder-a'],
+            );
+        });
+
+        test('getExtensionSettings skips disabled folders', async () => {
+            getWorkspaceFoldersStub.returns([wsA, wsB]);
+            stubEnabledByPath({ [wsB.uri.fsPath]: false });
+
+            const result = await getExtensionSettings('flake8', makeToolConfig());
+            assert.lengthOf(result, 1);
+            assert.equal(result[0].workspace, wsA.uri.toString());
+        });
+
+        test('getExtensionSettings includes all folders when none disabled', async () => {
+            getWorkspaceFoldersStub.returns([wsA, wsB]);
+            getConfigurationStub.returns({ get: (_key: string, def?: unknown) => def });
+
+            const result = await getExtensionSettings('flake8', makeToolConfig());
+            assert.lengthOf(result, 2);
         });
     });
 });
