@@ -74,10 +74,7 @@ async function getSettingsRoots(
             continue;
         }
         try {
-            if (!(await fsapi.stat(project.uri.fsPath)).isDirectory()) {
-                traceLog(`Skipping file-based Python project: ${project.uri.fsPath}`);
-                continue;
-            }
+            await fsapi.stat(project.uri.fsPath);
         } catch (error) {
             traceError(`Unable to inspect Python project ${project.uri.fsPath}: `, error);
             continue;
@@ -460,8 +457,8 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                   return (await getSettingsRoots(toolConfig, pythonProvider)).map((workspace) => workspace.uri);
               }
             : undefined;
-        await pythonProvider.initializePython(subscriptions, getResources, fireInitial);
         pythonInitialized = true;
+        await pythonProvider.initializePython(subscriptions, getResources, fireInitial);
     }
 
     return ctx;

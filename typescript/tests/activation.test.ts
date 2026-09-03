@@ -173,6 +173,54 @@ suite('createToolContext', () => {
         assert.isTrue((settingsModule.getWorkspaceSettings as sinon.SinonStub).notCalled);
     });
 
+    test('includes file-backed Python projects in per-project settings', async () => {
+        const root = {
+            uri: vscode.Uri.file(path.dirname(__filename)),
+            name: 'workspace',
+            index: 0,
+        };
+        const project = {
+            uri: vscode.Uri.file(__filename),
+            name: 'script',
+            index: 0,
+        };
+        (utilities.getProjectRoot as sinon.SinonStub).resolves(root);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root]);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+        const provider = makeMockProvider(sandbox);
+        (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
+        sandbox.stub(settingsModule, 'getExtensionSettings').callsFake(async (_serverId, _toolConfig, _resolve, roots) => {
+            assert.isDefined(roots);
+            return roots!.map((workspace: vscode.WorkspaceFolder) => ({
+                cwd: root.uri.fsPath,
+                workspace: workspace.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: ['/project/python'],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            }));
+        });
+
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.runServer();
+
+        const restartOptions = (serverModule.restartServer as sinon.SinonStub).firstCall.args[0];
+        assert.deepEqual(
+            restartOptions.extensionSettings.map((settings: { workspace: string }) => settings.workspace),
+            [root.uri.toString(), project.uri.toString()],
+        );
+    });
+
     test('runServer reports missing interpreter when none configured', async () => {
         (settingsModule.getWorkspaceSettings as sinon.SinonStub).resolves({
             cwd: '/workspace',
@@ -338,6 +386,27 @@ suite('createToolContext', () => {
 
         assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
         assert.isFalse((provider.initializePython as sinon.SinonStub).firstCall.args[2]);
+    });
+
+    test('does not initialize Python recursively when the initial refresh triggers a restart', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        let ctx: ToolExtensionContext;
+        (provider.initializePython as sinon.SinonStub).callsFake(async () => ctx.runServer());
+        ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
     });
 
     test('initialize defers to Python extension when no interpreter set', async () => {
