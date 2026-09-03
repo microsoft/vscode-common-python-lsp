@@ -307,6 +307,37 @@ class TestGetSettingsByDocument:
         result = ts.get_settings_by_document(doc)
         assert result["workspaceFS"] == ws1_key
 
+    def test_document_uses_nearest_nested_project_settings(self):
+        ts = _make_server()
+        from vscode_common_python_lsp.paths import normalize_path
+
+        workspace_key = normalize_path(os.path.abspath("/workspace"))
+        project_key = normalize_path(os.path.abspath("/workspace/project"))
+        ts.workspace_settings = {
+            workspace_key: {
+                "workspaceFS": workspace_key,
+                "interpreter": ["/root/python"],
+            },
+            project_key: {
+                "workspaceFS": project_key,
+                "interpreter": ["/project/python"],
+            },
+        }
+
+        project_doc = _make_document(
+            os.path.join(os.path.abspath("/workspace/project"), "src", "file.py")
+        )
+        workspace_doc = _make_document(
+            os.path.join(os.path.abspath("/workspace"), "other", "file.py")
+        )
+
+        assert ts.get_settings_by_document(project_doc)["interpreter"] == [
+            "/project/python"
+        ]
+        assert ts.get_settings_by_document(workspace_doc)["interpreter"] == [
+            "/root/python"
+        ]
+
     @patch("vscode_common_python_lsp.server.uris")
     def test_document_outside_workspaces_creates_fallback(self, mock_uris):
         mock_uris.from_fs_path.return_value = "file:///other/src"

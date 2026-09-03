@@ -20,6 +20,7 @@ import { Disposable, Event, EventEmitter, Uri } from 'vscode';
 import { traceError, traceLog } from './logging';
 import { IResolvedPythonEnvironment, ToolConfig } from './types';
 import { getProjectRoot } from './utilities';
+import { getWorkspaceFolders } from './vscodeapi';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +29,11 @@ import { getProjectRoot } from './utilities';
 export interface IInterpreterDetails {
     path?: string[];
     resource?: Uri;
+}
+
+export interface IPythonProject {
+    name: string;
+    uri: Uri;
 }
 
 /**
@@ -50,15 +56,20 @@ export interface IPythonApi {
     /** Subscribe to interpreter/environment changes. */
     onDidChangeEnvironment(handler: () => void): Disposable;
 
+    /** Return the Python projects known to the environments extension. */
+    getPythonProjects?(): Promise<readonly IPythonProject[]>;
+
+    /** Subscribe to Python project additions and removals. */
+    onDidChangePythonProjects?(handler: () => void): Disposable;
+
     /**
      * Subscribe to package changes detected by the environment's package
      * managers.
      *
-     * Only fired by the newer `ms-python.python-environments` extension.
-     * The legacy `ms-python.python` extension does not expose package
-     * change events, so its adapter returns a no-op {@link Disposable}.
+    * Only available from newer versions of
+    * `ms-python.python-environments`.
      */
-    onDidChangePackages(handler: () => void): Disposable;
+    onDidChangePackages?(handler: () => void): Disposable;
 
     /**
      * Get the debugger package path.
@@ -92,9 +103,7 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
             const coerced = semver.coerce(environment.version);
             return {
                 executablePath: executable,
-                version: coerced
-                    ? { major: coerced.major, minor: coerced.minor, micro: coerced.patch }
-                    : undefined,
+                version: coerced ? { major: coerced.major, minor: coerced.minor, micro: coerced.patch } : undefined,
                 args: runConfig?.args,
             };
         },
@@ -112,15 +121,26 @@ function wrapEnvironmentsApi(api: PythonEnvironmentApi): IPythonApi {
             const coerced = semver.coerce(environment.version);
             return {
                 executablePath: executable,
-                version: coerced
-                    ? { major: coerced.major, minor: coerced.minor, micro: coerced.patch }
-                    : undefined,
+                version: coerced ? { major: coerced.major, minor: coerced.minor, micro: coerced.patch } : undefined,
                 args: runConfig?.args,
             };
         },
 
         onDidChangeEnvironment(handler: () => void) {
             return api.onDidChangeEnvironment(handler);
+        },
+
+        async getPythonProjects() {
+            if (typeof api.getPythonProjects !== 'function') {
+                return [];
+            }
+            return api.getPythonProjects().map((project) => ({ name: project.name, uri: project.uri }));
+        },
+
+        onDidChangePythonProjects(handler: () => void) {
+            return typeof api.onDidChangePythonProjects === 'function'
+                ? api.onDidChangePythonProjects(handler)
+                : { dispose: () => undefined };
         },
 
         onDidChangePackages(handler: () => void) {
@@ -153,9 +173,7 @@ function wrapLegacyApi(api: PythonExtension): IPythonApi {
             const version = environment.version;
             return {
                 executablePath: fsPath,
-                version: version
-                    ? { major: version.major, minor: version.minor, micro: version.micro }
-                    : undefined,
+                version: version ? { major: version.major, minor: version.minor, micro: version.micro } : undefined,
             };
         },
 
@@ -171,14 +189,23 @@ function wrapLegacyApi(api: PythonExtension): IPythonApi {
             const version = environment.version;
             return {
                 executablePath: fsPath,
-                version: version
-                    ? { major: version.major, minor: version.minor, micro: version.micro }
-                    : undefined,
+                version: version ? { major: version.major, minor: version.minor, micro: version.micro } : undefined,
             };
         },
 
         onDidChangeEnvironment(handler: () => void) {
             return api.environments.onDidChangeActiveEnvironmentPath(handler);
+        },
+
+        async getPythonProjects() {
+            return getWorkspaceFolders().map((workspace) => ({
+                name: workspace.name,
+                uri: workspace.uri,
+            }));
+        },
+
+        onDidChangePythonProjects() {
+            return { dispose: () => undefined };
         },
 
         onDidChangePackages() {
@@ -211,7 +238,7 @@ export class PythonEnvironmentsProvider {
 
     private _api: IPythonApi | undefined;
     private _apiResolved = false;
-    private _serverPython: string[] | undefined;
+    private _serverPythons: Map<string, string[] | undefined> | undefined;
 
     private readonly _minMajor: number;
     private readonly _minMinor: number;
@@ -255,25 +282,29 @@ export class PythonEnvironmentsProvider {
     // Internal helpers
     // -----------------------------------------------------------------
 
-    private checkAndFireEvent(interpreter: string[] | undefined): void {
-        if (interpreter === undefined) {
-            if (this._serverPython) {
-                this._serverPython = undefined;
-                this._onDidChangeInterpreter.fire();
-            }
-            return;
-        }
-
-        if (!this._serverPython || !sameInterpreter(this._serverPython, interpreter)) {
-            this._serverPython = interpreter;
+    private checkAndFireEvent(interpreters: Map<string, string[] | undefined>, fireInitial: boolean): void {
+        const changed = !this._serverPythons
+            ? fireInitial && Array.from(interpreters.values()).some((interpreter) => interpreter !== undefined)
+            : !sameInterpreters(this._serverPythons, interpreters);
+        this._serverPythons = interpreters;
+        if (changed) {
             this._onDidChangeInterpreter.fire();
         }
     }
 
-    private async refreshServerPython(): Promise<void> {
-        const projectRoot = await getProjectRoot();
-        const interpreter = await this.getInterpreterDetails(projectRoot?.uri);
-        this.checkAndFireEvent(interpreter.path);
+    private async refreshServerPython(
+        getResources?: () => Promise<readonly Uri[]>,
+        fireInitial: boolean = true,
+    ): Promise<void> {
+        const resources = getResources ? await getResources() : [(await getProjectRoot()).uri];
+        const details = await Promise.all(resources.map((resource) => this.getInterpreterDetails(resource)));
+        const interpreters = new Map<string, string[] | undefined>();
+        for (const detail of details) {
+            if (detail.resource) {
+                interpreters.set(detail.resource.toString(), detail.path);
+            }
+        }
+        this.checkAndFireEvent(interpreters, fireInitial);
     }
 
     // -----------------------------------------------------------------
@@ -286,7 +317,11 @@ export class PythonEnvironmentsProvider {
      *
      * @param disposables - Collected disposables for the registered listeners.
      */
-    async initializePython(disposables: Disposable[]): Promise<void> {
+    async initializePython(
+        disposables: Disposable[],
+        getResources?: () => Promise<readonly Uri[]>,
+        fireInitial: boolean = true,
+    ): Promise<void> {
         try {
             const api = await this.getApi();
             if (!api) {
@@ -296,17 +331,42 @@ export class PythonEnvironmentsProvider {
             disposables.push(
                 api.onDidChangeEnvironment(async () => {
                     try {
-                        await this.refreshServerPython();
+                        await this.refreshServerPython(getResources);
                     } catch (error) {
                         traceError('Error refreshing Python interpreter: ', error);
                     }
                 }),
             );
+            if (typeof api.onDidChangePythonProjects === 'function') {
+                disposables.push(
+                    api.onDidChangePythonProjects(async () => {
+                        try {
+                            await this.refreshServerPython(getResources);
+                        } catch (error) {
+                            traceError('Error refreshing Python projects: ', error);
+                        }
+                    }),
+                );
+            }
 
             traceLog(`Waiting for interpreter from ${api.extension} extension.`);
-            await this.refreshServerPython();
+            await this.refreshServerPython(getResources, fireInitial);
         } catch (error) {
             traceError('Error initializing Python: ', error);
+        }
+    }
+
+    /** Return the projects known to the active Python environments API. */
+    async getPythonProjects(): Promise<readonly IPythonProject[]> {
+        const api = await this.getApi();
+        if (!api) {
+            return [];
+        }
+        try {
+            return typeof api.getPythonProjects === 'function' ? await api.getPythonProjects() : [];
+        } catch (error) {
+            traceError('Error getting Python projects: ', error);
+            return [];
         }
     }
 
@@ -351,7 +411,10 @@ export class PythonEnvironmentsProvider {
         try {
             const resolved = await api.getEnvironment(resource);
             if (resolved && this.checkVersion(resolved)) {
-                return { path: [resolved.executablePath, ...(resolved.args ?? [])], resource };
+                return {
+                    path: [resolved.executablePath, ...(resolved.args ?? [])],
+                    resource,
+                };
             }
         } catch (error) {
             traceError('Error getting interpreter details: ', error);
@@ -384,7 +447,10 @@ export class PythonEnvironmentsProvider {
      */
     checkVersion(resolved: IResolvedPythonEnvironment | undefined): boolean {
         const version = resolved?.version;
-        if (version && (version.major > this._minMajor || (version.major === this._minMajor && version.minor >= this._minMinor))) {
+        if (
+            version &&
+            (version.major > this._minMajor || (version.major === this._minMajor && version.minor >= this._minMinor))
+        ) {
             return true;
         }
         if (!version) {
@@ -420,12 +486,28 @@ export class PythonEnvironmentsProvider {
 // ---------------------------------------------------------------------------
 
 /** Compare two interpreter path arrays for equality. */
-function sameInterpreter(a: string[], b: string[]): boolean {
+function sameInterpreter(a: string[] | undefined, b: string[] | undefined): boolean {
+    if (a === undefined || b === undefined) {
+        return a === b;
+    }
     if (a.length !== b.length) {
         return false;
     }
     for (let i = 0; i < a.length; i++) {
         if (a[i] !== b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Compare resource-to-interpreter maps for equality. */
+function sameInterpreters(a: Map<string, string[] | undefined>, b: Map<string, string[] | undefined>): boolean {
+    if (a.size !== b.size) {
+        return false;
+    }
+    for (const [resource, interpreter] of a) {
+        if (!b.has(resource) || !sameInterpreter(interpreter, b.get(resource))) {
             return false;
         }
     }
