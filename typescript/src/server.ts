@@ -31,7 +31,12 @@ import { getWorkspaceFolder } from './vscodeapi';
 
 /** Environment variable keys managed by {@link createServer} — collision with these is logged. */
 const BUILT_IN_ENV_KEYS = new Set([
-    'USE_DEBUGPY', 'DEBUGPY_PATH', 'LS_IMPORT_STRATEGY', 'LS_SHOW_NOTIFICATION', 'PYTHONUTF8', 'PYTHONPATH',
+    'USE_DEBUGPY',
+    'DEBUGPY_PATH',
+    'LS_IMPORT_STRATEGY',
+    'LS_SHOW_NOTIFICATION',
+    'PYTHONUTF8',
+    'PYTHONPATH',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -114,10 +119,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     const { settings, serverId, serverName, outputChannel, initializationOptions, toolConfig, debuggerPath } = options;
 
     if (!settings.interpreter.length) {
-        const message = l10n.t(
-            'Unable to start {0}: no Python interpreter executable is configured.',
-            serverName,
-        );
+        const message = l10n.t('Unable to start {0}: no Python interpreter executable is configured.', serverName);
         updateStatus(message, LanguageStatusSeverity.Error);
         throw new Error(message);
     }
@@ -184,9 +186,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     }
 
     // Choose server script (debug vs normal)
-    const isDebugScript = toolConfig.debugServerScript
-        ? await fsapi.pathExists(toolConfig.debugServerScript)
-        : false;
+    const isDebugScript = toolConfig.debugServerScript ? await fsapi.pathExists(toolConfig.debugServerScript) : false;
     const scriptPath =
         newEnv.USE_DEBUGPY !== 'False' && isDebugScript && toolConfig.debugServerScript
             ? toolConfig.debugServerScript
@@ -225,6 +225,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
 /** Options for {@link restartServer}. */
 export interface RestartServerOptions {
     settings: IBaseSettings;
+    extensionSettings?: IBaseSettings[];
     serverId: string;
     serverName: string;
     outputChannel: LogOutputChannel;
@@ -249,7 +250,7 @@ export async function restartServer(
     options: RestartServerOptions,
     oldLsClient?: LanguageClient,
 ): Promise<RestartServerResult> {
-    const { settings, serverId, serverName, outputChannel, toolConfig, pythonProvider } = options;
+    const { settings, extensionSettings, serverId, serverName, outputChannel, toolConfig, pythonProvider } = options;
 
     if (oldLsClient) {
         traceInfo('Server: Stop requested');
@@ -275,7 +276,7 @@ export async function restartServer(
             toolConfig,
             debuggerPath,
             initializationOptions: {
-                settings: await getExtensionSettings(serverId, toolConfig, resolveInterpreter),
+                settings: extensionSettings ?? (await getExtensionSettings(serverId, toolConfig, resolveInterpreter)),
                 globalSettings: await getGlobalSettings(serverId, toolConfig),
             },
         });

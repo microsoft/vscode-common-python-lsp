@@ -12,10 +12,10 @@
 
 import * as os from 'os';
 import * as path from 'path';
-import { ConfigurationChangeEvent, WorkspaceConfiguration, WorkspaceFolder } from 'vscode';
+import { ConfigurationChangeEvent, Uri, WorkspaceConfiguration, WorkspaceFolder } from 'vscode';
 import { traceLog, traceWarn } from './logging';
 import { IBaseSettings, ToolConfig } from './types';
-import { getConfiguration, getWorkspaceFolders } from './vscodeapi';
+import { getConfiguration, getWorkspaceFolder, getWorkspaceFolders } from './vscodeapi';
 
 // Re-export for convenience — callers that used these from the old
 // settings module shouldn't have to change imports.
@@ -161,23 +161,26 @@ function getInterpreterSettingValue(namespace: string, workspace?: WorkspaceFold
  * @param resolveInterpreter - Optional async function to resolve the Python
  *   interpreter when not set explicitly.  Typically this is
  *   `pythonProvider.getInterpreterDetails`.
+ *
+ * When `workspace` is a Python project nested inside a VS Code workspace,
+ * variable substitution still uses the containing VS Code workspace folder.
  */
 export async function getWorkspaceSettings(
     namespace: string,
     workspace: WorkspaceFolder,
     toolConfig: ToolConfig,
-    resolveInterpreter?: (resource?: import('vscode').Uri) => Promise<{ path?: string[] }>,
+    resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
 ): Promise<IBaseSettings> {
     const config = getConfiguration(namespace, workspace);
+    // Resolve variables against the containing VS Code workspace when this is a nested Python project.
+    const variableWorkspace = getWorkspaceFolder(workspace.uri) ?? workspace;
 
     let interpreter: string[] = getInterpreterSettingValue(namespace, workspace) ?? [];
     if (interpreter.length > 0) {
         traceLog(`Interpreter from setting ${namespace}.interpreter: ${interpreter.join(' ')}`);
     } else if (resolveInterpreter) {
         traceLog(`No interpreter found from setting ${namespace}.interpreter`);
-        traceLog(
-            `Getting interpreter from ms-python.python extension for workspace ${workspace.uri.fsPath}`,
-        );
+        traceLog(`Getting interpreter from ms-python.python extension for workspace ${workspace.uri.fsPath}`);
         interpreter = (await resolveInterpreter(workspace.uri)).path ?? [];
         if (interpreter.length > 0) {
             traceLog(
@@ -193,11 +196,11 @@ export async function getWorkspaceSettings(
 
     // Base settings (common to all extensions)
     const settings: IBaseSettings = {
-        cwd: getCwd(config, workspace),
+        cwd: getCwd(config, variableWorkspace),
         workspace: workspace.uri.toString(),
-        args: resolveVariables(config.get<string[]>('args', []), workspace),
-        path: resolveVariables(config.get<string[]>('path', []), workspace, interpreter),
-        interpreter: resolveVariables(interpreter, workspace),
+        args: resolveVariables(config.get<string[]>('args', []), variableWorkspace),
+        path: resolveVariables(config.get<string[]>('path', []), variableWorkspace, interpreter),
+        interpreter: resolveVariables(interpreter, variableWorkspace),
         importStrategy: config.get<string>('importStrategy', 'useBundled'),
         showNotifications: config.get<string>('showNotifications', 'off'),
     };
@@ -208,7 +211,7 @@ export async function getWorkspaceSettings(
         // Resolve VS Code variables in string-array settings (e.g. ignorePatterns
         // containing ${workspaceFolder}). Scalar and object settings pass through.
         if (Array.isArray(value) && value.length > 0 && value.every((v: unknown) => typeof v === 'string')) {
-            settings[key] = resolveVariables(value as string[], workspace);
+            settings[key] = resolveVariables(value as string[], variableWorkspace);
         } else {
             settings[key] = value;
         }
@@ -216,7 +219,7 @@ export async function getWorkspaceSettings(
 
     // Handle extraPaths if the tool defines it
     if ('extraPaths' in toolConfig.settingsDefaults) {
-        settings.extraPaths = resolveVariables(getExtraPaths(namespace, workspace), workspace);
+        settings.extraPaths = resolveVariables(getExtraPaths(namespace, workspace), variableWorkspace);
     }
 
     // Tilde expansion on cwd
@@ -271,16 +274,17 @@ export async function getGlobalSettings(
 }
 
 /**
- * Resolve settings for all workspace folders.
+ * Resolve settings for the supplied roots, or all workspace folders by
+ * default. Consumers may supply Python project roots to enable per-project
+ * interpreter resolution while retaining a singleton language server.
  */
 export function getExtensionSettings(
     namespace: string,
     toolConfig: ToolConfig,
-    resolveInterpreter?: (resource?: import('vscode').Uri) => Promise<{ path?: string[] }>,
+    resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
+    workspaces: readonly WorkspaceFolder[] = getWorkspaceFolders(),
 ): Promise<IBaseSettings[]> {
-    return Promise.all(
-        getWorkspaceFolders().map((w) => getWorkspaceSettings(namespace, w, toolConfig, resolveInterpreter)),
-    );
+    return Promise.all(workspaces.map((w) => getWorkspaceSettings(namespace, w, toolConfig, resolveInterpreter)));
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +324,12 @@ export function checkIfConfigurationChanged(
  */
 export function logLegacySettings(
     namespace: string,
-    legacyMappings: Array<{ legacyKey: string; newKey: string; isArray?: boolean; defaultValue?: string }>,
+    legacyMappings: Array<{
+        legacyKey: string;
+        newKey: string;
+        isArray?: boolean;
+        defaultValue?: string;
+    }>,
 ): void {
     getWorkspaceFolders().forEach((workspace) => {
         try {
@@ -330,14 +339,18 @@ export function logLegacySettings(
                 if (mapping.isArray) {
                     const value = legacyConfig.get<string[]>(mapping.legacyKey, []);
                     if (value.length > 0) {
-                        traceWarn(`"python.${mapping.legacyKey}" is deprecated. Use "${namespace}.${mapping.newKey}" instead.`);
+                        traceWarn(
+                            `"python.${mapping.legacyKey}" is deprecated. Use "${namespace}.${mapping.newKey}" instead.`,
+                        );
                         traceWarn(`"python.${mapping.legacyKey}" value for workspace ${workspace.uri.fsPath}:`);
                         traceWarn(`\n${JSON.stringify(value, null, 4)}`);
                     }
                 } else {
                     const value = legacyConfig.get(mapping.legacyKey);
                     if (value !== undefined && value !== mapping.defaultValue) {
-                        traceWarn(`"python.${mapping.legacyKey}" is deprecated. Use "${namespace}.${mapping.newKey}" instead.`);
+                        traceWarn(
+                            `"python.${mapping.legacyKey}" is deprecated. Use "${namespace}.${mapping.newKey}" instead.`,
+                        );
                         traceWarn(
                             `"python.${mapping.legacyKey}" value for workspace ${workspace.uri.fsPath}: ${value}`,
                         );
