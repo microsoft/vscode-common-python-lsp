@@ -133,7 +133,13 @@ def run_path(
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as e:
-            return RunResult(e.stdout or "", e.stderr or "", None)
+            # subprocess.run with encoding='utf-8' returns decoded str on the
+            # normal completion path, but TimeoutExpired still carries the
+            # raw bytes captured from the pipe before decoding — produce
+            # str here so RunResult is uniformly typed.
+            partial_out = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
+            partial_err = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
+            return RunResult(partial_out, partial_err, None)
         return RunResult(result.stdout, result.stderr, result.returncode)
 
 
