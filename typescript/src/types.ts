@@ -55,6 +55,21 @@ export interface ToolConfig {
     extraEnvVars?: Record<string, string>;
 
     /**
+     * Set to `true` when the tool can run each request with the interpreter
+     * from its resolved workspace settings.
+     *
+     * Consumers that opt in must contribute a window-scoped
+     * `<toolId>.usePerProjectEnvironments` boolean setting. When that setting
+     * is enabled, the singleton language server receives one settings entry
+     * per Python project and routes each document to its project's
+     * interpreter.
+     *
+     * Defaults to `false`, so existing extensions keep workspace-folder
+     * interpreter resolution.
+     */
+    supportsPerProjectEnvironments?: boolean;
+
+    /**
      * Set to `true` to restart the language server whenever the active Python
      * environment's package managers report a package change (install or
      * uninstall).

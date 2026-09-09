@@ -3,6 +3,7 @@
 
 import { assert } from 'chai';
 import * as sinon from 'sinon';
+import { EventEmitter, Uri } from 'vscode';
 import { PythonEnvironmentsProvider, IInterpreterDetails } from '../src/python';
 import { IResolvedPythonEnvironment, ToolConfig } from '../src/types';
 import * as utilities from '../src/utilities';
@@ -137,6 +138,106 @@ suite('PythonEnvironmentsProvider', () => {
             await provider.initializePython(disposables);
             assert.isArray(disposables);
         });
+
+        test('supports an environments API without project events', async () => {
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+            const internal = provider as unknown as { _api: unknown; _apiResolved: boolean };
+            internal._api = {
+                extension: 'ms-python.python-environments',
+                getEnvironment: sinon.stub().resolves({
+                    executablePath: '/root/python',
+                    version: { major: 3, minor: 10, micro: 0 },
+                }),
+                onDidChangeEnvironment: sinon.stub().returns({ dispose: sinon.stub() }),
+            };
+            internal._apiResolved = true;
+            const disposables: { dispose: () => void }[] = [];
+
+            await provider.initializePython(
+                disposables,
+                async () => [Uri.parse('file:///workspace')],
+                false,
+            );
+
+            assert.lengthOf(disposables, 1);
+        });
+
+        test('fires when a nested project interpreter changes', async () => {
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+            const environmentChanged = new EventEmitter<void>();
+            const projectsChanged = new EventEmitter<void>();
+            const interpreters = new Map([
+                ['file:///workspace', '/root/python'],
+                ['file:///workspace/project', '/project/python'],
+            ]);
+            const api = {
+                extension: 'ms-python.python-environments',
+                getEnvironment: async (resource?: Uri) => {
+                    const executablePath = interpreters.get(resource?.toString() ?? '');
+                    return executablePath
+                        ? { executablePath, version: { major: 3, minor: 10, micro: 0 } }
+                        : undefined;
+                },
+                resolveEnvironment: sinon.stub(),
+                onDidChangeEnvironment: environmentChanged.event,
+                getPythonProjects: sinon.stub().resolves([]),
+                onDidChangePythonProjects: projectsChanged.event,
+                onDidChangePackages: sinon.stub().returns({ dispose: sinon.stub() }),
+                getDebuggerPath: sinon.stub().resolves(undefined),
+            };
+            const internal = provider as unknown as { _api: unknown; _apiResolved: boolean };
+            internal._api = api;
+            internal._apiResolved = true;
+
+            const resources = async () => [
+                Uri.parse('file:///workspace'),
+                Uri.parse('file:///workspace/project'),
+            ];
+            const changes = sinon.stub();
+            provider.onDidChangeInterpreter(changes);
+            const disposables: { dispose: () => void }[] = [];
+            await provider.initializePython(disposables, resources, false);
+
+            interpreters.set('file:///workspace/project', '/project/new-python');
+            environmentChanged.fire();
+            await new Promise((resolve) => setImmediate(resolve));
+
+            assert.isTrue(changes.calledOnce);
+        });
+
+        test('fires when the Python project set changes', async () => {
+            const provider = new PythonEnvironmentsProvider(makeToolConfig());
+            const environmentChanged = new EventEmitter<void>();
+            const projectsChanged = new EventEmitter<void>();
+            let resources = [Uri.parse('file:///workspace')];
+            const api = {
+                extension: 'ms-python.python-environments',
+                getEnvironment: async (resource?: Uri) => ({
+                    executablePath: `${resource?.fsPath}/python`,
+                    version: { major: 3, minor: 10, micro: 0 },
+                }),
+                resolveEnvironment: sinon.stub(),
+                onDidChangeEnvironment: environmentChanged.event,
+                getPythonProjects: sinon.stub().resolves([]),
+                onDidChangePythonProjects: projectsChanged.event,
+                onDidChangePackages: sinon.stub().returns({ dispose: sinon.stub() }),
+                getDebuggerPath: sinon.stub().resolves(undefined),
+            };
+            const internal = provider as unknown as { _api: unknown; _apiResolved: boolean };
+            internal._api = api;
+            internal._apiResolved = true;
+
+            const changes = sinon.stub();
+            provider.onDidChangeInterpreter(changes);
+            const disposables: { dispose: () => void }[] = [];
+            await provider.initializePython(disposables, async () => resources, false);
+
+            resources = [...resources, Uri.parse('file:///workspace/project')];
+            projectsChanged.fire();
+            await new Promise((resolve) => setImmediate(resolve));
+
+            assert.isTrue(changes.calledOnce);
+        });
     });
 
     suite('subscribeToPackageChanges', () => {
@@ -201,6 +302,18 @@ suite('PythonEnvironmentsProvider', () => {
             // and returns { path: undefined }
             const result: IInterpreterDetails = await provider.getInterpreterDetails();
             assert.isUndefined(result.path);
+        });
+
+        suite('getPythonProjects', () => {
+            test('returns projects from the active API', async () => {
+                const provider = new PythonEnvironmentsProvider(makeToolConfig());
+                const projects = [{ name: 'project', uri: Uri.parse('file:///workspace/project') }];
+                const internal = provider as unknown as { _api: unknown; _apiResolved: boolean };
+                internal._api = { getPythonProjects: sinon.stub().resolves(projects) };
+                internal._apiResolved = true;
+
+                assert.deepEqual(await provider.getPythonProjects(), projects);
+            });
         });
     });
 

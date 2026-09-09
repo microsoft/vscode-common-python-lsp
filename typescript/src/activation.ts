@@ -11,6 +11,8 @@
  */
 
 import * as vscode from 'vscode';
+import * as fsapi from 'fs-extra';
+import * as path from 'path';
 import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { createConfigFileWatchers } from './configWatcher';
@@ -18,11 +20,17 @@ import { traceError, traceLog, traceVerbose } from './logging';
 import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
 import { restartServer, RestartServerOptions } from './server';
-import { checkIfConfigurationChanged, getWorkspaceSettings } from './settings';
+import { checkIfConfigurationChanged, getExtensionSettings, getWorkspaceSettings } from './settings';
 import { registerLanguageStatusItem, updateStatus } from './status';
-import { IServerInfo, ToolConfig } from './types';
+import { IBaseSettings, IServerInfo, ToolConfig } from './types';
 import { getInterpreterFromSetting, getLSClientTraceLevel, getProjectRoot } from './utilities';
-import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
+import {
+    getConfiguration,
+    getWorkspaceFolder,
+    getWorkspaceFolders,
+    onDidChangeConfiguration,
+    registerCommand,
+} from './vscodeapi';
 
 // ---------------------------------------------------------------------------
 // Default restart delay
@@ -30,6 +38,55 @@ import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
 
 /** Fallback when {@link ToolConfig.restartDelay} is not set. */
 const DEFAULT_RESTART_DELAY = 1000;
+const USE_PER_PROJECT_ENVIRONMENTS = 'usePerProjectEnvironments';
+
+function usePerProjectEnvironments(toolConfig: ToolConfig): boolean {
+    return (
+        toolConfig.supportsPerProjectEnvironments === true &&
+        getConfiguration(toolConfig.toolId).get<boolean>(USE_PER_PROJECT_ENVIRONMENTS, false)
+    );
+}
+
+function workspaceKey(uri: vscode.Uri): string {
+    const key = path.normalize(uri.fsPath);
+    return process.platform === 'win32' ? key.toLowerCase() : key;
+}
+
+async function getSettingsRoots(
+    toolConfig: ToolConfig,
+    pythonProvider: PythonEnvironmentsProvider,
+): Promise<readonly vscode.WorkspaceFolder[]> {
+    const configuredWorkspaces = getWorkspaceFolders();
+    const workspaces = configuredWorkspaces.length > 0 ? configuredWorkspaces : [await getProjectRoot()];
+    if (!usePerProjectEnvironments(toolConfig)) {
+        return workspaces;
+    }
+
+    const roots = new Map<string, vscode.WorkspaceFolder>(
+        workspaces.map((workspace) => [workspaceKey(workspace.uri), workspace]),
+    );
+    for (const project of await pythonProvider.getPythonProjects()) {
+        if (project.uri.scheme !== 'file' || roots.has(workspaceKey(project.uri))) {
+            continue;
+        }
+        const containingWorkspace = getWorkspaceFolder(project.uri);
+        if (!containingWorkspace) {
+            continue;
+        }
+        try {
+            await fsapi.stat(project.uri.fsPath);
+        } catch (error) {
+            traceError(`Unable to inspect Python project ${project.uri.fsPath}: `, error);
+            continue;
+        }
+        roots.set(workspaceKey(project.uri), {
+            uri: project.uri,
+            name: project.name,
+            index: containingWorkspace.index,
+        });
+    }
+    return Array.from(roots.values());
+}
 
 // ---------------------------------------------------------------------------
 // ToolExtensionContext
@@ -101,6 +158,8 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
     let restartTimer: NodeJS.Timeout | undefined;
     let packageChangeTimer: NodeJS.Timeout | undefined;
     let disposed = false;
+    let pythonInitialized = false;
+    let extensionSubscriptions: vscode.Disposable[] | undefined;
     let serverDisposables: vscode.Disposable[] = [];
 
     const nullFormatter = toolConfig.isFormatter ? new NullFormatter() : undefined;
@@ -112,6 +171,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
         async runServer(): Promise<void> {
             if (disposed) {
                 return;
+            }
+            if (usePerProjectEnvironments(toolConfig) && extensionSubscriptions && !pythonInitialized) {
+                await initializePython(extensionSubscriptions, false);
             }
             if (isRestarting) {
                 if (restartTimer) {
@@ -146,16 +208,33 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     return;
                 }
                 const resolveInterpreter = pythonProvider.getInterpreterDetails.bind(pythonProvider);
-                const workspaceSetting = await getWorkspaceSettings(
-                    serverId,
-                    projectRoot,
-                    toolConfig,
-                    resolveInterpreter,
-                );
+                let extensionSettings: IBaseSettings[] | undefined;
+                let workspaceSetting: IBaseSettings | undefined;
+                if (usePerProjectEnvironments(toolConfig)) {
+                    const roots = await getSettingsRoots(toolConfig, pythonProvider);
+                    extensionSettings = await getExtensionSettings(serverId, toolConfig, resolveInterpreter, roots);
+                    workspaceSetting =
+                        extensionSettings.find((settings) => settings.workspace === projectRoot.uri.toString()) ??
+                        extensionSettings[0];
+                    if (workspaceSetting?.interpreter.length === 0) {
+                        workspaceSetting =
+                            extensionSettings.find((settings) => settings.interpreter.length > 0) ?? workspaceSetting;
+                        if (workspaceSetting?.interpreter.length) {
+                            traceLog(`Using ${workspaceSetting.workspace} to bootstrap the singleton language server.`);
+                        }
+                    }
+                } else {
+                    workspaceSetting = await getWorkspaceSettings(
+                        serverId,
+                        projectRoot,
+                        toolConfig,
+                        resolveInterpreter,
+                    );
+                }
                 if (disposed) {
                     return;
                 }
-                if (workspaceSetting.interpreter.length === 0) {
+                if (!workspaceSetting || workspaceSetting.interpreter.length === 0) {
                     // Stop any stale server running with the previous interpreter
                     if (ctx.lsClient) {
                         try {
@@ -212,6 +291,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         outputChannel,
                         toolConfig,
                         pythonProvider,
+                        extensionSettings,
                     };
                     const result = await restartServer(restartOptions, ctx.lsClient);
 
@@ -283,10 +363,18 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
         async initialize(subscriptions: vscode.Disposable[]): Promise<void> {
             try {
+                extensionSubscriptions = subscriptions;
                 const interpreter = getInterpreterFromSetting(serverId);
-                if (interpreter === undefined || interpreter.length === 0) {
+                if (usePerProjectEnvironments(toolConfig)) {
                     traceLog('Python extension loading');
-                    await pythonProvider.initializePython(subscriptions);
+                    await initializePython(subscriptions, interpreter === undefined || interpreter.length === 0);
+                    traceLog('Python extension loaded');
+                    if (interpreter !== undefined && interpreter.length > 0) {
+                        await ctx.runServer();
+                    }
+                } else if (interpreter === undefined || interpreter.length === 0) {
+                    traceLog('Python extension loading');
+                    await initializePython(subscriptions, true);
                     traceLog('Python extension loaded');
                 } else {
                     await ctx.runServer();
@@ -354,6 +442,23 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             packageChangeTimer = undefined;
             void safeRunServer(ctx, 'package change');
         }, restartDelay);
+    }
+
+    async function initializePython(subscriptions: vscode.Disposable[], fireInitial: boolean): Promise<void> {
+        if (pythonInitialized) {
+            return;
+        }
+        const getResources = toolConfig.supportsPerProjectEnvironments
+            ? async () => {
+                  if (!usePerProjectEnvironments(toolConfig)) {
+                      const interpreter = getInterpreterFromSetting(serverId);
+                      return interpreter?.length ? [] : [(await getProjectRoot()).uri];
+                  }
+                  return (await getSettingsRoots(toolConfig, pythonProvider)).map((workspace) => workspace.uri);
+              }
+            : undefined;
+        pythonInitialized = true;
+        await pythonProvider.initializePython(subscriptions, getResources, fireInitial);
     }
 
     return ctx;
@@ -436,7 +541,10 @@ export function registerCommonSubscriptions(
     // Configuration change
     context.subscriptions.push(
         onDidChangeConfiguration(async (e: vscode.ConfigurationChangeEvent) => {
-            if (checkIfConfigurationChanged(e, serverId, toolConfig.trackedSettings)) {
+            const trackedSettings = toolConfig.supportsPerProjectEnvironments
+                ? [...toolConfig.trackedSettings, USE_PER_PROJECT_ENVIRONMENTS]
+                : toolConfig.trackedSettings;
+            if (checkIfConfigurationChanged(e, serverId, trackedSettings)) {
                 await safeRunServer(toolContext, 'config change');
             }
         }),

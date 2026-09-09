@@ -8,6 +8,7 @@ import {
     checkIfConfigurationChanged,
     expandTilde,
     getExtraPaths,
+    getExtensionSettings,
     getGlobalSettings,
     getWorkspaceSettings,
     logLegacySettings,
@@ -175,6 +176,56 @@ suite('settings — workspace & global resolution', () => {
             const result = await getWorkspaceSettings('flake8', ws, toolConfig);
 
             assert.isFalse(result.cwd.startsWith('~'));
+        });
+
+        test('resolves a project interpreter while preserving workspace variables', async () => {
+            const project = makeWorkspace('nested-project', '/home/user/projects/my-project/nested');
+            getConfigurationStub.returns({
+                get: (key: string, def?: unknown) =>
+                    key === 'args' ? ['--config-file', '${workspaceFolder}/pyproject.toml'] : def,
+            });
+            sinon.stub(vscodeapi, 'getWorkspaceFolder').withArgs(project.uri).returns(ws);
+            const resolveInterpreter = sinon.stub().resolves({ path: ['/project/python'] });
+
+            const result = await getWorkspaceSettings(
+                'flake8',
+                project,
+                makeToolConfig(),
+                resolveInterpreter,
+            );
+
+            assert.equal(result.workspace, project.uri.toString());
+            assert.deepEqual(result.interpreter, ['/project/python']);
+            assert.deepEqual(result.args, [
+                '--config-file',
+                `${ws.uri.fsPath}/pyproject.toml`,
+            ]);
+            assert.isTrue(resolveInterpreter.calledWith(project.uri));
+        });
+    });
+
+    suite('getExtensionSettings', () => {
+        test('resolves settings for explicitly supplied project roots', async () => {
+            const project = makeWorkspace('nested-project', '/home/user/projects/my-project/nested');
+            getConfigurationStub.returns({
+                get: (_key: string, def?: unknown) => def,
+            });
+            const resolveInterpreter = sinon.stub().callsFake(async (resource: Uri) => ({
+                path: [`${resource.fsPath}/python`],
+            }));
+
+            const result = await getExtensionSettings(
+                'flake8',
+                makeToolConfig(),
+                resolveInterpreter,
+                [ws, project],
+            );
+
+            assert.deepEqual(
+                result.map((settings) => settings.workspace),
+                [ws.uri.toString(), project.uri.toString()],
+            );
+            assert.deepEqual(result[1].interpreter, [`${project.uri.fsPath}/python`]);
         });
     });
 

@@ -339,4 +339,21 @@ suite('restartServer', () => {
             'updateStatus should be called with busy=true',
         );
     });
+
+    test('uses supplied extension settings without resolving them again', async () => {
+        const extensionSettings = [
+            makeSettings({ workspace: 'file:///workspace/project', interpreter: ['/project/python'] }),
+        ];
+
+        const result = await restartServer(makeRestartOptions({ extensionSettings }));
+
+        assert.isFalse(
+            (settingsModule.getExtensionSettings as sinon.SinonStub).called,
+            'pre-resolved settings should be reused',
+        );
+        const clientOptions = (result.client as unknown as {
+            clientOptions: { initializationOptions: { settings: IBaseSettings[] } };
+        }).clientOptions;
+        assert.strictEqual(clientOptions.initializationOptions.settings, extensionSettings);
+    });
 });
