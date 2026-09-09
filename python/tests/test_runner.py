@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 """Tests for runner module."""
 
+import subprocess
 import sys
 
 import pytest
@@ -70,29 +71,43 @@ class TestRunPath:
         )
         assert result.exit_code == 42
 
-    def test_timeout_returns_str_stdout_stderr(self, tmp_path):
-        """When the subprocess exceeds the timeout, partial output is
-        returned as decoded str (matching the success path) rather than
-        the raw bytes that subprocess.TimeoutExpired carries by default.
-        """
+    @pytest.mark.parametrize(
+        "stdout, stderr, expected_stdout, expected_stderr",
+        [
+            (b"partial \xe2", b"error \xff", "partial \ufffd", "error \ufffd"),
+            ("partial line\n", "warning\n", "partial line\n", "warning\n"),
+            (None, None, "", ""),
+        ],
+    )
+    def test_timeout_returns_str_stdout_stderr(
+        self,
+        monkeypatch,
+        tmp_path,
+        stdout,
+        stderr,
+        expected_stdout,
+        expected_stderr,
+    ):
+        def raise_timeout(*_args, **_kwargs):
+            raise subprocess.TimeoutExpired(
+                cmd=[sys.executable],
+                timeout=1,
+                output=stdout,
+                stderr=stderr,
+            )
+
+        monkeypatch.setattr(subprocess, "run", raise_timeout)
+
         result = run_path(
-            [
-                sys.executable,
-                "-u",
-                "-c",
-                "import time; print('partial line'); time.sleep(5)",
-            ],
+            [sys.executable],
             use_stdin=False,
             cwd=str(tmp_path),
             timeout=1,
         )
-        # exit_code is None on timeout (process was killed)
+
         assert result.exit_code is None
-        # stdout/stderr must be str, not bytes, regardless of whether
-        # the subprocess had produced any output before being killed
-        assert isinstance(result.stdout, str)
-        assert isinstance(result.stderr, str)
-        assert "partial line" in result.stdout
+        assert result.stdout == expected_stdout
+        assert result.stderr == expected_stderr
 
     def test_with_env(self, tmp_path):
         import os
