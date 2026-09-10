@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 """Tests for runner module."""
 
+import subprocess
 import sys
 
 import pytest
@@ -69,6 +70,44 @@ class TestRunPath:
             cwd=str(tmp_path),
         )
         assert result.exit_code == 42
+
+    @pytest.mark.parametrize(
+        "stdout, stderr, expected_stdout, expected_stderr",
+        [
+            (b"partial \xe2", b"error \xff", "partial \ufffd", "error \ufffd"),
+            ("partial line\n", "warning\n", "partial line\n", "warning\n"),
+            (None, None, "", ""),
+        ],
+    )
+    def test_timeout_returns_str_stdout_stderr(
+        self,
+        monkeypatch,
+        tmp_path,
+        stdout,
+        stderr,
+        expected_stdout,
+        expected_stderr,
+    ):
+        def raise_timeout(*_args, **_kwargs):
+            raise subprocess.TimeoutExpired(
+                cmd=[sys.executable],
+                timeout=1,
+                output=stdout,
+                stderr=stderr,
+            )
+
+        monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+        result = run_path(
+            [sys.executable],
+            use_stdin=False,
+            cwd=str(tmp_path),
+            timeout=1,
+        )
+
+        assert result.exit_code is None
+        assert result.stdout == expected_stdout
+        assert result.stderr == expected_stderr
 
     def test_with_env(self, tmp_path):
         import os

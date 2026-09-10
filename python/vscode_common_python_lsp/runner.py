@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from .context import change_cwd, redirect_io, substitute_attr
 from .paths import CWD_LOCK, is_same_path
 
+_PROCESS_ENCODING = "utf-8"
+
 
 @dataclass
 class RunResult:
@@ -45,6 +47,14 @@ class CustomIO(io.TextIOWrapper):
         """Returns value from the buffer as string."""
         self.seek(0)
         return self.read()
+
+
+def _as_process_text(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode(_PROCESS_ENCODING, errors="replace")
+    return output
 
 
 @contextlib.contextmanager
@@ -107,7 +117,7 @@ def run_path(
     if use_stdin:
         with subprocess.Popen(
             argv,
-            encoding="utf-8",
+            encoding=_PROCESS_ENCODING,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.PIPE,
@@ -119,12 +129,16 @@ def run_path(
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
-            return RunResult(stdout, stderr, process.returncode)
+            return RunResult(
+                _as_process_text(stdout),
+                _as_process_text(stderr),
+                process.returncode,
+            )
     else:
         try:
             result = subprocess.run(
                 argv,
-                encoding="utf-8",
+                encoding=_PROCESS_ENCODING,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
@@ -133,7 +147,11 @@ def run_path(
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as e:
-            return RunResult(e.stdout or "", e.stderr or "", None)
+            return RunResult(
+                _as_process_text(e.stdout),
+                _as_process_text(e.stderr),
+                None,
+            )
         return RunResult(result.stdout, result.stderr, result.returncode)
 
 
