@@ -149,8 +149,14 @@ class ToolServer:
             return
 
         for setting in settings:
+            workspace_path = uris.to_fs_path(setting["workspace"])
+            # Virtual workspace roots, such as "pico:", have no local
+            # filesystem path, so they cannot be registered here.
+            if workspace_path is None:
+                continue
+
             key = normalize_path(
-                uris.to_fs_path(setting["workspace"]),
+                workspace_path,
                 resolve_symlinks=self.config.resolve_symlinks,
             )
             self.workspace_settings[key] = {

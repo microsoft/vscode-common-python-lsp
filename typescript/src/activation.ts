@@ -11,16 +11,26 @@
  */
 
 import * as vscode from 'vscode';
+import * as fsapi from 'fs-extra';
+import * as path from 'path';
+import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { createConfigFileWatchers } from './configWatcher';
 import { traceError, traceLog, traceVerbose } from './logging';
+import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
 import { restartServer, RestartServerOptions } from './server';
-import { checkIfConfigurationChanged, getWorkspaceSettings } from './settings';
+import { checkIfConfigurationChanged, getExtensionSettings, getWorkspaceSettings } from './settings';
 import { registerLanguageStatusItem, updateStatus } from './status';
-import { IServerInfo, ToolConfig } from './types';
+import { IBaseSettings, IServerInfo, ToolConfig } from './types';
 import { getInterpreterFromSetting, getLSClientTraceLevel, getProjectRoot } from './utilities';
-import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
+import {
+    getConfiguration,
+    getWorkspaceFolder,
+    getWorkspaceFolders,
+    onDidChangeConfiguration,
+    registerCommand,
+} from './vscodeapi';
 
 // ---------------------------------------------------------------------------
 // Default restart delay
@@ -28,6 +38,55 @@ import { onDidChangeConfiguration, registerCommand } from './vscodeapi';
 
 /** Fallback when {@link ToolConfig.restartDelay} is not set. */
 const DEFAULT_RESTART_DELAY = 1000;
+const USE_PER_PROJECT_ENVIRONMENTS = 'usePerProjectEnvironments';
+
+function usePerProjectEnvironments(toolConfig: ToolConfig): boolean {
+    return (
+        toolConfig.supportsPerProjectEnvironments === true &&
+        getConfiguration(toolConfig.toolId).get<boolean>(USE_PER_PROJECT_ENVIRONMENTS, false)
+    );
+}
+
+function workspaceKey(uri: vscode.Uri): string {
+    const key = path.normalize(uri.fsPath);
+    return process.platform === 'win32' ? key.toLowerCase() : key;
+}
+
+async function getSettingsRoots(
+    toolConfig: ToolConfig,
+    pythonProvider: PythonEnvironmentsProvider,
+): Promise<readonly vscode.WorkspaceFolder[]> {
+    const configuredWorkspaces = getWorkspaceFolders();
+    const workspaces = configuredWorkspaces.length > 0 ? configuredWorkspaces : [await getProjectRoot()];
+    if (!usePerProjectEnvironments(toolConfig)) {
+        return workspaces;
+    }
+
+    const roots = new Map<string, vscode.WorkspaceFolder>(
+        workspaces.map((workspace) => [workspaceKey(workspace.uri), workspace]),
+    );
+    for (const project of await pythonProvider.getPythonProjects()) {
+        if (project.uri.scheme !== 'file' || roots.has(workspaceKey(project.uri))) {
+            continue;
+        }
+        const containingWorkspace = getWorkspaceFolder(project.uri);
+        if (!containingWorkspace) {
+            continue;
+        }
+        try {
+            await fsapi.stat(project.uri.fsPath);
+        } catch (error) {
+            traceError(`Unable to inspect Python project ${project.uri.fsPath}: `, error);
+            continue;
+        }
+        roots.set(workspaceKey(project.uri), {
+            uri: project.uri,
+            name: project.name,
+            index: containingWorkspace.index,
+        });
+    }
+    return Array.from(roots.values());
+}
 
 // ---------------------------------------------------------------------------
 // ToolExtensionContext
@@ -97,8 +156,14 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
     let isRestarting = false;
     let restartTimer: NodeJS.Timeout | undefined;
+    let packageChangeTimer: NodeJS.Timeout | undefined;
     let disposed = false;
+    let pythonInitialized = false;
+    let extensionSubscriptions: vscode.Disposable[] | undefined;
     let serverDisposables: vscode.Disposable[] = [];
+
+    const nullFormatter = toolConfig.isFormatter ? new NullFormatter() : undefined;
+    nullFormatter?.register();
 
     const ctx: ToolExtensionContext = {
         lsClient: undefined,
@@ -106,6 +171,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
         async runServer(): Promise<void> {
             if (disposed) {
                 return;
+            }
+            if (usePerProjectEnvironments(toolConfig) && extensionSubscriptions && !pythonInitialized) {
+                await initializePython(extensionSubscriptions, false);
             }
             if (isRestarting) {
                 if (restartTimer) {
@@ -116,21 +184,57 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             isRestarting = true;
             try {
+                // Re-register the placeholder at the start of each restart
+                // cycle when there is no healthy running client.  This covers
+                // two gaps the per-state listener misses:
+                //  1. Extension-driven restarts (config/interpreter change):
+                //     runServer() disposes the old state listener *before*
+                //     restartServer() stops the previous client, so
+                //     Stopped/Starting transitions fire into a dead listener.
+                //  2. Failure paths: if restartServer() throws or returns
+                //     client: undefined the state-listener block is skipped
+                //     entirely.
+                // The guard avoids re-introducing the duplicate-formatter
+                // symptom: if the old client is still Running (serving
+                // formatting requests), re-registering the placeholder would
+                // make the extension appear twice in the formatter picker
+                // until restartServer() stops the old client.
+                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                    nullFormatter.register();
+                }
+
                 const projectRoot = await getProjectRoot();
                 if (disposed) {
                     return;
                 }
                 const resolveInterpreter = pythonProvider.getInterpreterDetails.bind(pythonProvider);
-                const workspaceSetting = await getWorkspaceSettings(
-                    serverId,
-                    projectRoot,
-                    toolConfig,
-                    resolveInterpreter,
-                );
+                let extensionSettings: IBaseSettings[] | undefined;
+                let workspaceSetting: IBaseSettings | undefined;
+                if (usePerProjectEnvironments(toolConfig)) {
+                    const roots = await getSettingsRoots(toolConfig, pythonProvider);
+                    extensionSettings = await getExtensionSettings(serverId, toolConfig, resolveInterpreter, roots);
+                    workspaceSetting =
+                        extensionSettings.find((settings) => settings.workspace === projectRoot.uri.toString()) ??
+                        extensionSettings[0];
+                    if (workspaceSetting?.interpreter.length === 0) {
+                        workspaceSetting =
+                            extensionSettings.find((settings) => settings.interpreter.length > 0) ?? workspaceSetting;
+                        if (workspaceSetting?.interpreter.length) {
+                            traceLog(`Using ${workspaceSetting.workspace} to bootstrap the singleton language server.`);
+                        }
+                    }
+                } else {
+                    workspaceSetting = await getWorkspaceSettings(
+                        serverId,
+                        projectRoot,
+                        toolConfig,
+                        resolveInterpreter,
+                    );
+                }
                 if (disposed) {
                     return;
                 }
-                if (workspaceSetting.interpreter.length === 0) {
+                if (!workspaceSetting || workspaceSetting.interpreter.length === 0) {
                     // Stop any stale server running with the previous interpreter
                     if (ctx.lsClient) {
                         try {
@@ -148,6 +252,11 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         }
                     }
                     serverDisposables = [];
+
+                    // Re-register the placeholder so the extension stays
+                    // visible in the formatter picker while there is no
+                    // interpreter (and therefore no running LSP formatter).
+                    nullFormatter?.register();
 
                     updateStatus(
                         vscode.l10n.t('Please select a Python interpreter.'),
@@ -182,6 +291,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         outputChannel,
                         toolConfig,
                         pythonProvider,
+                        extensionSettings,
                     };
                     const result = await restartServer(restartOptions, ctx.lsClient);
 
@@ -207,9 +317,45 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
                     ctx.lsClient = result.client;
                     serverDisposables = result.disposables;
+
+                    if (nullFormatter && result.client) {
+                        if (result.client.state === State.Running) {
+                            nullFormatter.unregister();
+                        } else {
+                            // New client not yet Running — ensure placeholder is
+                            // visible while the server finishes starting.  This
+                            // covers the extension-driven restart path where the
+                            // guard at the top skipped register() because the
+                            // *old* client was still Running at that point.
+                            nullFormatter.register();
+                        }
+                        serverDisposables.push(
+                            result.client.onDidChangeState((e) => {
+                                switch (e.newState) {
+                                    case State.Running:
+                                        nullFormatter.unregister();
+                                        break;
+                                    case State.Stopped:
+                                    case State.Starting:
+                                        nullFormatter.register();
+                                        break;
+                                }
+                            }),
+                        );
+                    } else if (nullFormatter && !result.client) {
+                        // No client available — ensure placeholder is visible
+                        // so the extension remains in the formatter picker.
+                        nullFormatter.register();
+                    }
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
+                // Ensure placeholder stays visible after a failure — but only
+                // when there is no healthy running client (same guard as the
+                // top of runServer to avoid the duplicate-formatter symptom).
+                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                    nullFormatter.register();
+                }
             } finally {
                 isRestarting = false;
             }
@@ -217,13 +363,38 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
         async initialize(subscriptions: vscode.Disposable[]): Promise<void> {
             try {
+                extensionSubscriptions = subscriptions;
                 const interpreter = getInterpreterFromSetting(serverId);
-                if (interpreter === undefined || interpreter.length === 0) {
+                if (usePerProjectEnvironments(toolConfig)) {
                     traceLog('Python extension loading');
-                    await pythonProvider.initializePython(subscriptions);
+                    await initializePython(subscriptions, interpreter === undefined || interpreter.length === 0);
+                    traceLog('Python extension loaded');
+                    if (interpreter !== undefined && interpreter.length > 0) {
+                        await ctx.runServer();
+                    }
+                } else if (interpreter === undefined || interpreter.length === 0) {
+                    traceLog('Python extension loading');
+                    await initializePython(subscriptions, true);
                     traceLog('Python extension loaded');
                 } else {
                     await ctx.runServer();
+                }
+
+                // Opt-in via the `refreshExtensionOnPackagesChange` key on the
+                // extension's ToolConfig: restart the server whenever the active
+                // environment's package managers report a package
+                // install/uninstall.  Wired here — after the interpreter is
+                // resolved — regardless of *how* the interpreter was chosen
+                // (resolved by the Python extension or pinned via the
+                // `<serverId>.interpreter` setting), so the option is never
+                // silently inert.  Subscription is best-effort: a missing or
+                // version-skewed API resolves to `undefined` and never blocks
+                // startup.
+                if (toolConfig.refreshExtensionOnPackagesChange) {
+                    const disposable = await pythonProvider.subscribeToPackageChanges(triggerPackageRefresh);
+                    if (disposable) {
+                        subscriptions.push(disposable);
+                    }
                 }
             } catch (ex) {
                 traceError(`Extension initialization failed: ${ex}`);
@@ -236,6 +407,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 clearTimeout(restartTimer);
                 restartTimer = undefined;
             }
+            if (packageChangeTimer) {
+                clearTimeout(packageChangeTimer);
+                packageChangeTimer = undefined;
+            }
             for (const d of serverDisposables) {
                 try {
                     d.dispose();
@@ -244,8 +419,47 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 }
             }
             serverDisposables = [];
+            nullFormatter?.dispose();
         },
     };
+
+    /**
+     * Trailing-edge debounce for package-change refreshes.
+     *
+     * A single install can emit several package-change events in quick
+     * succession, and slow multi-package installs may space them out past the
+     * time a single restart takes — `runServer`'s in-flight coalescing only
+     * collapses the former.  Debouncing here collapses bursts into one restart.
+     */
+    function triggerPackageRefresh(): void {
+        if (disposed) {
+            return;
+        }
+        if (packageChangeTimer) {
+            clearTimeout(packageChangeTimer);
+        }
+        packageChangeTimer = setTimeout(() => {
+            packageChangeTimer = undefined;
+            void safeRunServer(ctx, 'package change');
+        }, restartDelay);
+    }
+
+    async function initializePython(subscriptions: vscode.Disposable[], fireInitial: boolean): Promise<void> {
+        if (pythonInitialized) {
+            return;
+        }
+        const getResources = toolConfig.supportsPerProjectEnvironments
+            ? async () => {
+                  if (!usePerProjectEnvironments(toolConfig)) {
+                      const interpreter = getInterpreterFromSetting(serverId);
+                      return interpreter?.length ? [] : [(await getProjectRoot()).uri];
+                  }
+                  return (await getSettingsRoots(toolConfig, pythonProvider)).map((workspace) => workspace.uri);
+              }
+            : undefined;
+        pythonInitialized = true;
+        await pythonProvider.initializePython(subscriptions, getResources, fireInitial);
+    }
 
     return ctx;
 }
@@ -327,7 +541,10 @@ export function registerCommonSubscriptions(
     // Configuration change
     context.subscriptions.push(
         onDidChangeConfiguration(async (e: vscode.ConfigurationChangeEvent) => {
-            if (checkIfConfigurationChanged(e, serverId, toolConfig.trackedSettings)) {
+            const trackedSettings = toolConfig.supportsPerProjectEnvironments
+                ? [...toolConfig.trackedSettings, USE_PER_PROJECT_ENVIRONMENTS]
+                : toolConfig.trackedSettings;
+            if (checkIfConfigurationChanged(e, serverId, trackedSettings)) {
                 await safeRunServer(toolContext, 'config change');
             }
         }),

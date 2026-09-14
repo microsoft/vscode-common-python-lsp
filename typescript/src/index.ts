@@ -56,7 +56,7 @@ export {
 } from './settings';
 
 // Python interpreter resolution
-export { IInterpreterDetails, IPythonApi, PythonEnvironmentsProvider } from './python';
+export { IInterpreterDetails, IPythonApi, IPythonProject, PythonEnvironmentsProvider } from './python';
 
 // Config file watching
 export { createConfigFileWatchers } from './configWatcher';
@@ -70,6 +70,9 @@ export {
     RestartServerOptions,
     RestartServerResult,
 } from './server';
+
+// Null formatter helper
+export { NullFormatter } from './nullFormatter';
 
 // Activation / deactivation
 export {

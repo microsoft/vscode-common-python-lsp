@@ -31,7 +31,12 @@ import { getWorkspaceFolder } from './vscodeapi';
 
 /** Environment variable keys managed by {@link createServer} — collision with these is logged. */
 const BUILT_IN_ENV_KEYS = new Set([
-    'USE_DEBUGPY', 'DEBUGPY_PATH', 'LS_IMPORT_STRATEGY', 'LS_SHOW_NOTIFICATION', 'PYTHONUTF8', 'PYTHONPATH',
+    'USE_DEBUGPY',
+    'DEBUGPY_PATH',
+    'LS_IMPORT_STRATEGY',
+    'LS_SHOW_NOTIFICATION',
+    'PYTHONUTF8',
+    'PYTHONPATH',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -61,14 +66,31 @@ function parseWorkspaceUri(workspace: string): Uri {
 /**
  * Resolve the working directory for spawning the server process.
  *
- * File-based variables (`${file*}`, `${relativeFile*}`) are resolved
- * per-document by the Python server at lint-time, not at spawn-time.
- * When the configured CWD still contains such a variable we fall back
- * to the workspace path so the process can start successfully.
+ * `resolveVariables()` in `settings.ts` has already expanded every variable
+ * that can be resolved at spawn-time (`${workspaceFolder}`, `${userHome}`,
+ * `${env:…}`, etc.).  Any `${…}` token still present at this point must
+ * therefore be a per-document variable — one that is resolved per-file by
+ * the Python server at lint-time rather than at spawn-time.  This includes
+ * the standard file-path variables (`${file*}`, `${relativeFile*}`) as well
+ * as tool-specific tokens like mypy's `${nearestConfig}`.
+ *
+ * For all such tokens the only sensible spawn-time CWD is the workspace
+ * path, so we fall back to it whenever any `${…}` remains unresolved.
+ *
+ * **Trade-off:** this check is intentionally permissive.  A typo such as
+ * `"${workspceFolder}"` will silently fall back to the workspace path rather
+ * than failing with ENOENT, which is better UX but does hide configuration
+ * mistakes that the previous narrow allowlist would have surfaced.
  */
 export function getServerCwd(settings: IBaseSettings): string {
-    const hasFileVariable = /\$\{(file|relativeFile)/.test(settings.cwd);
-    return hasFileVariable ? parseWorkspaceUri(settings.workspace).fsPath : settings.cwd;
+    // Any ${...} token still present here is unresolved — it may be a
+    // per-document variable (e.g. ${file*}, ${relativeFile*}), a tool-specific
+    // token like ${nearestConfig}, an undefined ${env:KEY}, or even a typo.
+    // resolveVariables() in settings.ts has already expanded everything it
+    // can at spawn time, so we fall back to the workspace path to allow the
+    // server to start.
+    const hasUnresolvedVariable = /\$\{/.test(settings.cwd);
+    return hasUnresolvedVariable ? parseWorkspaceUri(settings.workspace).fsPath : settings.cwd;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,10 +119,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     const { settings, serverId, serverName, outputChannel, initializationOptions, toolConfig, debuggerPath } = options;
 
     if (!settings.interpreter.length) {
-        const message = l10n.t(
-            'Unable to start {0}: no Python interpreter executable is configured.',
-            serverName,
-        );
+        const message = l10n.t('Unable to start {0}: no Python interpreter executable is configured.', serverName);
         updateStatus(message, LanguageStatusSeverity.Error);
         throw new Error(message);
     }
@@ -167,9 +186,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     }
 
     // Choose server script (debug vs normal)
-    const isDebugScript = toolConfig.debugServerScript
-        ? await fsapi.pathExists(toolConfig.debugServerScript)
-        : false;
+    const isDebugScript = toolConfig.debugServerScript ? await fsapi.pathExists(toolConfig.debugServerScript) : false;
     const scriptPath =
         newEnv.USE_DEBUGPY !== 'False' && isDebugScript && toolConfig.debugServerScript
             ? toolConfig.debugServerScript
@@ -208,6 +225,7 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
 /** Options for {@link restartServer}. */
 export interface RestartServerOptions {
     settings: IBaseSettings;
+    extensionSettings?: IBaseSettings[];
     serverId: string;
     serverName: string;
     outputChannel: LogOutputChannel;
@@ -232,7 +250,7 @@ export async function restartServer(
     options: RestartServerOptions,
     oldLsClient?: LanguageClient,
 ): Promise<RestartServerResult> {
-    const { settings, serverId, serverName, outputChannel, toolConfig, pythonProvider } = options;
+    const { settings, extensionSettings, serverId, serverName, outputChannel, toolConfig, pythonProvider } = options;
 
     if (oldLsClient) {
         traceInfo('Server: Stop requested');
@@ -258,7 +276,7 @@ export async function restartServer(
             toolConfig,
             debuggerPath,
             initializationOptions: {
-                settings: await getExtensionSettings(serverId, toolConfig, resolveInterpreter),
+                settings: extensionSettings ?? (await getExtensionSettings(serverId, toolConfig, resolveInterpreter)),
                 globalSettings: await getGlobalSettings(serverId, toolConfig),
             },
         });

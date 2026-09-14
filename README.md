@@ -94,6 +94,35 @@ git submodule add https://github.com/microsoft/vscode-common-python-lsp.git subm
 **Python side** — install into `bundled/libs/` via noxfile.
 **TypeScript side** — `file:` dependency in `package.json`.
 
+### Optional configuration
+
+Extensions whose servers run tools using the interpreter in each resolved
+settings entry can opt in to per-project environments:
+
+```ts
+const toolConfig: ToolConfig = {
+    // ...
+    supportsPerProjectEnvironments: true,
+};
+```
+
+The extension must also contribute a window-scoped
+`<toolId>.usePerProjectEnvironments` boolean setting. When both are enabled,
+the singleton language server receives settings for the projects reported by
+the Python Environments extension and uses each project's selected interpreter.
+Explicit `<toolId>.interpreter` settings continue to take precedence. The
+setting defaults to `false`, so existing workspace-folder behavior is
+unchanged.
+
+To restart the language server whenever packages are installed or removed,
+an extension sets `refreshExtensionOnPackagesChange: true` on the `ToolConfig` it
+passes in. The key defaults to `false`; when set to `true`, the shared activation logic
+subscribes once to the package-change events reported by the
+[Python Environments extension](https://github.com/microsoft/vscode-python-environments)
+during initialization and restarts the server on each one. The automatic refresh
+wiring is internal; the underlying `IPythonApi.onDidChangePackages` event remains
+available for consumers that need it.
+
 ## Version Requirements
 
 | Runtime    | Minimum Version |

@@ -36,6 +36,10 @@ export class LanguageClient {
         this.clientOptions = clientOptions;
     }
 
+    get state(): State {
+        return this._state;
+    }
+
     onDidChangeState(listener: (e: { oldState: State; newState: State }) => void) {
         this._stateListeners.push(listener);
         return {
@@ -44,6 +48,12 @@ export class LanguageClient {
                 if (idx >= 0) this._stateListeners.splice(idx, 1);
             },
         };
+    }
+
+    simulateStateChange(newState: State): void {
+        const oldState = this._state;
+        this._state = newState;
+        this._stateListeners.forEach((l) => l({ oldState, newState }));
     }
 
     async start(): Promise<void> {

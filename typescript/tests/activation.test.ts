@@ -4,7 +4,9 @@
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { LanguageClient } from 'vscode-languageclient/node';
+import { State } from 'vscode-languageclient';
 import {
     createToolContext,
     CreateToolContextOptions,
@@ -57,6 +59,8 @@ function makeMockProvider(sandbox: sinon.SinonSandbox): PythonEnvironmentsProvid
         getInterpreterDetails: sandbox.stub().resolves({ path: ['/usr/bin/python3'] }),
         getDebuggerPath: sandbox.stub().resolves(undefined),
         initializePython: sandbox.stub().resolves(),
+        subscribeToPackageChanges: sandbox.stub().resolves(undefined),
+        getPythonProjects: sandbox.stub().resolves([]),
         onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
     } as unknown as PythonEnvironmentsProvider;
 }
@@ -111,6 +115,110 @@ suite('createToolContext', () => {
         const ctx = createToolContext(makeOptions());
         await ctx.runServer();
         assert.isTrue((serverModule.restartServer as sinon.SinonStub).calledOnce);
+    });
+
+    test('uses a project interpreter to bootstrap per-project mode', async () => {
+        const root = {
+            uri: vscode.Uri.file(path.dirname(process.cwd())),
+            name: 'workspace',
+            index: 0,
+        };
+        const project = {
+            uri: vscode.Uri.file(process.cwd()),
+            name: 'project',
+            index: 0,
+        };
+        (utilities.getProjectRoot as sinon.SinonStub).resolves(root);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root]);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+        const provider = makeMockProvider(sandbox);
+        (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
+        const extensionSettings = [
+            {
+                cwd: '/workspace',
+                workspace: root.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: [],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            },
+            {
+                cwd: '/workspace',
+                workspace: project.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: ['/project/python'],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            },
+        ];
+        sandbox.stub(settingsModule, 'getExtensionSettings').resolves(extensionSettings);
+
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.runServer();
+
+        const restartOptions = (serverModule.restartServer as sinon.SinonStub).firstCall.args[0];
+        assert.strictEqual(restartOptions.settings, extensionSettings[1]);
+        assert.strictEqual(restartOptions.extensionSettings, extensionSettings);
+        assert.isTrue((settingsModule.getWorkspaceSettings as sinon.SinonStub).notCalled);
+    });
+
+    test('includes file-backed Python projects in per-project settings', async () => {
+        const root = {
+            uri: vscode.Uri.file(path.dirname(__filename)),
+            name: 'workspace',
+            index: 0,
+        };
+        const project = {
+            uri: vscode.Uri.file(__filename),
+            name: 'script',
+            index: 0,
+        };
+        (utilities.getProjectRoot as sinon.SinonStub).resolves(root);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root]);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+        const provider = makeMockProvider(sandbox);
+        (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
+        sandbox.stub(settingsModule, 'getExtensionSettings').callsFake(async (_serverId, _toolConfig, _resolve, roots) => {
+            assert.isDefined(roots);
+            return roots!.map((workspace: vscode.WorkspaceFolder) => ({
+                cwd: root.uri.fsPath,
+                workspace: workspace.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: ['/project/python'],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            }));
+        });
+
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.runServer();
+
+        const restartOptions = (serverModule.restartServer as sinon.SinonStub).firstCall.args[0];
+        assert.deepEqual(
+            restartOptions.extensionSettings.map((settings: { workspace: string }) => settings.workspace),
+            [root.uri.toString(), project.uri.toString()],
+        );
     });
 
     test('runServer reports missing interpreter when none configured', async () => {
@@ -217,6 +325,90 @@ suite('createToolContext', () => {
         );
     });
 
+    test('initializes project events even when the interpreter is pinned', async () => {
+        (utilities.getProjectRoot as sinon.SinonStub).resolves({
+            uri: vscode.Uri.file('/workspace'),
+            name: 'workspace',
+            index: 0,
+        });
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
+        assert.isFalse((provider.initializePython as sinon.SinonStub).firstCall.args[2]);
+        assert.isTrue((serverModule.restartServer as sinon.SinonStub).calledOnce);
+    });
+
+    test('does not initialize project events when per-project mode is disabled', async () => {
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isFalse((provider.initializePython as sinon.SinonStub).called);
+        assert.isTrue((serverModule.restartServer as sinon.SinonStub).calledOnce);
+    });
+
+    test('initializes project events when per-project mode is enabled later', async () => {
+        let enabled = false;
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? enabled : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.initialize([]);
+        assert.isFalse((provider.initializePython as sinon.SinonStub).called);
+
+        enabled = true;
+        await ctx.runServer();
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
+        assert.isFalse((provider.initializePython as sinon.SinonStub).firstCall.args[2]);
+    });
+
+    test('does not initialize Python recursively when the initial refresh triggers a restart', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        let ctx: ToolExtensionContext;
+        (provider.initializePython as sinon.SinonStub).callsFake(async () => ctx.runServer());
+        ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
+    });
+
     test('initialize defers to Python extension when no interpreter set', async () => {
         (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
         const provider = makeMockProvider(sandbox);
@@ -230,6 +422,87 @@ suite('createToolContext', () => {
         assert.isFalse(
             (serverModule.restartServer as sinon.SinonStub).called,
             'should not call restartServer directly',
+        );
+    });
+
+    test('subscribes to package changes and restarts the server when refreshExtensionOnPackagesChange is enabled', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        const provider = makeMockProvider(sandbox);
+
+        // Capture the handler the activation logic registers so we can fire it.
+        let capturedHandler: (() => void) | undefined;
+        const disposeStub = sinon.stub();
+        (provider.subscribeToPackageChanges as sinon.SinonStub).callsFake((handler: () => void) => {
+            capturedHandler = handler;
+            return Promise.resolve({ dispose: disposeStub });
+        });
+
+        // Resolve a deferred when restartServer is reached instead of counting
+        // macrotasks — decouples the test from runServer's internal await chain.
+        let signalRestart: () => void = () => undefined;
+        const restarted = new Promise<void>((resolve) => {
+            signalRestart = resolve;
+        });
+        (serverModule.restartServer as sinon.SinonStub).callsFake(() => {
+            signalRestart();
+            return Promise.resolve({ client: undefined, disposables: [] });
+        });
+
+        const subscriptions: vscode.Disposable[] = [];
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                // restartDelay: 0 keeps the trailing-edge debounce on the next tick.
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 0 }),
+            }),
+        );
+        await ctx.initialize(subscriptions);
+
+        assert.isTrue(
+            (provider.subscribeToPackageChanges as sinon.SinonStub).calledOnce,
+            'should subscribe to package changes',
+        );
+        assert.isFunction(capturedHandler, 'should register a package-change handler');
+        assert.lengthOf(subscriptions, 1, 'should register the subscription disposable');
+
+        capturedHandler?.();
+        await restarted;
+        assert.isTrue(
+            (serverModule.restartServer as sinon.SinonStub).called,
+            'package-change handler should restart the server',
+        );
+    });
+
+    test('subscribes to package changes even when the interpreter is pinned via setting', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(['/usr/bin/python3']);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true }),
+            }),
+        );
+        await ctx.initialize([]);
+
+        assert.isFalse(
+            (provider.initializePython as sinon.SinonStub).called,
+            'pinned interpreter path should skip initializePython',
+        );
+        assert.isTrue(
+            (provider.subscribeToPackageChanges as sinon.SinonStub).calledOnce,
+            'should still wire the package-change subscription when pinned',
+        );
+    });
+
+    test('does not subscribe to package changes when refreshExtensionOnPackagesChange is disabled', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(makeOptions({ pythonProvider: provider }));
+        await ctx.initialize([]);
+
+        assert.isFalse(
+            (provider.subscribeToPackageChanges as sinon.SinonStub).called,
+            'should not subscribe when the option is disabled',
         );
     });
 
@@ -323,6 +596,29 @@ suite('registerCommonSubscriptions', () => {
             (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).calledOnce,
         );
     });
+
+    test('tracks the per-project setting for opted-in tools', async () => {
+        let configurationHandler:
+            | ((event: vscode.ConfigurationChangeEvent) => Promise<void>)
+            | undefined;
+        (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).callsFake(
+            (handler: (event: vscode.ConfigurationChangeEvent) => Promise<void>) => {
+                configurationHandler = handler;
+                return { dispose: sinon.stub() };
+            },
+        );
+        const options = makeRegisterOptions({
+            toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+        });
+        registerCommonSubscriptions(context, options);
+
+        await configurationHandler?.({
+            affectsConfiguration: (setting: string) =>
+                setting === 'flake8.usePerProjectEnvironments',
+        } as vscode.ConfigurationChangeEvent);
+
+        assert.isTrue((options.toolContext.runServer as sinon.SinonStub).calledOnce);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -374,5 +670,241 @@ suite('deactivateServer', () => {
         };
         await deactivateServer(ctx);
         assert.isTrue(dispose.calledOnce);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// NullFormatter lifecycle (via createToolContext with isFormatter: true)
+// ---------------------------------------------------------------------------
+
+suite('createToolContext – NullFormatter lifecycle', () => {
+    let sandbox: sinon.SinonSandbox;
+    let registerFormattingProviderStub: sinon.SinonStub;
+    let providerDispose: sinon.SinonStub;
+
+    setup(() => {
+        sandbox = sinon.createSandbox();
+        sandbox.stub(utilities, 'getProjectRoot').resolves(undefined);
+        sandbox.stub(utilities, 'getInterpreterFromSetting').returns(['/usr/bin/python3']);
+        sandbox.stub(settingsModule, 'getWorkspaceSettings').resolves({
+            cwd: '/workspace',
+            workspace: 'file:///workspace',
+            args: [],
+            path: [],
+            interpreter: ['/usr/bin/python3'],
+            importStrategy: 'useBundled',
+            showNotifications: 'off',
+        });
+
+        providerDispose = sandbox.stub();
+        registerFormattingProviderStub = sandbox
+            .stub(vscodeapi, 'registerDocumentFormattingEditProvider')
+            .returns({ dispose: providerDispose });
+    });
+
+    teardown(() => {
+        sandbox.restore();
+    });
+
+    function makeFormatterOptions(overrides?: Partial<CreateToolContextOptions>): CreateToolContextOptions {
+        return {
+            serverInfo: { name: 'Black', module: 'black' },
+            outputChannel: {
+                logLevel: vscode.LogLevel.Info,
+                show: sinon.stub(),
+                onDidChangeLogLevel: sinon.stub().returns({ dispose: sinon.stub() }),
+            } as unknown as vscode.LogOutputChannel,
+            toolConfig: {
+                toolId: 'black',
+                toolDisplayName: 'Black',
+                toolModule: 'black',
+                minimumPythonVersion: { major: 3, minor: 8 },
+                configFiles: ['pyproject.toml'],
+                settingsDefaults: {},
+                trackedSettings: ['args'],
+                serverScript: '/path/to/server.py',
+                isFormatter: true,
+            },
+            pythonProvider: {
+                getInterpreterDetails: sandbox.stub().resolves({ path: ['/usr/bin/python3'] }),
+                getDebuggerPath: sandbox.stub().resolves(undefined),
+                initializePython: sandbox.stub().resolves(),
+                onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
+            } as unknown as PythonEnvironmentsProvider,
+            ...overrides,
+        };
+    }
+
+    // Uses the shared LanguageClient mock from _languageclient_mock.ts
+    // (wired in by _setup.ts) so production and test getter semantics
+    // stay in sync.  At compile-time, LanguageClient resolves to the real
+    // vscode-languageclient type; at runtime it is replaced by the mock
+    // (which exposes simulateStateChange).  We import the mock type for
+    // the helper return type so callers get proper type-checking.
+    type MockClient = import('./_languageclient_mock').LanguageClient;
+
+    function makeMockClient(initialState: State = State.Stopped): MockClient {
+        const MockLC = LanguageClient as unknown as typeof import('./_languageclient_mock').LanguageClient;
+        const client = new MockLC('test', 'Test', {}, {});
+        // Drive the mock to the desired initial state.
+        if (initialState !== State.Stopped) {
+            client.simulateStateChange(initialState);
+        }
+        return client;
+    }
+
+    /** Cast a mock client to the real LanguageClient type for stub return values. */
+    function asLC(mock: MockClient): LanguageClient {
+        return mock as unknown as LanguageClient;
+    }
+
+    // Test 1: provider registered once at createToolContext, disposed on State.Running
+    test('registers placeholder once at activation and disposes it on State.Running', async () => {
+        const mockClient = makeMockClient(State.Stopped);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+        assert.isFalse(providerDispose.called, 'not yet disposed before server starts');
+
+        await ctx.runServer();
+
+        // Client is Stopped — "already Running" guard does not fire
+        assert.isFalse(providerDispose.called, 'not disposed before Running transition');
+
+        // Emit Running — state listener should dispose the placeholder
+        mockClient.simulateStateChange(State.Running);
+        assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on State.Running');
+    });
+
+    // Test 2: crash/recovery — server stops while running, placeholder restored
+    test('re-registers placeholder on server crash (Stopped while running) and disposes on recovery', async () => {
+        const mockClient = makeMockClient(State.Stopped);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+
+        await ctx.runServer();
+
+        // Simulate Running — placeholder disposed
+        mockClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed on Running');
+
+        // Simulate Stopped — placeholder re-registered
+        mockClient.simulateStateChange(State.Stopped);
+        assert.strictEqual(registerFormattingProviderStub.callCount, 2, 'placeholder re-registered on Stopped');
+
+        // Simulate Starting — placeholder already registered, no double-registration
+        mockClient.simulateStateChange(State.Starting);
+        assert.strictEqual(registerFormattingProviderStub.callCount, 2, 'no double-registration on Starting');
+
+        // Simulate Running again — placeholder disposed again
+        mockClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 2, 'placeholder disposed again on Running');
+    });
+
+    // Test 3: already-Running guard — client is Running when runServer() returns
+    test('disposes placeholder immediately when client is already Running at runServer return', async () => {
+        const mockClient = makeMockClient(State.Running);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+
+        await ctx.runServer();
+
+        assert.isTrue(
+            providerDispose.calledOnce,
+            'placeholder must be disposed even when client is already Running (missed initial transition)',
+        );
+    });
+
+    // Test 4: isFormatter: false — no placeholder, no state listener
+    test('does not register placeholder when isFormatter is false', async () => {
+        const options = makeFormatterOptions();
+        options.toolConfig = { ...options.toolConfig, isFormatter: false };
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+
+        createToolContext(options);
+
+        assert.isFalse(
+            registerFormattingProviderStub.called,
+            'should not register provider when isFormatter is false',
+        );
+    });
+
+    // Test 5: isFormatter unset — no placeholder
+    test('does not register placeholder when isFormatter is unset', async () => {
+        const options = makeFormatterOptions();
+        const { isFormatter, ...configWithoutFormatter } = options.toolConfig;
+        options.toolConfig = configWithoutFormatter as ToolConfig;
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+
+        createToolContext(options);
+
+        assert.isFalse(
+            registerFormattingProviderStub.called,
+            'should not register provider when isFormatter is unset',
+        );
+    });
+
+    // Test 6: ctx.dispose() disposes placeholder
+    test('ctx.dispose() disposes the placeholder when it is registered', () => {
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.isTrue(registerFormattingProviderStub.calledOnce, 'provider registered at activation');
+
+        ctx.dispose();
+        assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on ctx.dispose()');
+    });
+
+    // Test 7: extension-driven restart — second runServer() is called while
+    // the first client is still Running.  The guard at the top of runServer
+    // skips re-registration to avoid the transient duplicate-formatter issue.
+    // The placeholder is re-registered only after restartServer returns the
+    // new (not-yet-Running) client.
+    test('re-registers placeholder on extension-driven restart (second runServer call)', async () => {
+        const firstClient = makeMockClient(State.Stopped);
+        const secondClient = makeMockClient(State.Stopped);
+        const restartStub = sandbox.stub(serverModule, 'restartServer');
+        restartStub.onFirstCall().resolves({ client: asLC(firstClient), disposables: [] });
+        restartStub.onSecondCall().resolves({ client: asLC(secondClient), disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.strictEqual(registerFormattingProviderStub.callCount, 1, 'registered at activation');
+
+        // First run — transition to Running disposes placeholder
+        await ctx.runServer();
+        firstClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed after first Running');
+
+        // Second runServer() — simulates config/interpreter-driven restart.
+        // firstClient is still Running, so the guard at the top of runServer
+        // skips register (avoiding transient duplicate).  After restartServer
+        // returns the new client (Stopped), the placeholder is re-registered.
+        await ctx.runServer();
+        assert.strictEqual(
+            registerFormattingProviderStub.callCount, 2,
+            'placeholder re-registered after restartServer returns non-Running client',
+        );
+
+        // Transition second client to Running — placeholder disposed again
+        secondClient.simulateStateChange(State.Running);
+        assert.strictEqual(providerDispose.callCount, 2, 'placeholder disposed after second Running');
+    });
+
+    // Test 8: restartServer returns no client — placeholder stays registered
+    test('keeps placeholder registered when restartServer returns no client', async () => {
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+
+        const ctx = createToolContext(makeFormatterOptions());
+        assert.strictEqual(registerFormattingProviderStub.callCount, 1, 'registered at activation');
+
+        await ctx.runServer();
+
+        // Placeholder should still be registered (register() called again at
+        // top of runServer as a no-op, and never unregistered).
+        assert.isFalse(providerDispose.called, 'placeholder must stay registered when no client');
     });
 });

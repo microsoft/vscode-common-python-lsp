@@ -55,9 +55,28 @@ suite('getServerCwd', () => {
         assert.strictEqual(getServerCwd(settings), '/my/project');
     });
 
-    test('returns cwd unchanged for ${workspaceFolder}', () => {
-        const settings = makeSettings({ cwd: '${workspaceFolder}/sub' });
-        assert.strictEqual(getServerCwd(settings), '${workspaceFolder}/sub');
+    // Any ${...} token still present when getServerCwd runs is unresolved
+    // (per-document variable, undefined env var, or typo). The broader regex
+    // falls back to the workspace path so the server can start.
+    test('falls back for any unresolved ${...} token reaching getServerCwd', () => {
+        const settings = makeSettings({ cwd: '${workspceFolder}/sub', workspace: 'file:///workspace' });
+        const result = getServerCwd(settings);
+        assert.strictEqual(result, '/workspace');
+    });
+
+    // Regression: vscode-mypy#556 — tool-specific per-document token
+    test('falls back to workspace path for ${nearestConfig}', () => {
+        const settings = makeSettings({ cwd: '${nearestConfig}', workspace: 'file:///workspace' });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${nearestConfig}');
+        assert.strictEqual(result, '/workspace');
+    });
+
+    test('falls back for path combining literal prefix with ${nearestConfig}', () => {
+        const settings = makeSettings({ cwd: '${nearestConfig}/src', workspace: 'file:///workspace' });
+        const result = getServerCwd(settings);
+        assert.notInclude(result, '${nearestConfig}');
+        assert.strictEqual(result, '/workspace');
     });
 
     test('falls back to workspace path for ${file}', () => {
@@ -319,5 +338,22 @@ suite('restartServer', () => {
             updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, true),
             'updateStatus should be called with busy=true',
         );
+    });
+
+    test('uses supplied extension settings without resolving them again', async () => {
+        const extensionSettings = [
+            makeSettings({ workspace: 'file:///workspace/project', interpreter: ['/project/python'] }),
+        ];
+
+        const result = await restartServer(makeRestartOptions({ extensionSettings }));
+
+        assert.isFalse(
+            (settingsModule.getExtensionSettings as sinon.SinonStub).called,
+            'pre-resolved settings should be reused',
+        );
+        const clientOptions = (result.client as unknown as {
+            clientOptions: { initializationOptions: { settings: IBaseSettings[] } };
+        }).clientOptions;
+        assert.strictEqual(clientOptions.initializationOptions.settings, extensionSettings);
     });
 });
