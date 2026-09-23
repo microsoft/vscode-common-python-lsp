@@ -62,13 +62,78 @@ npm test
 
 ## Consuming in Extensions
 
-**Git submodule (current):**
+Consume this repository as a git submodule so the Python and TypeScript
+libraries are pinned to the same commit. The VS Code Python tool extensions
+place the checkout under `external/`:
+
 ```bash
-git submodule add https://github.com/microsoft/vscode-common-python-lsp.git submodules/vscode-common-python-lsp
+git submodule add https://github.com/microsoft/vscode-common-python-lsp.git external/vscode-common-python-lsp
+git submodule update --init --recursive
 ```
 
-**Python side** — install into `bundled/libs/` via noxfile.
-**TypeScript side** — `file:` dependency in `package.json`.
+Clone a consuming extension with `--recurse-submodules`, or run the update
+command above after cloning.
+
+Reference the TypeScript package from the submodule in `package.json`:
+
+```json
+{
+    "dependencies": {
+        "@vscode/common-python-lsp": "file:external/vscode-common-python-lsp/typescript"
+    }
+}
+```
+
+Install the Python package directly from the same submodule commit when
+building the extension bundle. For example, in `noxfile.py`:
+
+```python
+import pathlib
+
+import nox
+
+
+@nox.session(python="3.10")
+def install_bundled_libs(session: nox.Session) -> None:
+    shared_python_lib = pathlib.Path("external/vscode-common-python-lsp/python")
+    if not shared_python_lib.exists():
+        session.error(
+            f"Shared package submodule missing at {shared_python_lib}. "
+            "Run 'git submodule update --init --recursive' before building."
+        )
+
+    session.install(
+        "-t",
+        "./bundled/libs",
+        "--no-cache-dir",
+        "--no-deps",
+        "--upgrade",
+        str(shared_python_lib),
+    )
+```
+
+The package manifests support building from the submodule. This repository no
+longer publishes packages to npm or PyPI.
+
+### Dependabot updates
+
+The consuming extensions configure Dependabot's `gitsubmodule` ecosystem to
+check daily for newer commits:
+
+```yaml
+updates:
+  - package-ecosystem: 'gitsubmodule'
+    directory: '/'
+    allow:
+      - dependency-name: 'external/vscode-common-python-lsp'
+    schedule:
+      interval: 'daily'
+```
+
+This is a scheduled check, not a workflow triggered by each push. Dependabot
+updates the pinned submodule commit when the tracked upstream branch has
+advanced. GitHub releases continue to provide versioned milestones and release
+notes, but they do not trigger or gate the submodule updates.
 
 ### Optional configuration
 

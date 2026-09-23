@@ -65,8 +65,8 @@ bump PR to trigger the release.
 1. Bump the version: `python -m scripts.version.sync X.Y.Z`
 2. Update `CHANGELOG.md` with the new version and release notes.
 3. Commit, push, and merge the PR.
-4. Create a **GitHub Release** targeting `main` with tag `vX.Y.Z`.
-5. Azure Pipelines automatically publishes both packages to the ADO feed.
+4. Azure Pipelines validates and tests the repository, then creates the GitHub
+   Release. The npm and Python packages are not published.
 
 ## Reporting Issues
 

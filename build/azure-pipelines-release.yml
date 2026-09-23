@@ -1,12 +1,10 @@
 # Azure Pipelines release pipeline for vscode-common-python-lsp.
 #
 # Triggered automatically when the VERSION file changes on main
-# (i.e. a version bump is merged). Validates, tests, publishes both the
-# TypeScript (npm) and Python (PyPI) packages to the Azure DevOps
-# vscode-common-python-lsp feed, then tags the commit.
+# (i.e. a version bump is merged). Validates and tests both libraries, then
+# creates a GitHub release and tags the commit.
 #
 # Uses MicroBuildTemplate for 1ES compliance (SDL, SBOM, etc).
-# Auth uses built-in Azure Artifacts tasks (npmAuthenticate, PipAuthenticate).
 
 trigger:
   branches:
@@ -97,11 +95,6 @@ extends:
           # TypeScript
           - job: TypeScript
             displayName: TypeScript build & test
-            templateContext:
-              outputs:
-                - output: pipelineArtifact
-                  targetPath: $(Build.ArtifactStagingDirectory)/npm-package
-                  artifactName: npm-package
             steps:
               - checkout: self
 
@@ -137,11 +130,6 @@ extends:
                   command: custom
                   customCommand: test
                   workingDir: typescript
-
-              - script: |
-                  mkdir -p $(Build.ArtifactStagingDirectory)/npm-package
-                  npm pack --pack-destination $(Build.ArtifactStagingDirectory)/npm-package
-                workingDirectory: typescript
 
           # Python tests — Linux
           - job: PythonTestLinux
@@ -195,87 +183,10 @@ extends:
 
               - script: nox -s tests
 
-          # Python build
-          - job: PythonBuild
-            displayName: Python build
-            templateContext:
-              outputs:
-                - output: pipelineArtifact
-                  targetPath: $(Build.ArtifactStagingDirectory)/python-package
-                  artifactName: python-package
-            steps:
-              - checkout: self
-
-              - task: UsePythonVersion@0
-                inputs:
-                  versionSpec: $(PythonVersion)
-
-              - task: PipAuthenticate@1
-                inputs:
-                  artifactFeeds: '$(RepoName)'
-
-              - script: |
-                  pip install build
-                  python -m build --outdir $(Build.ArtifactStagingDirectory)/python-package
-                workingDirectory: python
-                displayName: Build sdist and wheel
-
-      # Stage 3a: Publish npm
-      - stage: PublishNPM
-        displayName: Publish npm
-        dependsOn: BuildAndTest
-        jobs:
-          - job: PublishPackage
-            displayName: Publish npm package
-            templateContext:
-              type: releaseJob
-              isProduction: true
-              inputs:
-                - input: pipelineArtifact
-                  artifactName: npm-package
-                  targetPath: $(Pipeline.Workspace)/npm-package
-            steps:
-              - template: MicroBuild.Publish.yml@MicroBuildTemplate
-                parameters:
-                  intent: 'PackageDistribution'
-                  contentType: 'npm'
-                  contentSource: 'Folder'
-                  folderLocation: '$(Pipeline.Workspace)/npm-package'
-                  waitForReleaseCompletion: true
-                  owners: 'brcan@microsoft.com'
-                  approvers: 'eduardovil@microsoft.com'
-
-      # Stage 3b: Publish PyPI
-      - stage: PublishPyPI
-        displayName: Publish PyPI
-        dependsOn: BuildAndTest
-        jobs:
-          - job: Publish
-            displayName: Publish to ADO PyPI feed
-            templateContext:
-              type: releaseJob
-              isProduction: true
-              inputs:
-                - input: pipelineArtifact
-                  artifactName: python-package
-                  targetPath: $(Pipeline.Workspace)/python-package
-            steps:
-              - template: MicroBuild.Publish.yml@MicroBuildTemplate
-                parameters:
-                  intent: 'PackageDistribution'
-                  contentType: 'PyPI'
-                  contentSource: 'Folder'
-                  folderLocation: '$(Pipeline.Workspace)/python-package'
-                  waitForReleaseCompletion: true
-                  owners: 'brcan@microsoft.com'
-                  approvers: 'eduardovil@microsoft.com'
-
-      # Stage 4: Create GitHub Release
+      # Stage 3: Create GitHub Release
       - stage: GitHubRelease
         displayName: Create GitHub Release
-        dependsOn:
-          - PublishNpm
-          - PublishPyPI
+        dependsOn: BuildAndTest
         jobs:
           - job: CreateTag
             displayName: Create git tag
