@@ -56,9 +56,13 @@ interpreter resolution, and logging.
 ```bash
 cd typescript
 npm install
+npm run lint
 npm run build
 npm test
 ```
+
+Linting uses ESLint 10 with the flat configuration in `typescript/eslint.config.mjs`.
+Use the Node.js version pinned in `.nvmrc` for development.
 
 ## Consuming in Extensions
 
