@@ -58,15 +58,20 @@ version and syncs all manifests. If a previous bump PR is still open and `main`
 has advanced beyond it (new commits landed since the PR was created), the stale
 PR is closed and replaced with a fresh one. If the existing PR still covers the
 current state of `main`, no action is taken. Maintainers review and merge the
-bump PR to trigger the release.
+bump PR before creating the release.
 
 ### Release process
 
 1. Bump the version: `python -m scripts.version.sync X.Y.Z`
 2. Update `CHANGELOG.md` with the new version and release notes.
 3. Commit, push, and merge the PR.
-4. Azure Pipelines validates and tests the repository, then creates the GitHub
-   Release. The npm and Python packages are not published.
+4. After GitHub Actions validation passes, manually create a GitHub Release
+   tagged `vX.Y.Z` at the merged commit, using the changelog for release notes.
+
+Azure DevOps release automation is no longer used. Extensions consume this
+repository as a git submodule pinned to a commit; GitHub Releases are versioned
+milestones, not a prerequisite for submodule updates. The npm and Python packages
+are not published.
 
 ## Reporting Issues
 
