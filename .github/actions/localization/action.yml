@@ -1,0 +1,99 @@
+name: Submit English localization
+description: Export and submit English strings using the shared Python localization tooling.
+
+inputs:
+  app-id:
+    description: Python localization GitHub App ID.
+    required: true
+  private-key:
+    description: Python localization GitHub App private key.
+    required: true
+  source-paths:
+    description: JSON array of runtime source directories relative to the extension root.
+    default: '["src"]'
+  submodules:
+    description: Whether the extension needs recursive submodule checkout.
+    default: 'false'
+  node-version:
+    description: Node.js version for the localization CLI.
+    default: '22.21.1'
+  npm-registry:
+    description: Package feed used for the pinned localization CLI.
+    default: 'https://packagefeedproxy.microsoft.io/npm/'
+  localization-branch:
+    description: Existing localization-drop branch for English submissions.
+    default: dev
+
+runs:
+  using: composite
+  steps:
+    - name: Validate localization credentials
+      shell: python
+      env:
+        LOCALIZATION_APP_ID: ${{ inputs.app-id }}
+        LOCALIZATION_PRIVATE_KEY: ${{ inputs.private-key }}
+      run: |
+        import os
+        if not os.environ["LOCALIZATION_APP_ID"] or not os.environ["LOCALIZATION_PRIVATE_KEY"]:
+            raise ValueError("Configure PYTHON_LOCALIZATION_APP_ID and PYTHON_LOCALIZATION_PRIVATE_KEY.")
+
+    - name: Checkout extension
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        submodules: ${{ inputs.submodules }}
+        persist-credentials: false
+
+    - name: Set up Node
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: '3.10'
+
+    - name: Extract English strings
+      shell: bash
+      env:
+        LOCALIZATION_ACTION_PATH: ${{ github.action_path }}
+        LOCALIZATION_SOURCE_PATHS: ${{ inputs.source-paths }}
+        NPM_CONFIG_REGISTRY: ${{ inputs.npm-registry }}
+      run: >-
+        python "$LOCALIZATION_ACTION_PATH/../../../scripts/localization.py"
+        --operation export
+        --extension-root "$GITHUB_WORKSPACE"
+        --source-paths "$LOCALIZATION_SOURCE_PATHS"
+        --output-directory "$RUNNER_TEMP/localization-english"
+
+    - name: Authenticate as python-localization
+      id: app-token
+      uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: microsoft
+        repositories: vscode-python-extensions-loc
+        permission-contents: write
+
+    - name: Checkout localization repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: microsoft/vscode-python-extensions-loc
+        ref: ${{ inputs.localization-branch }}
+        token: ${{ steps.app-token.outputs.token }}
+        path: localization-translations
+        fetch-depth: 0
+
+    - name: Submit changed English XLF
+      shell: bash
+      env:
+        LOCALIZATION_ACTION_PATH: ${{ github.action_path }}
+        LOCALIZATION_BRANCH: ${{ inputs.localization-branch }}
+      run: >-
+        python "$LOCALIZATION_ACTION_PATH/../../../scripts/localization.py"
+        --operation submit
+        --extension-root "$GITHUB_WORKSPACE"
+        --output-directory "$RUNNER_TEMP/localization-english"
+        --drop-root "$GITHUB_WORKSPACE/localization-translations"
+        --branch "$LOCALIZATION_BRANCH"
