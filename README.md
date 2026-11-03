@@ -66,6 +66,74 @@ Use the Node.js version pinned in `.nvmrc` for development.
 
 ## Consuming in Extensions
 
+### Shared localization automation
+
+The composite action at `.github/actions/localization` and the standard-library
+Python CLI at `scripts/localization.py` share localization automation across the
+Python extensions. This tooling does not require adopting either runtime library.
+Pin the action and Azure tooling checkout to the same reviewed commit.
+
+Each extension's English-only GitHub workflow calls:
+
+```yaml
+permissions:
+  contents: read
+
+jobs:
+  localization:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: microsoft/vscode-common-python-lsp/.github/actions/localization@<reviewed-commit-sha>
+        with:
+          app-id: ${{ vars.PYTHON_LOCALIZATION_APP_ID }}
+          private-key: ${{ secrets.PYTHON_LOCALIZATION_PRIVATE_KEY }}
+          submodules: recursive
+          source-paths: '["src", "external/vscode-common-python-lsp/typescript/src"]'
+```
+
+Keep trigger paths and concurrency in the caller workflow. Omit the submodule
+input and use the default `["src"]` for standalone runtime extensions. Extensions
+without a `package.json` `l10n` declaration export and import manifest strings
+only, even if their source contains runtime localization calls.
+
+The action bundles checkout, Node/Python setup, extraction with pinned
+`@vscode/l10n-dev@0.0.35`, app authentication, and English submission. It loads the
+helper from its own action revision. Configure the app ID variable and private-key
+secret in each caller (or grant organization-level access); the app needs Contents
+write access only to `microsoft/vscode-python-extensions-loc`. The default npm feed
+is `https://packagefeedproxy.microsoft.io/npm/`. Inputs never appear in generated
+shell commands: source paths and branch values are passed through environment
+variables.
+
+English goes to `src/en/<publisher>.<name>/<publisher>.<name>-new.xlf` on the
+existing `dev` branch. Unchanged XLF is a successful no-op. Submissions never
+force-push; concurrent updates retry rejected pushes with a bounded rebase.
+
+Pylance-Eng stable/pre-release templates orchestrate **pull-only** imports using
+the same CLI, with source, tools, and translations in separate workspace folders:
+
+```text
+python <tools>/scripts/localization.py --operation import \
+  --extension-root <extension> --translations-root <drop>/out \
+  --output-directory <new-staging-directory>
+```
+
+The importer derives identity/runtime metadata from the extension manifest,
+requires all 14 configured locales, and validates every table before copying.
+Each required real-language manifest/runtime table must contain translation
+evidence: a nonempty target differing from English, or a target explicitly marked
+translated/final/signed-off. Individual untranslated strings are allowed;
+pseudo-localization is checked for coverage but is not real-language evidence.
+Missing, empty, incomplete, or wholly untranslated handbacks fail explicitly.
+Do not publish while waiting for service onboarding or real translated output.
+
+Generated root `package.nls.<locale>.json` and declared runtime locale files should
+be ignored by Git but included by VSCE. Keep English `package.nls.json` tracked.
+Run dependency-free regression tests with
+`python -m unittest discover -s scripts -p "*_test.py"`.
+
+### Shared runtime libraries
+
 Consume this repository as a git submodule so the Python and TypeScript
 libraries are pinned to the same commit. The VS Code Python tool extensions
 place the checkout under `external/`:
