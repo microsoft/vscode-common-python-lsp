@@ -16,7 +16,7 @@ import localization
 
 
 class LocalizationTests(unittest.TestCase):
-    """Exercise generic exports and fully staged, translation-ready imports."""
+    """Exercise generic exports and fully staged imports with English fallback."""
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="shared localization ")
@@ -176,19 +176,13 @@ class LocalizationTests(unittest.TestCase):
         self.assertEqual(len(list(self.root.glob("package.nls.*.json"))), 14)
         self.assertFalse((self.root / "l10n").exists())
 
-    def test_readiness_checked_per_table(self):
+    def test_wholly_untranslated_table_is_allowed(self):
         for kind in ("package", "bundle"):
             with self.subTest(kind=kind):
                 self.handbacks(untranslated=("de", kind))
-                existing = self.root / "package.nls.de.json"
-                existing.write_text('{"description":"keep"}', encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, f"de/{kind} is wholly"):
-                    localization.import_translations(
-                        self.root, self.translations, self.output
-                    )
-                self.assertEqual(existing.read_text(), '{"description":"keep"}')
-                self.assertFalse(self.output.exists())
-                self.calls.assert_not_called()
+                localization.validate_handback(
+                    sorted(self.translations.rglob("*.xlf")), runtime=True
+                )
 
     def test_partial_translation_is_allowed(self):
         files = self.handbacks()
@@ -200,12 +194,13 @@ class LocalizationTests(unittest.TestCase):
                 files = self.handbacks(same=True, state=state)
                 localization.validate_handback(files, runtime=True)
 
-    def test_all_new_english_is_rejected(self):
-        files = self.handbacks(same=True)
-        with self.assertRaisesRegex(ValueError, "wholly untranslated"):
-            localization.validate_handback(files, runtime=True)
+    def test_all_new_english_is_allowed(self):
+        self.handbacks(same=True)
+        localization.import_translations(self.root, self.translations, self.output)
+        self.assertEqual(len(list(self.root.glob("package.nls.*.json"))), 14)
+        self.assertEqual(len(list((self.root / "l10n").glob("*.json"))), 14)
 
-    def test_pseudo_localization_is_not_translation_evidence(self):
+    def test_untranslated_pseudo_localization_is_allowed(self):
         files = self.handbacks(untranslated=("qps-ploc", "package"))
         localization.validate_handback(files, runtime=True)
 
