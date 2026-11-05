@@ -30,7 +30,6 @@ LOCALES = (
     "zh-tw",
 )
 LOCALE_ALIASES = {"zh-hans": "zh-cn", "zh-hant": "zh-tw"}
-TRANSLATED_STATES = {"translated", "final", "signed-off"}
 
 
 def inside(root: pathlib.Path, value: str) -> pathlib.Path:
@@ -115,9 +114,9 @@ def export_english(
 
 
 def validate_handback(files: list[pathlib.Path], runtime: bool) -> None:
-    """Require coverage and translation evidence in each required locale table."""
+    """Require complete, nonempty tables while allowing untranslated strings."""
     kinds = ("package", "bundle") if runtime else ("package",)
-    tables = {}
+    tables = set()
     for path in files:
         document = ET.parse(path)
         for table in document.findall(".//{*}file"):
@@ -132,30 +131,16 @@ def validate_handback(files: list[pathlib.Path], runtime: bool) -> None:
             units = table.findall(".//{*}trans-unit")
             if not units:
                 raise ValueError(f"Empty translation table: {locale}/{kind}")
-            translated = False
             for unit in units:
                 source = unit.find("{*}source")
-                target = unit.find("{*}target")
                 if source is None or not "".join(source.itertext()).strip():
                     raise ValueError(f"Missing English source in {locale}/{kind}")
-                if target is not None:
-                    text = "".join(target.itertext()).strip()
-                    translated |= bool(text) and (
-                        text != "".join(source.itertext()).strip()
-                        or target.get("state") in TRANSLATED_STATES
-                    )
-            tables[key] = translated
+            tables.add(key)
     for locale in LOCALES:
         for kind in kinds:
             if (locale, kind) not in tables:
                 raise ValueError(
                     f"Incomplete translation handback: missing {locale}/{kind}"
-                )
-            if locale != "qps-ploc" and not tables[locale, kind]:
-                raise ValueError(
-                    f"Translation handback is not ready: {locale}/{kind} is wholly "
-                    "untranslated. Wait for translated output from the "
-                    "localization service."
                 )
 
 

@@ -120,12 +120,10 @@ python <tools>/scripts/localization.py --operation import \
 
 The importer derives identity/runtime metadata from the extension manifest,
 requires all 14 configured locales, and validates every table before copying.
-Each required real-language manifest/runtime table must contain translation
-evidence: a nonempty target differing from English, or a target explicitly marked
-translated/final/signed-off. Individual untranslated strings are allowed;
-pseudo-localization is checked for coverage but is not real-language evidence.
-Missing, empty, incomplete, or wholly untranslated handbacks fail explicitly.
-Do not publish while waiting for service onboarding or real translated output.
+Untranslated strings and wholly untranslated tables are allowed: users see the
+English text until translated handbacks arrive. Translation state does not gate
+release packaging. Missing, empty, malformed, or incomplete handbacks still fail
+explicitly, including missing runtime tables when runtime localization is declared.
 
 Generated root `package.nls.<locale>.json` and declared runtime locale files should
 be ignored by Git but included by VSCE. Keep English `package.nls.json` tracked.
