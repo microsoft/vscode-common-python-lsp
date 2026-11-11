@@ -1,0 +1,29 @@
+{
+  "description": "Partial client payload: explicit empty arrays, shallow defaults, unknown fields and hardcoded global defaults.",
+  "toolDefaults": {
+    "severity": { "E": "Error", "W": "Warning" }
+  },
+  "hardcodedSettings": {
+    "ignorePatterns": []
+  },
+  "initializationOptions": {
+    "globalSettings": {
+      "args": ["--global"],
+      "interpreter": ["__PYTHON__"],
+      "importStrategy": "fromEnvironment",
+      "severity": { "E": "Warning" },
+      "ignorePatterns": ["global/**"],
+      "unknownGlobal": { "keep": true }
+    },
+    "settings": [
+      {
+        "workspace": "__ROOT_URI__",
+        "cwd": "__ROOT_FS__",
+        "args": [],
+        "path": [],
+        "interpreter": [],
+        "extensionOption": { "enabled": false }
+      }
+    ]
+  }
+}

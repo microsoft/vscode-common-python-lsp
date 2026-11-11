@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 
 import { assert } from 'chai';
+import { readFileSync } from 'fs';
+import * as path from 'path';
 import * as sinon from 'sinon';
+import { pathToFileURL } from 'url';
 import { Uri, WorkspaceFolder } from 'vscode';
 import {
     checkIfConfigurationChanged,
@@ -14,7 +17,7 @@ import {
     logLegacySettings,
     resolveVariables,
 } from '../src/settings';
-import { ToolConfig } from '../src/types';
+import { IInitOptions, ToolConfig } from '../src/types';
 import * as vscodeapi from '../src/vscodeapi';
 
 function makeWorkspace(name: string, fsPath: string, index: number = 0): WorkspaceFolder {
@@ -53,6 +56,59 @@ suite('settings — workspace & global resolution', () => {
 
     teardown(() => {
         sinon.restore();
+    });
+
+    test('produces the shared initialization fixture with document CWD variables deferred', async () => {
+        const root = makeWorkspace('contract', path.resolve('settings workspace café'));
+        const rootUri = pathToFileURL(root.uri.fsPath).href;
+        sinon.stub(root.uri, 'toString').returns(rootUri);
+        getWorkspaceFoldersStub.returns([root]);
+        sinon.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+        const replacements = new Map([
+            ['__ROOT_URI__', rootUri],
+            ['__ROOT_FS__', root.uri.fsPath],
+            ['__CWD_FS__', process.cwd()],
+            ['__PYTHON__', path.join(root.uri.fsPath, 'python')],
+            ['__SEP__', path.sep],
+        ]);
+        const fixturePath = path.resolve(
+            __dirname,
+            '..',
+            '..',
+            '..',
+            'python',
+            'tests',
+            'fixtures',
+            'settings',
+            'producer.json',
+        );
+        const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'), (_key: string, value: unknown) => {
+            if (typeof value !== 'string') {
+                return value;
+            }
+            let expanded = value;
+            for (const [token, replacement] of replacements) {
+                expanded = expanded.split(token).join(replacement);
+            }
+            return expanded;
+        }) as {
+            toolDefaults: Record<string, unknown>;
+            configuration: { workspace: Record<string, unknown>; global: Record<string, unknown> };
+            initializationOptions: IInitOptions;
+        };
+        getConfigurationStub.returns({
+            get: (key: string, fallback?: unknown) =>
+                key in fixture.configuration.workspace ? fixture.configuration.workspace[key] : fallback,
+            inspect: (key: string) => ({ globalValue: fixture.configuration.global[key] }),
+        });
+        const toolConfig = makeToolConfig({ settingsDefaults: fixture.toolDefaults });
+
+        const actual: IInitOptions = {
+            settings: await getExtensionSettings('flake8', toolConfig, undefined, [root]),
+            globalSettings: await getGlobalSettings('flake8', toolConfig),
+        };
+
+        assert.deepEqual(actual, fixture.initializationOptions);
     });
 
     suite('getWorkspaceSettings', () => {
@@ -260,6 +316,50 @@ suite('settings — workspace & global resolution', () => {
 
             assert.deepEqual(result.args, ['--strict']);
         });
+
+        for (const [label, globalValue, expected] of [
+            ['null uses the contribution default', null, 'useBundled'],
+            ['empty string overrides the contribution default', '', ''],
+        ] as const) {
+            test(`preserves scope precedence: ${label}`, async () => {
+                const contributionDefaults: Record<string, unknown> = {
+                    importStrategy: 'useBundled',
+                    args: ['--contribution'],
+                    interpreter: ['/contribution/python'],
+                    cwd: process.cwd(),
+                    enabled: true,
+                    severity: { E: 'Hint' },
+                };
+                const globalValues: Record<string, unknown> = {
+                    importStrategy: globalValue,
+                    args: [],
+                    interpreter: [],
+                    cwd: '',
+                    enabled: false,
+                    severity: null,
+                };
+                getConfigurationStub.returns({
+                    get: (key: string, fallback?: unknown) =>
+                        key === 'importStrategy' ? 'fromEnvironment' : fallback,
+                    inspect: (key: string) => ({
+                        globalValue: globalValues[key],
+                        defaultValue: contributionDefaults[key],
+                    }),
+                });
+                const toolConfig = makeToolConfig();
+
+                const global = await getGlobalSettings('flake8', toolConfig);
+                const workspace = await getWorkspaceSettings('flake8', ws, toolConfig);
+
+                assert.equal(global.importStrategy, expected);
+                assert.equal(workspace.importStrategy, 'fromEnvironment');
+                assert.deepEqual(global.args, []);
+                assert.deepEqual(global.interpreter, []);
+                assert.equal(global.cwd, '');
+                assert.isFalse(global.enabled);
+                assert.deepEqual(global.severity, { E: 'Hint' });
+            });
+        }
     });
 
     suite('getExtraPaths', () => {

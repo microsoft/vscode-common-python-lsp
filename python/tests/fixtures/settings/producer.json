@@ -1,0 +1,54 @@
+{
+  "description": "Complete producer payload, with host variables resolved and document CWD variables deferred.",
+  "toolDefaults": {
+    "severity": { "E": "Error", "W": "Warning" },
+    "extensionOption": { "enabled": true, "label": "default" }
+  },
+  "configuration": {
+    "workspace": {
+      "cwd": "${workspaceFolder}__SEP__${relativeFileDirname}",
+      "args": [
+        "--label",
+        "café",
+        "--config",
+        "${workspaceFolder}__SEP__tool.toml"
+      ],
+      "path": [],
+      "interpreter": ["__PYTHON__"],
+      "severity": { "E": "Hint" },
+      "extensionOption": { "enabled": false }
+    },
+    "global": {
+      "args": ["--global"],
+      "interpreter": ["__PYTHON__"],
+      "severity": { "E": "Warning" },
+      "extensionOption": { "enabled": true, "label": "global" }
+    }
+  },
+  "initializationOptions": {
+    "settings": [
+      {
+        "cwd": "__ROOT_FS____SEP__${relativeFileDirname}",
+        "workspace": "__ROOT_URI__",
+        "args": ["--label", "café", "--config", "__ROOT_FS____SEP__tool.toml"],
+        "path": [],
+        "interpreter": ["__PYTHON__"],
+        "importStrategy": "useBundled",
+        "showNotifications": "off",
+        "severity": { "E": "Hint" },
+        "extensionOption": { "enabled": false }
+      }
+    ],
+    "globalSettings": {
+      "cwd": "__CWD_FS__",
+      "workspace": "__CWD_FS__",
+      "args": ["--global"],
+      "path": [],
+      "interpreter": ["__PYTHON__"],
+      "importStrategy": "fromEnvironment",
+      "showNotifications": "off",
+      "severity": { "E": "Warning" },
+      "extensionOption": { "enabled": true, "label": "global" }
+    }
+  }
+}
