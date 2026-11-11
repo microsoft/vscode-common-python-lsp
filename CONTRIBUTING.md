@@ -18,60 +18,28 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 2. Make your changes and ensure they pass the existing tests and linting.
 3. Submit a pull request with a clear description of the changes.
 
-## Versioning
+## Adoption and milestones
 
-This project adheres to [Semantic Versioning (SemVer)](https://semver.org/).
-In short:
+Extensions consume this repository at a pinned Git commit and build both the
+TypeScript and Python runtimes from that revision. The pinned source revision,
+not the version strings in the package manifests, is the compatibility identity.
 
-- **MAJOR** (`X.0.0`) – incompatible API changes.
-- **MINOR** (`0.X.0`) – new functionality that is backwards-compatible.
-- **PATCH** (`0.0.X`) – backwards-compatible bug fixes.
+The private npm manifest and Python package metadata retain fixed version values
+needed for local builds and installation. Ordinary source changes do not require
+changing or synchronizing those values. The default Python server reports its
+installed package version for diagnostics, but that value is not a source
+provenance guarantee. The npm and Python packages are not published.
 
-We cut a new **patch release every week** if there are any unreleased fixes on
-`main`. If no fixes have landed since the last release, the weekly release is
-skipped. All released versions are listed on the
-[GitHub Releases](https://github.com/microsoft/vscode-common-python-lsp/releases) page.
+Maintainers may optionally tag a reviewed commit and create a
+[GitHub Release](https://github.com/microsoft/vscode-common-python-lsp/releases)
+with release notes as a human-readable milestone. A milestone does not require
+package-version changes or publication and does not trigger or gate consumer
+submodule updates.
 
-Both the TypeScript and Python packages share a single version number defined in
-the `VERSION` file at the repository root. When bumping the version:
-
-```bash
-# Set the version and propagate to package.json + pyproject.toml
-python -m scripts.version.sync 0.2.0
-```
-
-To verify all manifests are in sync (also runs automatically in CI):
-
-```bash
-python -m scripts.version.validate
-```
-
-A PR will fail the **Version Check** workflow if the version in `VERSION`,
-`typescript/package.json`, or `python/pyproject.toml` don't match.
-
-### Automated weekly patch bump
-
-A GitHub Actions workflow (`.github/workflows/auto-patch-bump.yml`) runs every
-Monday at 00:00 UTC. If there are unreleased commits on `main` since the last
-GitHub Release, the workflow automatically opens a PR that increments the patch
-version and syncs all manifests. If a previous bump PR is still open and `main`
-has advanced beyond it (new commits landed since the PR was created), the stale
-PR is closed and replaced with a fresh one. If the existing PR still covers the
-current state of `main`, no action is taken. Maintainers review and merge the
-bump PR before creating the release.
-
-### Release process
-
-1. Bump the version: `python -m scripts.version.sync X.Y.Z`
-2. Update `CHANGELOG.md` with the new version and release notes.
-3. Commit, push, and merge the PR.
-4. After GitHub Actions validation passes, manually create a GitHub Release
-   tagged `vX.Y.Z` at the merged commit, using the changelog for release notes.
-
-Azure DevOps release automation is no longer used. Extensions consume this
-repository as a git submodule pinned to a commit; GitHub Releases are versioned
-milestones, not a prerequisite for submodule updates. The npm and Python packages
-are not published.
+Consumers are responsible for building both runtimes from their intended pinned
+revision. Automated artifact-provenance enforcement and reliable build
+invalidation remain roadmap S4 follow-up work rather than a package-version
+release requirement.
 
 ## Reporting Issues
 
