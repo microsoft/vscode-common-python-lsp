@@ -66,43 +66,6 @@ Use the Node.js version pinned in `.nvmrc` for development.
 
 ## Consuming in Extensions
 
-### Shared localization automation
-
-Localization automation is maintained in
-[`microsoft/vscode-python-ci`](https://github.com/microsoft/vscode-python-ci/tree/main/actions/localization),
-independently of these runtime libraries. The action and Python helper have been
-removed from this repository; existing callers pinned to earlier commits can
-continue using those revisions while migrating.
-
-Update GitHub workflows to use:
-
-```yaml
-permissions:
-  contents: read
-
-jobs:
-  localization:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: microsoft/vscode-python-ci/actions/localization@2f06c1206c8644c50f99228a111e8c15e33e7828
-        with:
-          app-id: ${{ vars.PYTHON_LOCALIZATION_APP_ID }}
-          private-key: ${{ secrets.PYTHON_LOCALIZATION_PRIVATE_KEY }}
-          submodules: recursive
-          source-paths: '["src", "external/vscode-common-python-lsp/typescript/src"]'
-```
-
-Existing action inputs, caller triggers, concurrency, and localization App
-credentials remain unchanged. Preserve source paths into this repository when
-extracting shared runtime strings; moving the tooling does not move those strings.
-
-For Azure pipelines, change the `localizationTools` repository to
-`microsoft/vscode-python-ci` and pin it to the same reviewed commit as the action.
-Keep the `scripts/localization.py` helper path, CLI arguments, translation
-repository, and service connection unchanged. Ensure the service connection can
-read the new tooling repository. See the shared action documentation linked above
-for the maintained input contract, import requirements, and tests.
-
 ### Shared runtime libraries
 
 Consume this repository as a git submodule so the Python and TypeScript
