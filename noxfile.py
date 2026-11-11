@@ -14,9 +14,6 @@ def install(session: nox.Session) -> None:
 @nox.session()
 def tests(session: nox.Session) -> None:
     """Run Python tests."""
-    session.run(
-        "python", "-m", "unittest", "discover", "-s", "scripts", "-p", "*_test.py"
-    )
     session.install("-e", "./python[dev]")
     session.run("pytest", "python/tests", "-v")
 
@@ -34,10 +31,3 @@ def lint(session: nox.Session) -> None:
 
     session.run("isort", "--check", "python/vscode_common_python_lsp")
     session.run("isort", "--check", "python/tests")
-    session.run("flake8", "scripts/localization.py", "scripts/localization_test.py")
-    session.run(
-        "black", "--check", "scripts/localization.py", "scripts/localization_test.py"
-    )
-    session.run(
-        "isort", "--check", "scripts/localization.py", "scripts/localization_test.py"
-    )

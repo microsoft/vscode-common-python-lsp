@@ -68,12 +68,13 @@ Use the Node.js version pinned in `.nvmrc` for development.
 
 ### Shared localization automation
 
-The composite action at `.github/actions/localization` and the standard-library
-Python CLI at `scripts/localization.py` share localization automation across the
-Python extensions. This tooling does not require adopting either runtime library.
-Pin the action and Azure tooling checkout to the same reviewed commit.
+Localization automation is maintained in
+[`microsoft/vscode-python-ci`](https://github.com/microsoft/vscode-python-ci/tree/main/actions/localization),
+independently of these runtime libraries. The action and Python helper have been
+removed from this repository; existing callers pinned to earlier commits can
+continue using those revisions while migrating.
 
-Each extension's English-only GitHub workflow calls:
+Update GitHub workflows to use:
 
 ```yaml
 permissions:
@@ -83,7 +84,7 @@ jobs:
   localization:
     runs-on: ubuntu-latest
     steps:
-      - uses: microsoft/vscode-common-python-lsp/.github/actions/localization@<reviewed-commit-sha>
+      - uses: microsoft/vscode-python-ci/actions/localization@2f06c1206c8644c50f99228a111e8c15e33e7828
         with:
           app-id: ${{ vars.PYTHON_LOCALIZATION_APP_ID }}
           private-key: ${{ secrets.PYTHON_LOCALIZATION_PRIVATE_KEY }}
@@ -91,44 +92,16 @@ jobs:
           source-paths: '["src", "external/vscode-common-python-lsp/typescript/src"]'
 ```
 
-Keep trigger paths and concurrency in the caller workflow. Omit the submodule
-input and use the default `["src"]` for standalone runtime extensions. Extensions
-without a `package.json` `l10n` declaration export and import manifest strings
-only, even if their source contains runtime localization calls.
+Existing action inputs, caller triggers, concurrency, and localization App
+credentials remain unchanged. Preserve source paths into this repository when
+extracting shared runtime strings; moving the tooling does not move those strings.
 
-The action bundles checkout, Node/Python setup, extraction with pinned
-`@vscode/l10n-dev@0.0.35`, app authentication, and English submission. It loads the
-helper from its own action revision. Configure the app ID variable and private-key
-secret in each caller (or grant organization-level access); the app needs Contents
-write access only to `microsoft/vscode-python-extensions-loc`. The default npm feed
-is `https://packagefeedproxy.microsoft.io/npm/`. Inputs never appear in generated
-shell commands: source paths and branch values are passed through environment
-variables.
-
-English goes to `src/en/<publisher>.<name>/<publisher>.<name>-new.xlf` on the
-existing `dev` branch. Unchanged XLF is a successful no-op. Submissions never
-force-push; concurrent updates retry rejected pushes with a bounded rebase.
-
-Pylance-Eng stable/pre-release templates orchestrate **pull-only** imports using
-the same CLI, with source, tools, and translations in separate workspace folders:
-
-```text
-python <tools>/scripts/localization.py --operation import \
-  --extension-root <extension> --translations-root <drop>/out \
-  --output-directory <new-staging-directory>
-```
-
-The importer derives identity/runtime metadata from the extension manifest,
-requires all 14 configured locales, and validates every table before copying.
-Untranslated strings and wholly untranslated tables are allowed: users see the
-English text until translated handbacks arrive. Translation state does not gate
-release packaging. Missing, empty, malformed, or incomplete handbacks still fail
-explicitly, including missing runtime tables when runtime localization is declared.
-
-Generated root `package.nls.<locale>.json` and declared runtime locale files should
-be ignored by Git but included by VSCE. Keep English `package.nls.json` tracked.
-Run dependency-free regression tests with
-`python -m unittest discover -s scripts -p "*_test.py"`.
+For Azure pipelines, change the `localizationTools` repository to
+`microsoft/vscode-python-ci` and pin it to the same reviewed commit as the action.
+Keep the `scripts/localization.py` helper path, CLI arguments, translation
+repository, and service connection unchanged. Ensure the service connection can
+read the new tooling repository. See the shared action documentation linked above
+for the maintained input contract, import requirements, and tests.
 
 ### Shared runtime libraries
 
