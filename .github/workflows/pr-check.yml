@@ -74,3 +74,6 @@ jobs:
       - name: Build
         working-directory: typescript
         run: npm run build
+      - name: Test
+        working-directory: typescript
+        run: npm test
