@@ -11,9 +11,14 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import lsprotocol.types as lsp
 import pytest
+from pygls import uris
+from pygls.workspace import TextDocument
 
 from vscode_common_python_lsp.server import ToolServer, ToolServerConfig
+
+from .settings_fixtures import load_settings_fixture
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -948,6 +953,286 @@ class TestLifecycle:
         # Should not raise ValueError, should fall back gracefully
         result = ts.get_cwd(settings, doc)
         assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Settings boundary characterization
+# ---------------------------------------------------------------------------
+
+
+class TestSettingsContract:
+    def test_shared_producer_payload_and_staged_cwd(self, tmp_path):
+        root = tmp_path / "workspace café"
+        root.mkdir()
+        fixture = load_settings_fixture("producer", root)
+        options = fixture["initializationOptions"]
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings=fixture["toolDefaults"],
+            )
+        )
+
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                initialization_options=options,
+            )
+        )
+
+        key = str(pathlib.Path(uris.to_fs_path(root.as_uri())))
+        assert ts.global_settings == options["globalSettings"]
+        assert ts.workspace_settings == {
+            key: {**options["settings"][0], "workspaceFS": key}
+        }
+        document = TextDocument((root / "src" / "demo.py").as_uri())
+        settings = ts.get_settings_by_document(document)
+        assert settings is ts.workspace_settings[key]
+        assert ts.get_cwd(settings, document) == str(root / "src")
+        assert ts.get_cwd(settings) == key
+
+    @pytest.mark.parametrize(
+        "overrides,severity,ignore_patterns",
+        [
+            ({}, {"E": "Warning"}, []),
+            (
+                {"severity": {"W": "Hint"}, "ignorePatterns": ["workspace/**"]},
+                {"W": "Hint"},
+                ["workspace/**"],
+            ),
+        ],
+        ids=["global-defaults", "explicit-workspace-overrides"],
+    )
+    def test_partial_payload_projection_and_shallow_precedence(
+        self, tmp_path, overrides, severity, ignore_patterns
+    ):
+        fixture = load_settings_fixture("legacy-partial", tmp_path)
+        options = fixture["initializationOptions"]
+        options["settings"][0].update(overrides)
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings=fixture["toolDefaults"],
+                hardcoded_settings=fixture["hardcodedSettings"],
+            )
+        )
+
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                initialization_options=options,
+            )
+        )
+
+        key = str(pathlib.Path(uris.to_fs_path(tmp_path.as_uri())))
+        assert ts.global_settings == options["globalSettings"]
+        assert ts.global_settings["unknownGlobal"] == {"keep": True}
+        assert ts.workspace_settings == {
+            key: {
+                "workspace": tmp_path.as_uri(),
+                "workspaceFS": key,
+                "cwd": str(tmp_path),
+                "args": [],
+                "path": [],
+                "interpreter": [],
+                "importStrategy": "fromEnvironment",
+                "showNotifications": "off",
+                "severity": severity,
+                "ignorePatterns": ignore_patterns,
+                "extensionOption": {"enabled": False},
+            }
+        }
+
+    @pytest.mark.parametrize("value", ["empty", "null"])
+    def test_explicit_values_do_not_regain_defaults(self, tmp_path, value):
+        fixture = load_settings_fixture("legacy-partial", tmp_path)
+        options = fixture["initializationOptions"]
+        options["globalSettings"].update(
+            {"path": ["global-tool"], "enabled": True, "showNotifications": "always"}
+        )
+        overrides = {
+            "args": [],
+            "path": [],
+            "interpreter": [],
+            "cwd": "",
+            "importStrategy": "",
+            "showNotifications": "",
+            "enabled": False,
+            "severity": {},
+            "extensionOption": None,
+        }
+        if value == "null":
+            overrides = dict.fromkeys(overrides)
+        options["settings"][0].update(overrides)
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings={**fixture["toolDefaults"], "enabled": True},
+            )
+        )
+
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                initialization_options=options,
+            )
+        )
+
+        settings = next(iter(ts.workspace_settings.values()))
+        assert {key: settings[key] for key in overrides} == overrides
+        if value == "null":
+            with pytest.raises(TypeError):
+                ts.get_cwd(settings)
+        else:
+            assert ts.get_cwd(settings) == ""
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            None,
+            {},
+            {"globalSettings": {"args": ["--global"]}},
+            {"globalSettings": {"args": ["--global"]}, "settings": None},
+            {"globalSettings": {"args": ["--global"]}, "settings": []},
+        ],
+        ids=[
+            "no-options",
+            "empty-options",
+            "missing-settings",
+            "null-settings",
+            "empty-settings",
+        ],
+    )
+    def test_absent_settings_use_server_cwd_not_client_root(
+        self, tmp_path, monkeypatch, options
+    ):
+        cwd = tmp_path / "server cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        ts = _make_server()
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                root_uri=(tmp_path / "client root").as_uri(),
+                initialization_options=options,
+            )
+        )
+
+        key = os.getcwd()
+        globals_ = (options or {}).get("globalSettings", {})
+        assert ts.global_settings == globals_
+        assert ts.workspace_settings == {
+            key: {
+                "cwd": key,
+                "workspaceFS": key,
+                "workspace": uris.from_fs_path(key),
+                "path": [],
+                "interpreter": [sys.executable],
+                "args": globals_.get("args", []),
+                "importStrategy": "useBundled",
+                "showNotifications": "off",
+            }
+        }
+
+    def test_null_global_settings_are_rejected(self):
+        ts = _make_server()
+        with pytest.raises(TypeError):
+            ts.apply_settings(
+                lsp.InitializeParams(
+                    capabilities=lsp.ClientCapabilities(),
+                    process_id=None,
+                    initialization_options={"globalSettings": None},
+                )
+            )
+
+    def test_repeated_application_retains_aliases_and_routes_real_uris(self, tmp_path):
+        ts = _make_server()
+        workspaces = ts.workspace_settings
+        globals_ = ts.global_settings
+        root = tmp_path / "root"
+        nested = root / "nested"
+        other = tmp_path / "other"
+        for directory in (root, nested, other):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                initialization_options={
+                    "globalSettings": {
+                        "args": ["--first"],
+                        "unknownGlobal": {"keep": True},
+                    },
+                    "settings": [
+                        {
+                            "workspace": root.as_uri(),
+                            "args": ["--root"],
+                            "extensionOption": {"old": True},
+                        },
+                        {"workspace": other.as_uri(), "args": ["--retained"]},
+                    ],
+                },
+            )
+        )
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                initialization_options={
+                    "globalSettings": {"args": ["--second"], "path": []},
+                    "settings": [
+                        {"workspace": root.as_uri(), "args": []},
+                        {"workspace": nested.as_uri(), "interpreter": []},
+                        {"workspace": "pico:", "args": ["--virtual"]},
+                    ],
+                },
+            )
+        )
+
+        assert ts.workspace_settings is workspaces
+        assert ts.global_settings is globals_
+        assert globals_ == {
+            "args": ["--second"],
+            "path": [],
+            "unknownGlobal": {"keep": True},
+        }
+        keys = [
+            str(pathlib.Path(uris.to_fs_path(p.as_uri())))
+            for p in (root, nested, other)
+        ]
+        assert set(workspaces) == set(keys)
+        assert [workspaces[key]["args"] for key in keys] == [
+            [],
+            ["--second"],
+            ["--retained"],
+        ]
+        assert workspaces[keys[1]]["interpreter"] == []
+        assert "extensionOption" not in workspaces[keys[0]]
+        for directory, key in zip((root, nested, other), keys):
+            document = TextDocument((directory / "src" / "demo.py").as_uri())
+            assert ts.get_document_key(document) == key
+            assert ts.get_settings_by_document(document) is workspaces[key]
+            assert (
+                ts.get_settings_by_path(pathlib.Path(document.path)) is workspaces[key]
+            )
+
+        outside = TextDocument((tmp_path / "outside" / "demo.py").as_uri())
+        assert (
+            ts.get_settings_by_path(pathlib.Path(outside.path)) is workspaces[keys[0]]
+        )
+        fallback = ts.get_settings_by_document(outside)
+        assert fallback["workspaceFS"] == str(pathlib.Path(outside.path).parent)
+        assert fallback["args"] == ["--second"]
+        assert "unknownGlobal" not in fallback
+        assert ts.get_settings_by_document(None) is workspaces[keys[0]]
 
 
 # ---------------------------------------------------------------------------

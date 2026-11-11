@@ -18,6 +18,20 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 2. Make your changes and ensure they pass the existing tests and linting.
 3. Submit a pull request with a clear description of the changes.
 
+### Settings boundary tests
+
+The JSON corpus in `python/tests/fixtures/settings/` characterizes the existing
+initialization-options contract. Fixture metadata is separate from
+`initializationOptions`; `__ROOT_URI__`, `__ROOT_FS__`, `__CWD_FS__`, `__PYTHON__`
+and `__SEP__` are test-only substitutions, not supported settings variables.
+Python and TypeScript tests independently consume `producer.json`, including
+host-resolved CWD variables that Python finishes resolving per document.
+
+`python/tests/test_server_stdio.py` starts a test-only ToolServer over real LSP
+stdio and checks initialize/initialized/settings/shutdown/exit. It needs no tool
+installation, VS Code host or Node build. Repeated settings application is
+covered separately in-process, not by reinitializing a live LSP session.
+
 ## Versioning
 
 This project adheres to [Semantic Versioning (SemVer)](https://semver.org/).

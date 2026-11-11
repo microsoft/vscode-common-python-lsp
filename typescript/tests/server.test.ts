@@ -11,7 +11,7 @@ import * as status from '../src/status';
 import * as utilities from '../src/utilities';
 import * as vscodeapi from '../src/vscodeapi';
 import * as settingsModule from '../src/settings';
-import { IBaseSettings, ToolConfig } from '../src/types';
+import { IBaseSettings, IInitOptions, ToolConfig } from '../src/types';
 import { PythonEnvironmentsProvider } from '../src/python';
 
 // ---------------------------------------------------------------------------
@@ -344,6 +344,12 @@ suite('restartServer', () => {
         const extensionSettings = [
             makeSettings({ workspace: 'file:///workspace/project', interpreter: ['/project/python'] }),
         ];
+        const globalSettings = makeSettings({
+            workspace: process.cwd(),
+            importStrategy: 'fromEnvironment',
+            args: ['--global'],
+        });
+        (settingsModule.getGlobalSettings as sinon.SinonStub).resolves(globalSettings);
 
         const result = await restartServer(makeRestartOptions({ extensionSettings }));
 
@@ -352,8 +358,12 @@ suite('restartServer', () => {
             'pre-resolved settings should be reused',
         );
         const clientOptions = (result.client as unknown as {
-            clientOptions: { initializationOptions: { settings: IBaseSettings[] } };
+            clientOptions: { initializationOptions: IInitOptions };
         }).clientOptions;
         assert.strictEqual(clientOptions.initializationOptions.settings, extensionSettings);
+        assert.deepEqual(clientOptions.initializationOptions, {
+            settings: extensionSettings,
+            globalSettings,
+        });
     });
 });
