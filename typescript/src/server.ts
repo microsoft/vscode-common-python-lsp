@@ -231,6 +231,12 @@ export interface RestartServerOptions {
     outputChannel: LogOutputChannel;
     toolConfig: ToolConfig;
     pythonProvider: PythonEnvironmentsProvider;
+    /**
+     * Synchronous notification after the old client's stop settles with state Stopped,
+     * before replacement creation. Also applies when stop rejects but leaves
+     * the client Stopped; not called without an old client or if it is still Running.
+     */
+    onOldClientStopped?: () => void;
 }
 
 /** Result of {@link restartServer} — caller owns the disposables. */
@@ -258,6 +264,11 @@ export async function restartServer(
             await oldLsClient.stop();
         } catch (ex) {
             traceError(`Server: Stop failed: ${ex}`);
+        }
+        // Public Stopped can fire before languageclient disposes its providers.
+        // Wait for stop to settle before notifying the owner of the safe handoff.
+        if (oldLsClient.state === State.Stopped) {
+            options.onOldClientStopped?.();
         }
     }
 

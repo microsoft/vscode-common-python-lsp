@@ -16,6 +16,7 @@ import {
     ToolExtensionContext,
 } from '../src/activation';
 import * as configWatcher from '../src/configWatcher';
+import * as envFileModule from '../src/envFile';
 import * as loggingModule from '../src/logging';
 import * as settingsModule from '../src/settings';
 import * as serverModule from '../src/server';
@@ -897,6 +898,50 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         return mock as unknown as LanguageClient;
     }
 
+    function stubServerDependencies(): void {
+        sandbox.stub(envFileModule, 'getEnvFileVars').resolves({});
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns({
+            uri: vscode.Uri.parse('file:///workspace'),
+            name: 'workspace',
+            index: 0,
+        });
+        sandbox.stub(settingsModule, 'getExtensionSettings').resolves([]);
+        sandbox.stub(settingsModule, 'getGlobalSettings').resolves({
+            cwd: '/workspace',
+            workspace: 'file:///workspace',
+            args: [],
+            path: [],
+            interpreter: ['/usr/bin/python3'],
+            importStrategy: 'useBundled',
+            showNotifications: 'off',
+        });
+        sandbox.stub(statusModule, 'updateStatus');
+    }
+
+    function holdClientStop(client: MockClient) {
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const originalStop = client.stop;
+        const stop = sandbox.stub(client, 'stop').callsFake(async () => {
+            entered.resolve();
+            await finished.promise;
+            await originalStop.call(client);
+        });
+        return { entered, finished, stop };
+    }
+
+    function holdClientStart() {
+        const entered = deferred<MockClient>();
+        const finished = deferred<void>();
+        const originalStart = LanguageClient.prototype.start;
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            entered.resolve(this as unknown as MockClient);
+            await finished.promise;
+            await originalStart.call(this);
+        });
+        return { entered, finished };
+    }
+
     // Test 1: provider registered once at createToolContext, disposed on State.Running
     test('registers placeholder once at activation and disposes it on State.Running', async () => {
         const mockClient = makeMockClient(State.Stopped);
@@ -1166,63 +1211,230 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         }
     });
 
-    test('holds formatter fallback until replacement completes and ignores stale client events', async () => {
-        const firstClient = makeMockClient(State.Stopped);
-        const secondClient = makeMockClient(State.Stopped);
-        const entered = deferred<void>();
-        const finished = deferred<serverModule.RestartServerResult>();
-        const replacement = { client: asLC(secondClient), disposables: [] };
-        const restartStub = sandbox.stub(serverModule, 'restartServer');
-        restartStub.onFirstCall().resolves({ client: asLC(firstClient), disposables: [] });
-        restartStub.onSecondCall().callsFake(() => {
-            entered.resolve();
-            return finished.promise;
-        });
+    test('restores formatter fallback after old stop until replacement completes and ignores stale client events', async () => {
+        stubServerDependencies();
         const ctx = createToolContext(makeFormatterOptions());
+        let stopping: ReturnType<typeof holdClientStop> | undefined;
+        let starting: ReturnType<typeof holdClientStart> | undefined;
+        let firstClient: MockClient | undefined;
+        let secondClient: MockClient | undefined;
         let replacing: Promise<void> | undefined;
 
         try {
             await ctx.runServer();
-            firstClient.simulateStateChange(State.Running);
+            firstClient = ctx.lsClient as unknown as MockClient;
+            assert.strictEqual(firstClient.state, State.Running);
             sinon.assert.calledOnce(providerDispose);
 
+            stopping = holdClientStop(firstClient);
+            starting = holdClientStart();
+
             replacing = ctx.runServer();
-            await entered.promise;
+            await stopping.entered.promise;
             assert.strictEqual(firstClient.state, State.Running);
             assert.strictEqual(ctx.lsClient, asLC(firstClient));
             sinon.assert.calledOnce(registerFormattingProviderStub);
             sinon.assert.calledOnce(providerDispose);
 
-            // The old listener is gone; fallback returns only at replacement completion.
+            // Languageclient can emit public Stopped before disposing its
+            // providers; that event alone is not the safe post-stop boundary.
             firstClient.simulateStateChange(State.Stopped);
             sinon.assert.calledOnce(registerFormattingProviderStub);
 
-            finished.resolve(replacement);
-            await replacing;
-            assert.strictEqual(ctx.lsClient, asLC(secondClient));
+            stopping.finished.resolve();
+            secondClient = await starting.entered.promise;
+            assert.strictEqual(firstClient.state, State.Stopped);
+            assert.strictEqual(ctx.lsClient, asLC(firstClient));
+            // Deliberately change the S3 characterization: the fallback must
+            // now cover stopped-old/pending-new, not wait for restart completion.
             sinon.assert.calledTwice(registerFormattingProviderStub);
-
-            firstClient.simulateStateChange(State.Running);
             sinon.assert.calledOnce(providerDispose);
-            secondClient.simulateStateChange(State.Running);
-            sinon.assert.calledTwice(providerDispose);
+
+            const statusCalls = (statusModule.updateStatus as sinon.SinonStub).callCount;
+            firstClient.simulateStateChange(State.Running);
             firstClient.simulateStateChange(State.Stopped);
             sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+            assert.strictEqual((statusModule.updateStatus as sinon.SinonStub).callCount, statusCalls);
+
+            starting.finished.resolve();
+            await replacing;
+            assert.strictEqual(ctx.lsClient, asLC(secondClient));
+            assert.strictEqual(secondClient.state, State.Running);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledTwice(providerDispose);
+
+            secondClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledThrice(registerFormattingProviderStub);
+            firstClient.simulateStateChange(State.Running);
+            sinon.assert.calledTwice(providerDispose);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledThrice(providerDispose);
+            firstClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledThrice(registerFormattingProviderStub);
 
             ctx.dispose();
             firstClient.simulateStateChange(State.Starting);
             secondClient.simulateStateChange(State.Stopped);
             secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledThrice(registerFormattingProviderStub);
+            sinon.assert.calledThrice(providerDispose);
+        } finally {
+            ctx.dispose();
+            stopping?.finished.resolve();
+            starting?.finished.resolve();
+            await replacing;
+            firstClient?.dispose();
+            secondClient?.dispose();
+        }
+    });
+
+    test('retains formatter fallback when old stop rejects after stopping and replacement start fails', async () => {
+        stubServerDependencies();
+        const ctx = createToolContext(makeFormatterOptions());
+        let starting: ReturnType<typeof holdClientStart> | undefined;
+        let firstClient: MockClient | undefined;
+        let secondClient: MockClient | undefined;
+        let replacing: Promise<void> | undefined;
+        const error = new Error('replacement start failed');
+
+        try {
+            await ctx.runServer();
+            firstClient = ctx.lsClient as unknown as MockClient;
+            const originalStop = firstClient.stop;
+            sandbox.stub(firstClient, 'stop').callsFake(async () => {
+                await originalStop.call(firstClient);
+                throw new Error('old stop timed out');
+            });
+            starting = holdClientStart();
+
+            replacing = ctx.runServer();
+            secondClient = await starting.entered.promise;
+            const dispose = sandbox.spy(secondClient, 'dispose');
+            assert.strictEqual(firstClient.state, State.Stopped);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            starting.finished.reject(error);
+            await replacing;
+            assert.isUndefined(ctx.lsClient);
+            sinon.assert.calledOnce(dispose);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            const statusCalls = (statusModule.updateStatus as sinon.SinonStub).callCount;
+            firstClient.simulateStateChange(State.Running);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledOnce(providerDispose);
+            assert.strictEqual((statusModule.updateStatus as sinon.SinonStub).callCount, statusCalls);
+
+            ctx.dispose();
+            firstClient.simulateStateChange(State.Stopped);
+            secondClient.simulateStateChange(State.Stopped);
             sinon.assert.calledTwice(registerFormattingProviderStub);
             sinon.assert.calledTwice(providerDispose);
         } finally {
             ctx.dispose();
-            finished.resolve(replacement);
+            starting?.finished.reject(error);
             await replacing;
-            firstClient.dispose();
-            secondClient.dispose();
+            firstClient?.dispose();
+            secondClient?.dispose();
         }
     });
+
+    test('does not restore formatter fallback when old stop rejects with a still-Running client', async () => {
+        stubServerDependencies();
+        const ctx = createToolContext(makeFormatterOptions());
+        let starting: ReturnType<typeof holdClientStart> | undefined;
+        let firstClient: MockClient | undefined;
+        let secondClient: MockClient | undefined;
+        let replacing: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            firstClient = ctx.lsClient as unknown as MockClient;
+            sandbox.stub(firstClient, 'stop').rejects(new Error('old client still running'));
+            starting = holdClientStart();
+
+            replacing = ctx.runServer();
+            secondClient = await starting.entered.promise;
+            assert.strictEqual(firstClient.state, State.Running);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            starting.finished.resolve();
+            await replacing;
+            assert.strictEqual(ctx.lsClient, asLC(secondClient), 'stop failure must not block replacement startup');
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+        } finally {
+            ctx.dispose();
+            starting?.finished.resolve();
+            await replacing;
+            firstClient?.dispose();
+            secondClient?.dispose();
+        }
+    });
+
+    for (const disposeDuring of ['old stop', 'replacement start']) {
+        test(`disposal during ${disposeDuring} prevents fallback resurrection and cleans up the late replacement`, async () => {
+            stubServerDependencies();
+            const ctx = createToolContext(makeFormatterOptions());
+            let stopping: ReturnType<typeof holdClientStop> | undefined;
+            let starting: ReturnType<typeof holdClientStart> | undefined;
+            let firstClient: MockClient | undefined;
+            let secondClient: MockClient | undefined;
+            let replacing: Promise<void> | undefined;
+
+            try {
+                await ctx.runServer();
+                firstClient = ctx.lsClient as unknown as MockClient;
+                stopping = holdClientStop(firstClient);
+                starting = holdClientStart();
+
+                replacing = ctx.runServer();
+                await stopping.entered.promise;
+                sinon.assert.calledOnce(registerFormattingProviderStub);
+                if (disposeDuring === 'old stop') {
+                    ctx.dispose();
+                }
+
+                stopping.finished.resolve();
+                secondClient = await starting.entered.promise;
+                const stop = sandbox.spy(secondClient, 'stop');
+                const dispose = sandbox.spy(secondClient, 'dispose');
+                if (disposeDuring === 'replacement start') {
+                    sinon.assert.calledTwice(registerFormattingProviderStub);
+                    ctx.dispose();
+                }
+                const registrations = registerFormattingProviderStub.callCount;
+                assert.strictEqual(providerDispose.callCount, registrations, 'all placeholders are disposed');
+
+                starting.finished.resolve();
+                await replacing;
+                assert.notStrictEqual(ctx.lsClient, asLC(secondClient), 'late replacement must not be assigned');
+                sinon.assert.calledOnce(stop);
+                sinon.assert.calledOnce(dispose);
+
+                const statusCalls = (statusModule.updateStatus as sinon.SinonStub).callCount;
+                firstClient.simulateStateChange(State.Running);
+                firstClient.simulateStateChange(State.Stopped);
+                secondClient.simulateStateChange(State.Starting);
+                secondClient.simulateStateChange(State.Running);
+                secondClient.simulateStateChange(State.Stopped);
+                assert.strictEqual(registerFormattingProviderStub.callCount, registrations);
+                assert.strictEqual(providerDispose.callCount, registrations);
+                assert.strictEqual((statusModule.updateStatus as sinon.SinonStub).callCount, statusCalls);
+            } finally {
+                ctx.dispose();
+                stopping?.finished.resolve();
+                starting?.finished.resolve();
+                await replacing;
+                firstClient?.dispose();
+                secondClient?.dispose();
+            }
+        });
+    }
 
     // Test 8: restartServer returns no client — placeholder stays registered
     test('keeps placeholder registered when restartServer returns no client', async () => {
