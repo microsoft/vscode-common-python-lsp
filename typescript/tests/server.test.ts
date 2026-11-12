@@ -4,6 +4,7 @@
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { LanguageStatusSeverity, LogOutputChannel, Uri, LogLevel, WorkspaceFolder } from 'vscode';
+import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { getServerCwd, createServer, restartServer, CreateServerOptions, RestartServerOptions, RestartServerResult } from '../src/server';
 import * as envFileModule from '../src/envFile';
@@ -17,6 +18,14 @@ import { PythonEnvironmentsProvider } from '../src/python';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return { promise, resolve };
+}
 
 function makeSettings(overrides?: Partial<IBaseSettings>): IBaseSettings {
     return {
@@ -307,6 +316,11 @@ suite('restartServer', () => {
         };
     }
 
+    function disposeResult(result?: RestartServerResult): void {
+        result?.disposables.forEach((disposable) => disposable.dispose());
+        result?.client?.dispose();
+    }
+
     test('returns a result with client and disposables', async () => {
         const result = await restartServer(makeRestartOptions());
         assert.isDefined(result.client);
@@ -314,12 +328,36 @@ suite('restartServer', () => {
         assert.isAbove(result.disposables.length, 0);
     });
 
-    test('stops old client before creating new one', async () => {
-        const oldStop = sandbox.stub().resolves();
+    test('awaits old client stop before creating and starting the replacement', async () => {
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const oldStop = sandbox.stub().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
         const oldClient = { stop: oldStop } as unknown as LanguageClient;
+        const startSpy = sandbox.spy(LanguageClient.prototype, 'start');
+        const options = makeRestartOptions();
+        const restarting = restartServer(options, oldClient);
+        let result: RestartServerResult | undefined;
 
-        await restartServer(makeRestartOptions(), oldClient);
-        assert.isTrue(oldStop.calledOnce, 'old client stop() should be called');
+        try {
+            await entered.promise;
+            sinon.assert.calledOnce(oldStop);
+            sinon.assert.notCalled(envFileModule.getEnvFileVars as sinon.SinonStub);
+            sinon.assert.notCalled(startSpy);
+            sinon.assert.notCalled(updateStatusStub);
+
+            finished.resolve();
+            result = await restarting;
+            assert.isDefined(result.client);
+            sinon.assert.calledOnce(startSpy);
+            sinon.assert.callOrder(oldStop, envFileModule.getEnvFileVars as sinon.SinonStub, startSpy);
+        } finally {
+            finished.resolve();
+            result ??= await restarting;
+            disposeResult(result);
+        }
     });
 
     test('handles old client stop failure gracefully', async () => {
@@ -327,18 +365,143 @@ suite('restartServer', () => {
             stop: sandbox.stub().rejects(new Error('stop failed')),
         } as unknown as LanguageClient;
 
-        // Should not throw
+        const startSpy = sandbox.spy(LanguageClient.prototype, 'start');
         const result = await restartServer(makeRestartOptions(), oldClient);
-        assert.isDefined(result.client);
+        try {
+            assert.isDefined(result.client);
+            sinon.assert.calledOnce(startSpy);
+            assert.deepEqual(updateStatusStub.lastCall.args, [
+                undefined, LanguageStatusSeverity.Information, false,
+            ]);
+        } finally {
+            disposeResult(result);
+        }
     });
 
-    test('updates status to busy during restart', async () => {
-        await restartServer(makeRestartOptions());
-        assert.isTrue(
-            updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, true),
-            'updateStatus should be called with busy=true',
-        );
+    test('awaits start and trace before clearing busy and installing the state listener', async () => {
+        const startEntered = deferred<LanguageClient>();
+        const startFinished = deferred<void>();
+        const traceEntered = deferred<void>();
+        const traceFinished = deferred<void>();
+        const originalStart = LanguageClient.prototype.start;
+        const startStub = sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            startEntered.resolve(this);
+            await startFinished.promise;
+            await originalStart.call(this);
+        });
+        const traceStub = sandbox.stub(LanguageClient.prototype, 'setTrace').callsFake(() => {
+            traceEntered.resolve();
+            return traceFinished.promise;
+        });
+        const listenerSpy = sandbox.spy(LanguageClient.prototype, 'onDidChangeState');
+        const restarting = restartServer(makeRestartOptions());
+        let result: RestartServerResult | undefined;
+
+        try {
+            const client = await startEntered.promise;
+            sinon.assert.calledOnceWithExactly(updateStatusStub, undefined, LanguageStatusSeverity.Information, true);
+            sinon.assert.notCalled(traceStub);
+            sinon.assert.notCalled(listenerSpy);
+
+            startFinished.resolve();
+            await traceEntered.promise;
+            assert.strictEqual(client.state, State.Running, 'mock start changes state without emitting an event');
+            sinon.assert.calledOnceWithExactly(updateStatusStub, undefined, LanguageStatusSeverity.Information, true);
+            sinon.assert.notCalled(listenerSpy);
+
+            traceFinished.resolve();
+            result = await restarting;
+            assert.strictEqual(result.client, client);
+            assert.lengthOf(result.disposables, 1);
+            assert.strictEqual(updateStatusStub.callCount, 2, 'success must explicitly clear busy without a state event');
+            assert.deepEqual(updateStatusStub.lastCall.args, [undefined, LanguageStatusSeverity.Information, false]);
+            sinon.assert.calledOnce(listenerSpy);
+            sinon.assert.callOrder(startStub, traceStub, listenerSpy);
+            assert.isTrue(updateStatusStub.lastCall.calledBefore(listenerSpy.firstCall));
+
+            const mockClient = client as unknown as import('./_languageclient_mock').LanguageClient;
+            mockClient.simulateStateChange(State.Stopped);
+            assert.strictEqual(updateStatusStub.callCount, 2);
+            mockClient.simulateStateChange(State.Running);
+            assert.strictEqual(updateStatusStub.callCount, 3, 'returned listener should report future Running events');
+            assert.deepEqual(updateStatusStub.lastCall.args, [undefined, LanguageStatusSeverity.Information, false]);
+
+            result.disposables.forEach((disposable) => disposable.dispose());
+            mockClient.simulateStateChange(State.Stopped);
+            mockClient.simulateStateChange(State.Running);
+            assert.strictEqual(updateStatusStub.callCount, 3, 'disposed listener must no longer update status');
+        } finally {
+            startFinished.resolve();
+            traceFinished.resolve();
+            result ??= await restarting;
+            disposeResult(result);
+        }
     });
+
+    test('reports creation failure without starting a client or installing a listener', async () => {
+        const startSpy = sandbox.spy(LanguageClient.prototype, 'start');
+        const traceSpy = sandbox.spy(LanguageClient.prototype, 'setTrace');
+        const listenerSpy = sandbox.spy(LanguageClient.prototype, 'onDidChangeState');
+        (envFileModule.getEnvFileVars as sinon.SinonStub).rejects(new Error('env file failed'));
+        const result = await restartServer(makeRestartOptions());
+
+        try {
+            assert.isUndefined(result.client);
+            assert.isEmpty(result.disposables);
+            assert.strictEqual(updateStatusStub.callCount, 2);
+            assert.deepEqual(updateStatusStub.firstCall.args, [undefined, LanguageStatusSeverity.Information, true]);
+            assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+            assert.isFalse(updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, false));
+            sinon.assert.notCalled(startSpy);
+            sinon.assert.notCalled(traceSpy);
+            sinon.assert.notCalled(listenerSpy);
+        } finally {
+            disposeResult(result);
+        }
+    });
+
+    for (const phase of ['start', 'setTrace'] as const) {
+        test(`reports ${phase} rejection and disposes the client without installing a listener`, async () => {
+            const entered = deferred<LanguageClient>();
+            const finished = deferred<void>();
+            sandbox.stub(LanguageClient.prototype, phase).callsFake(async function (this: LanguageClient) {
+                entered.resolve(this);
+                await finished.promise;
+                throw new Error(`${phase} failed`);
+            });
+            const traceSpy = phase === 'start' ? sandbox.spy(LanguageClient.prototype, 'setTrace') : undefined;
+            const disposeSpy = sandbox.spy(LanguageClient.prototype, 'dispose');
+            const listenerSpy = sandbox.spy(LanguageClient.prototype, 'onDidChangeState');
+            const restarting = restartServer(makeRestartOptions());
+            let result: RestartServerResult | undefined;
+            let client: LanguageClient | undefined;
+
+            try {
+                client = await entered.promise;
+                sinon.assert.calledOnceWithExactly(updateStatusStub, undefined, LanguageStatusSeverity.Information, true);
+                sinon.assert.notCalled(disposeSpy);
+                sinon.assert.notCalled(listenerSpy);
+
+                finished.resolve();
+                result = await restarting;
+                assert.isUndefined(result.client);
+                assert.isEmpty(result.disposables);
+                assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+                assert.isFalse(updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, false));
+                sinon.assert.calledOnce(disposeSpy);
+                sinon.assert.calledOn(disposeSpy, client);
+                sinon.assert.notCalled(listenerSpy);
+                if (traceSpy) {
+                    sinon.assert.notCalled(traceSpy);
+                }
+            } finally {
+                finished.resolve();
+                result ??= await restarting;
+                disposeResult(result);
+                client?.dispose();
+            }
+        });
+    }
 
     test('uses supplied extension settings without resolving them again', async () => {
         const extensionSettings = [
