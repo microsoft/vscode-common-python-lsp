@@ -185,6 +185,61 @@ def install_bundled_libs(session: nox.Session) -> None:
 The package manifests support building from the submodule. This repository no
 longer publishes packages to npm or PyPI.
 
+### Verified source builds
+
+`npm run build` in `typescript` cleans `dist` before compiling, including outputs
+for removed sources. A consumer's old `postinstall` existence check is **not**
+source validation: explicitly rebuild after changing a submodule pin.
+
+For paired artifacts, use the standard-library build CLI with Node/npm, Git,
+Python 3.10+, and `pip install setuptools wheel` available in an isolated build
+environment. From this repository (PowerShell example):
+
+```powershell
+$pin = git rev-parse HEAD
+python scripts\source_build.py build --expected-commit $pin --output test-submodules\build
+python scripts\source_build.py verify --expected-commit $pin --output test-submodules\build
+```
+
+In a consumer, invoke the script from its shared submodule and pass
+`--source-root` pointing to that exact shared checkout, **not** the extension
+root. The expected commit must be the full reviewed shared SHA, not the
+consumer's SHA. Child-directory/ancestor Git resolution is rejected.
+
+The destination must not exist; builds never reuse a prior `dist`, wheel,
+`node_modules` or setuptools output. Choose a new ignored `test-submodules`
+subdirectory for each build (or explicitly remove only a known old staging
+directory yourself). The CLI snapshots the shared runtime inputs, runs `npm ci`
+and the existing TS build there, and builds a Python wheel without dependencies
+or build isolation using the recorded local setuptools/wheel versions. Outputs
+are `typescript/package.json`, `typescript/dist`, `wheels`, and `provenance.json`.
+Toolchain/backend versions can affect output; this is deterministic source
+selection and verified contents, **not** a cross-platform, byte-identical-wheel
+or supply-chain attestation promise.
+
+The manifest records the shared checkout path/HEAD, whether it is dirty, and
+content hashes of Git-visible runtime sources, manifests, lockfile, and compiler
+configuration, plus hashes of every emitted artifact file. Verification checks
+the selected source again, including additions/removals, and rejects missing,
+extra or changed artifact files. Both runtimes are bound to one input fingerprint; a
+manifest's commit label alone is insufficient. Neither package versions nor
+runtime LSP payloads are changed.
+
+Dirty development builds require `--allow-dirty` on **both** commands. Their
+identity is `commit + dirty + inputFingerprint`, never a clean commit claim.
+Selected inputs are checked against HEAD even when Git index flags hide edits
+or removals; Git's line-ending normalization is respected.
+The fingerprint covers the listed build inputs, not arbitrary unrelated
+repository edits. Release/adoption checks should require clean source.
+Copy/install artifacts only after verification, and verify again before
+packaging if the source or staging files could have changed.
+
+These outputs do not migrate consumer lockfiles. When the shared manifest
+changes, consumers using `file:` installs must review their locked dependency
+graph; installing the Python wheel with `--no-deps` also requires the consumer
+to supply its full runtime dependency closure. Source/artifact verification
+does not by itself prove consumer dependency compatibility.
+
 ### Dependabot updates
 
 The consuming extensions configure Dependabot's `gitsubmodule` ecosystem to

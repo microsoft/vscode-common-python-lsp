@@ -51,9 +51,9 @@ package-version changes or publication and does not trigger or gate consumer
 submodule updates.
 
 Consumers are responsible for building both runtimes from their intended pinned
-revision. Automated artifact-provenance enforcement and reliable build
-invalidation remain roadmap S4 follow-up work rather than a package-version
-release requirement.
+revision. See [verified source builds](README.md#verified-source-builds)
+for the paired build/verification command. Adopting these checks in consumer
+pipelines remains a follow-up, not a package-version release requirement.
 
 ## Reporting Issues
 
