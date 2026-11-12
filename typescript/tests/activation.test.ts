@@ -28,6 +28,14 @@ import * as vscodeapi from '../src/vscodeapi';
 // Helpers
 // ---------------------------------------------------------------------------
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return { promise, resolve };
+}
+
 function makeToolConfig(overrides?: Partial<ToolConfig>): ToolConfig {
     return {
         toolId: 'flake8',
@@ -269,50 +277,117 @@ suite('createToolContext', () => {
         assert.isUndefined(ctx.lsClient, 'client should be cleared');
     });
 
-    test('dispose during in-flight restart prevents client assignment', async () => {
-        let resolveRestart: ((value: unknown) => void) | undefined;
-        (serverModule.restartServer as sinon.SinonStub).returns(
-            new Promise((resolve) => {
-                resolveRestart = resolve;
-            }),
-        );
+    test('dispose during in-flight restart cleans up late results and cancels queued retry', async () => {
+        const clock = sandbox.useFakeTimers();
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        restartStub.callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const stop = sandbox.stub().resolves();
+        const dispose = sandbox.stub();
+        const listener = { dispose: sandbox.stub() };
+        const result = {
+            client: { stop, dispose } as unknown as LanguageClient,
+            disposables: [listener],
+        };
+        const ctx = createToolContext(makeOptions({ toolConfig: makeToolConfig({ restartDelay: 50 }) }));
+        const running = ctx.runServer();
 
-        const ctx = createToolContext(makeOptions());
-        const runPromise = ctx.runServer();
+        try {
+            await entered.promise;
+            await ctx.runServer();
+            assert.strictEqual(clock.countTimers(), 1, 'overlap should queue a retry');
 
-        // Dispose while restartServer is in-flight
-        ctx.dispose();
+            ctx.dispose();
+            assert.strictEqual(clock.countTimers(), 0, 'dispose should cancel the retry timer');
+            finished.resolve(result);
+            await running;
 
-        // Now resolve the restart — should NOT assign client
-        const mockClient = { stop: sandbox.stub().resolves(), dispose: sandbox.stub() };
-        resolveRestart!({ client: mockClient, disposables: [] });
-        await runPromise;
+            assert.isUndefined(ctx.lsClient, 'should not assign the late client');
+            sinon.assert.calledOnce(stop);
+            sinon.assert.calledOnce(dispose);
+            sinon.assert.calledOnce(listener.dispose);
 
-        assert.isUndefined(ctx.lsClient, 'should not assign client after dispose');
+            await ctx.runServer();
+            await clock.tickAsync(100);
+            sinon.assert.calledOnce(restartStub);
+            assert.isUndefined(ctx.lsClient, 'calls and timers must not resurrect the context');
+        } finally {
+            ctx.dispose();
+            finished.resolve(result);
+            await running;
+        }
     });
 
-    test('runServer debounces rapid calls', async () => {
+    test('overlapping runServer calls acknowledge scheduling and reset a single trailing retry', async () => {
         const clock = sandbox.useFakeTimers();
-        const restartServerStub = serverModule.restartServer as sinon.SinonStub;
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        const firstClient = new LanguageClient('first', 'First', { command: 'python' }, {});
+        const secondClient = new LanguageClient('second', 'Second', { command: 'python' }, {});
+        const firstResult = { client: firstClient, disposables: [] };
+        restartStub.onFirstCall().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        restartStub.onSecondCall().resolves({ client: secondClient, disposables: [] });
         const ctx = createToolContext(makeOptions({ toolConfig: makeToolConfig({ restartDelay: 50 }) }));
+        let firstSettled = false;
+        const first = ctx.runServer().then(() => {
+            firstSettled = true;
+        });
 
-        // First call triggers. isRestarting is set synchronously.
-        const p1 = ctx.runServer();
-        // Second call while first is in progress — hits isRestarting, schedules timer.
-        const p2 = ctx.runServer();
+        try {
+            await entered.promise;
+            await ctx.runServer();
+            assert.isFalse(firstSettled, 'overlap resolves without waiting for the active restart');
+            assert.isUndefined(ctx.lsClient);
+            sinon.assert.calledOnce(restartStub);
 
-        // p2 resolves immediately (debounced path returns early).
-        await p2;
+            await clock.tickAsync(30);
+            await ctx.runServer();
+            assert.isFalse(firstSettled);
+            assert.strictEqual(clock.countTimers(), 1, 'overlaps should replace, not accumulate, timers');
 
-        // Complete the first call (flushes all internal awaits).
-        await p1;
-        assert.isTrue(restartServerStub.calledOnce, 'first call should trigger restartServer');
+            await clock.tickAsync(20);
+            sinon.assert.calledOnce(restartStub);
+            await ctx.runServer();
+            assert.strictEqual(clock.countTimers(), 1);
+            await clock.tickAsync(30);
+            sinon.assert.calledOnce(restartStub);
+            await clock.tickAsync(19);
+            sinon.assert.calledOnce(restartStub);
+            assert.isFalse(firstSettled, 'the active restart is still held at the reset trailing edge');
 
-        // Tick past the debounce delay — the scheduled timer should fire.
-        await clock.tickAsync(50);
-        assert.isTrue(restartServerStub.calledTwice, 'debounced call should trigger restartServer after delay');
+            await clock.tickAsync(1);
+            sinon.assert.calledOnce(restartStub);
+            assert.strictEqual(clock.countTimers(), 1, 'a retry during an active restart should be rescheduled');
+            assert.isFalse(firstSettled);
 
-        clock.restore();
+            finished.resolve(firstResult);
+            await first;
+            assert.strictEqual(ctx.lsClient, firstClient);
+
+            await clock.tickAsync(49);
+            sinon.assert.calledOnce(restartStub);
+            await clock.tickAsync(1);
+            sinon.assert.calledTwice(restartStub);
+            assert.strictEqual(restartStub.secondCall.args[1], firstClient);
+            assert.strictEqual(ctx.lsClient, secondClient);
+
+            await clock.tickAsync(100);
+            sinon.assert.calledTwice(restartStub);
+        } finally {
+            ctx.dispose();
+            finished.resolve(firstResult);
+            await first;
+            firstClient.dispose();
+            secondClient.dispose();
+        }
     });
 
     test('initialize starts server when interpreter is already set', async () => {
@@ -425,52 +500,93 @@ suite('createToolContext', () => {
         );
     });
 
-    test('subscribes to package changes and restarts the server when refreshExtensionOnPackagesChange is enabled', async () => {
+    test('subscribes to package changes and debounces bursts at the reset trailing edge', async () => {
+        const clock = sandbox.useFakeTimers();
         (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
         const provider = makeMockProvider(sandbox);
 
-        // Capture the handler the activation logic registers so we can fire it.
         let capturedHandler: (() => void) | undefined;
-        const disposeStub = sinon.stub();
+        const disposeStub = sandbox.stub();
         (provider.subscribeToPackageChanges as sinon.SinonStub).callsFake((handler: () => void) => {
             capturedHandler = handler;
             return Promise.resolve({ dispose: disposeStub });
         });
-
-        // Resolve a deferred when restartServer is reached instead of counting
-        // macrotasks — decouples the test from runServer's internal await chain.
-        let signalRestart: () => void = () => undefined;
-        const restarted = new Promise<void>((resolve) => {
-            signalRestart = resolve;
-        });
-        (serverModule.restartServer as sinon.SinonStub).callsFake(() => {
-            signalRestart();
+        const entered = deferred<void>();
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        restartStub.callsFake(() => {
+            entered.resolve();
             return Promise.resolve({ client: undefined, disposables: [] });
         });
-
         const subscriptions: vscode.Disposable[] = [];
         const ctx = createToolContext(
             makeOptions({
                 pythonProvider: provider,
-                // restartDelay: 0 keeps the trailing-edge debounce on the next tick.
-                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 0 }),
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 50 }),
             }),
         );
-        await ctx.initialize(subscriptions);
+        const runSpy = sandbox.spy(ctx, 'runServer');
 
-        assert.isTrue(
-            (provider.subscribeToPackageChanges as sinon.SinonStub).calledOnce,
-            'should subscribe to package changes',
-        );
-        assert.isFunction(capturedHandler, 'should register a package-change handler');
-        assert.lengthOf(subscriptions, 1, 'should register the subscription disposable');
+        try {
+            await ctx.initialize(subscriptions);
+            sinon.assert.calledOnce(provider.subscribeToPackageChanges as sinon.SinonStub);
+            assert.isFunction(capturedHandler);
+            assert.lengthOf(subscriptions, 1, 'subscription belongs to the extension');
 
-        capturedHandler?.();
-        await restarted;
-        assert.isTrue(
-            (serverModule.restartServer as sinon.SinonStub).called,
-            'package-change handler should restart the server',
+            capturedHandler!();
+            await clock.tickAsync(30);
+            capturedHandler!();
+            await clock.tickAsync(20);
+            sinon.assert.notCalled(restartStub);
+            await clock.tickAsync(29);
+            sinon.assert.notCalled(restartStub);
+
+            await clock.tickAsync(1);
+            await entered.promise;
+            await runSpy.firstCall.returnValue;
+            sinon.assert.calledOnce(restartStub);
+
+            await clock.tickAsync(100);
+            sinon.assert.calledOnce(restartStub);
+        } finally {
+            ctx.dispose();
+            subscriptions.forEach((subscription) => subscription.dispose());
+            if (runSpy.called) {
+                await runSpy.firstCall.returnValue;
+            }
+        }
+    });
+
+    test('dispose cancels pending package refresh and ignores later package events', async () => {
+        const clock = sandbox.useFakeTimers();
+        const provider = makeMockProvider(sandbox);
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 50 }),
+            }),
         );
+
+        try {
+            await ctx.initialize([]);
+            const handler = (provider.subscribeToPackageChanges as sinon.SinonStub)
+                .firstCall.args[0] as () => void;
+            sinon.assert.calledOnce(restartStub);
+
+            handler();
+            await clock.tickAsync(25);
+            assert.strictEqual(clock.countTimers(), 1);
+            ctx.dispose();
+            assert.strictEqual(clock.countTimers(), 0, 'dispose should cancel package debounce');
+
+            await clock.tickAsync(100);
+            handler();
+            assert.strictEqual(clock.countTimers(), 0, 'late package events must not schedule work');
+            await clock.tickAsync(100);
+            sinon.assert.calledOnce(restartStub);
+        } finally {
+            ctx.dispose();
+        }
     });
 
     test('subscribes to package changes even when the interpreter is pinned via setting', async () => {
@@ -626,8 +742,13 @@ suite('registerCommonSubscriptions', () => {
 // ---------------------------------------------------------------------------
 
 suite('deactivateServer', () => {
-    test('stops the client and disposes context', async () => {
-        const stop = sinon.stub().resolves();
+    test('disposes context before awaiting client stop', async () => {
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const stop = sinon.stub().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
         const dispose = sinon.stub();
         const client = { stop } as unknown as LanguageClient;
         const ctx: ToolExtensionContext = {
@@ -636,9 +757,24 @@ suite('deactivateServer', () => {
             initialize: sinon.stub().resolves(),
             dispose,
         };
-        await deactivateServer(ctx);
-        assert.isTrue(stop.calledOnce);
-        assert.isTrue(dispose.calledOnce);
+        let deactivated = false;
+        const pending = deactivateServer(ctx).then(() => {
+            deactivated = true;
+        });
+        try {
+            await entered.promise;
+            sinon.assert.calledOnce(stop);
+            sinon.assert.calledOnce(dispose);
+            sinon.assert.callOrder(dispose, stop);
+            assert.isFalse(deactivated, 'deactivation must wait for the already-assigned client to stop');
+
+            finished.resolve();
+            await pending;
+            assert.isTrue(deactivated);
+        } finally {
+            finished.resolve();
+            await pending;
+        }
     });
 
     test('handles undefined context', async () => {
@@ -859,39 +995,62 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on ctx.dispose()');
     });
 
-    // Test 7: extension-driven restart — second runServer() is called while
-    // the first client is still Running.  The guard at the top of runServer
-    // skips re-registration to avoid the transient duplicate-formatter issue.
-    // The placeholder is re-registered only after restartServer returns the
-    // new (not-yet-Running) client.
-    test('re-registers placeholder on extension-driven restart (second runServer call)', async () => {
+    test('holds formatter fallback until replacement completes and ignores stale client events', async () => {
         const firstClient = makeMockClient(State.Stopped);
         const secondClient = makeMockClient(State.Stopped);
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const replacement = { client: asLC(secondClient), disposables: [] };
         const restartStub = sandbox.stub(serverModule, 'restartServer');
         restartStub.onFirstCall().resolves({ client: asLC(firstClient), disposables: [] });
-        restartStub.onSecondCall().resolves({ client: asLC(secondClient), disposables: [] });
-
+        restartStub.onSecondCall().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
         const ctx = createToolContext(makeFormatterOptions());
-        assert.strictEqual(registerFormattingProviderStub.callCount, 1, 'registered at activation');
+        let replacing: Promise<void> | undefined;
 
-        // First run — transition to Running disposes placeholder
-        await ctx.runServer();
-        firstClient.simulateStateChange(State.Running);
-        assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed after first Running');
+        try {
+            await ctx.runServer();
+            firstClient.simulateStateChange(State.Running);
+            sinon.assert.calledOnce(providerDispose);
 
-        // Second runServer() — simulates config/interpreter-driven restart.
-        // firstClient is still Running, so the guard at the top of runServer
-        // skips register (avoiding transient duplicate).  After restartServer
-        // returns the new client (Stopped), the placeholder is re-registered.
-        await ctx.runServer();
-        assert.strictEqual(
-            registerFormattingProviderStub.callCount, 2,
-            'placeholder re-registered after restartServer returns non-Running client',
-        );
+            replacing = ctx.runServer();
+            await entered.promise;
+            assert.strictEqual(firstClient.state, State.Running);
+            assert.strictEqual(ctx.lsClient, asLC(firstClient));
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
 
-        // Transition second client to Running — placeholder disposed again
-        secondClient.simulateStateChange(State.Running);
-        assert.strictEqual(providerDispose.callCount, 2, 'placeholder disposed after second Running');
+            // The old listener is gone; fallback returns only at replacement completion.
+            firstClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+
+            finished.resolve(replacement);
+            await replacing;
+            assert.strictEqual(ctx.lsClient, asLC(secondClient));
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+
+            firstClient.simulateStateChange(State.Running);
+            sinon.assert.calledOnce(providerDispose);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledTwice(providerDispose);
+            firstClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+
+            ctx.dispose();
+            firstClient.simulateStateChange(State.Starting);
+            secondClient.simulateStateChange(State.Stopped);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledTwice(providerDispose);
+        } finally {
+            ctx.dispose();
+            finished.resolve(replacement);
+            await replacing;
+            firstClient.dispose();
+            secondClient.dispose();
+        }
     });
 
     // Test 8: restartServer returns no client — placeholder stays registered
