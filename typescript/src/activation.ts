@@ -189,21 +189,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             isRestarting = true;
             try {
-                // Re-register the placeholder at the start of each restart
-                // cycle when there is no healthy running client.  This covers
-                // two gaps the per-state listener misses:
-                //  1. Extension-driven restarts (config/interpreter change):
-                //     runServer() disposes the old state listener *before*
-                //     restartServer() stops the previous client, so
-                //     Stopped/Starting transitions fire into a dead listener.
-                //  2. Failure paths: if restartServer() throws or returns
-                //     client: undefined the state-listener block is skipped
-                //     entirely.
-                // The guard avoids re-introducing the duplicate-formatter
-                // symptom: if the old client is still Running (serving
-                // formatting requests), re-registering the placeholder would
-                // make the extension appear twice in the formatter picker
-                // until restartServer() stops the old client.
+                // Restore fallback immediately only without a healthy client.
+                // A Running old client still owns its formatting provider;
+                // the post-stop notification below covers replacement startup
+                // without registering the placeholder alongside that provider.
                 if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
                     nullFormatter.register();
                 }
@@ -299,6 +288,11 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         toolConfig,
                         pythonProvider,
                         extensionSettings,
+                        onOldClientStopped: () => {
+                            if (!disposed) {
+                                nullFormatter?.register();
+                            }
+                        },
                     };
                     const result = await restartServer(restartOptions, ctx.lsClient);
 
