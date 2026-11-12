@@ -34,10 +34,12 @@ def lint(session: nox.Session) -> None:
 
     session.run("isort", "--check", "python/vscode_common_python_lsp")
     session.run("isort", "--check", "python/tests")
-    session.run("flake8", "scripts/localization.py", "scripts/localization_test.py")
-    session.run(
-        "black", "--check", "scripts/localization.py", "scripts/localization_test.py"
-    )
-    session.run(
-        "isort", "--check", "scripts/localization.py", "scripts/localization_test.py"
-    )
+    scripts = [
+        "scripts/localization.py",
+        "scripts/localization_test.py",
+        "scripts/source_build.py",
+        "scripts/source_build_test.py",
+    ]
+    session.run("flake8", *scripts)
+    session.run("black", "--check", *scripts)
+    session.run("isort", "--check", *scripts)
