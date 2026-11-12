@@ -123,10 +123,12 @@ export interface ToolExtensionContext {
     initialize(subscriptions: vscode.Disposable[]): Promise<void>;
 
     /**
-     * Dispose all internal resources (timers, state listeners).
+     * Dispose all internal resources (timers, state listeners, formatter placeholder).
      *
      * Call from the extension's `deactivate()` to prevent orphaned
      * server processes from debounce timers firing after shutdown.
+     * In-flight restarts cannot restore the formatter placeholder, but
+     * disposal does not wait for them to finish.
      */
     dispose(): void;
 }
@@ -174,6 +176,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             if (usePerProjectEnvironments(toolConfig) && extensionSubscriptions && !pythonInitialized) {
                 await initializePython(extensionSubscriptions, false);
+                if (disposed) {
+                    return;
+                }
             }
             if (isRestarting) {
                 if (restartTimer) {
@@ -256,7 +261,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     // Re-register the placeholder so the extension stays
                     // visible in the formatter picker while there is no
                     // interpreter (and therefore no running LSP formatter).
-                    nullFormatter?.register();
+                    if (!disposed) {
+                        nullFormatter?.register();
+                    }
 
                     updateStatus(
                         vscode.l10n.t('Please select a Python interpreter.'),
@@ -350,10 +357,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
-                // Ensure placeholder stays visible after a failure — but only
-                // when there is no healthy running client (same guard as the
-                // top of runServer to avoid the duplicate-formatter symptom).
-                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                // Ensure placeholder stays visible after a failure on a live
+                // context without a healthy running client (same state guard
+                // as the top of runServer to avoid duplicate formatters).
+                if (!disposed && nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
                     nullFormatter.register();
                 }
             } finally {
