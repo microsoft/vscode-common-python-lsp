@@ -16,6 +16,7 @@ import {
     ToolExtensionContext,
 } from '../src/activation';
 import * as configWatcher from '../src/configWatcher';
+import * as loggingModule from '../src/logging';
 import * as settingsModule from '../src/settings';
 import * as serverModule from '../src/server';
 import * as statusModule from '../src/status';
@@ -30,10 +31,12 @@ import * as vscodeapi from '../src/vscodeapi';
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((res) => {
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
         resolve = res;
+        reject = rej;
     });
-    return { promise, resolve };
+    return { promise, resolve, reject };
 }
 
 function makeToolConfig(overrides?: Partial<ToolConfig>): ToolConfig {
@@ -993,6 +996,174 @@ suite('createToolContext – NullFormatter lifecycle', () => {
 
         ctx.dispose();
         assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on ctx.dispose()');
+    });
+
+    test('does not restore a formatter placeholder when an in-flight restart rejects after disposal', async () => {
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const error = new Error('Debugger path lookup failed');
+        const traceError = sandbox.spy(loggingModule, 'traceError');
+        const restartStub = sandbox.stub(serverModule, 'restartServer').callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const liveProviders = new Set<vscode.Disposable>();
+        registerFormattingProviderStub.callsFake(() => {
+            const provider = {
+                dispose: sandbox.stub().callsFake(() => {
+                    liveProviders.delete(provider);
+                }),
+            };
+            liveProviders.add(provider);
+            return provider;
+        });
+        const ctx = createToolContext(makeFormatterOptions());
+        const running = ctx.runServer();
+
+        try {
+            await entered.promise;
+            sinon.assert.calledOnce(restartStub);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            assert.strictEqual(liveProviders.size, 1, 'the activation placeholder is live');
+
+            ctx.dispose();
+            sinon.assert.calledOnce(registerFormattingProviderStub.firstCall.returnValue.dispose);
+            assert.strictEqual(liveProviders.size, 0, 'dispose removes the existing placeholder');
+
+            finished.reject(error);
+            await running;
+
+            sinon.assert.calledWithExactly(traceError, `Server restart failed: ${error}`);
+            assert.deepEqual(
+                { registrations: registerFormattingProviderStub.callCount, liveProviders: liveProviders.size },
+                { registrations: 1, liveProviders: 0 },
+                'a rejected restart must not resurrect the disposed formatter context',
+            );
+        } finally {
+            ctx.dispose();
+            finished.reject(error);
+            await running;
+        }
+    });
+
+    test('restores formatter fallback when an in-flight restart rejects on a live context', async () => {
+        const mockClient = makeMockClient(State.Running);
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const error = new Error('Debugger path lookup failed');
+        const traceError = sandbox.spy(loggingModule, 'traceError');
+        const restartStub = sandbox.stub(serverModule, 'restartServer');
+        restartStub.onFirstCall().resolves({ client: asLC(mockClient), disposables: [] });
+        restartStub.onSecondCall().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const ctx = createToolContext(makeFormatterOptions());
+        let running: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            sinon.assert.calledOnce(providerDispose);
+
+            running = ctx.runServer();
+            await entered.promise;
+            mockClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+
+            finished.reject(error);
+            await running;
+
+            sinon.assert.calledWithExactly(traceError, `Server restart failed: ${error}`);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+        } finally {
+            ctx.dispose();
+            finished.reject(error);
+            await running;
+            mockClient.dispose();
+        }
+    });
+
+    test('does not restore a formatter placeholder when a missing-interpreter stop finishes after disposal', async () => {
+        const mockClient = makeMockClient(State.Running);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const stop = sandbox.stub(mockClient, 'stop').callsFake(async () => {
+            entered.resolve();
+            await finished.promise;
+            mockClient.simulateStateChange(State.Stopped);
+        });
+        const ctx = createToolContext(makeFormatterOptions());
+        let running: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            sinon.assert.calledOnce(providerDispose);
+            (settingsModule.getWorkspaceSettings as sinon.SinonStub).resolves({
+                cwd: '/workspace',
+                workspace: 'file:///workspace',
+                args: [],
+                path: [],
+                interpreter: [],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            });
+
+            running = ctx.runServer();
+            await entered.promise;
+            sinon.assert.calledOnce(stop);
+            ctx.dispose();
+            finished.resolve();
+            await running;
+
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+        } finally {
+            ctx.dispose();
+            finished.resolve();
+            await running;
+            mockClient.dispose();
+        }
+    });
+
+    test('does not restore a formatter placeholder when per-project initialization finishes after disposal', async () => {
+        let enabled = false;
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? enabled : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const restartStub = sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const options = makeFormatterOptions();
+        options.toolConfig = { ...options.toolConfig, supportsPerProjectEnvironments: true };
+        (options.pythonProvider.initializePython as sinon.SinonStub).callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const ctx = createToolContext(options);
+        let running: Promise<void> | undefined;
+
+        try {
+            await ctx.initialize([]);
+            enabled = true;
+            running = ctx.runServer();
+            await entered.promise;
+            ctx.dispose();
+            sinon.assert.calledOnce(providerDispose);
+
+            finished.resolve();
+            await running;
+
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+            sinon.assert.calledOnce(restartStub);
+        } finally {
+            ctx.dispose();
+            finished.resolve();
+            await running;
+        }
     });
 
     test('holds formatter fallback until replacement completes and ignores stale client events', async () => {
