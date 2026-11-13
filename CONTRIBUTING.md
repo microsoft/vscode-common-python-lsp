@@ -38,11 +38,19 @@ Extensions consume this repository at a pinned Git commit and build both the
 TypeScript and Python runtimes from that revision. The pinned source revision,
 not the version strings in the package manifests, is the compatibility identity.
 
-The private npm manifest and Python package metadata retain fixed version values
-needed for local builds and installation. Ordinary source changes do not require
-changing or synchronizing those values. The default Python server reports its
-installed package version for diagnostics, but that value is not a source
-provenance guarantee. The npm and Python packages are not published.
+The private npm manifest and Python distribution metadata use the internal
+build identity `vscode-python-tool-internal` and retain fixed version
+values needed for local builds and installation. This identity is not a consumer
+import API. Ordinary source changes do not require changing or synchronizing
+those values. The default Python server reports that internal distribution's
+installed version for diagnostics (or `v0.0.0-dev` when its metadata is absent),
+but that value is not a source provenance guarantee. Neither runtime is
+published to a package registry.
+
+Record consumer-visible changes and upgrade instructions in pull request
+descriptions. For breaking changes, add focused migration documentation.
+There is no separate changelog to maintain; historical entries remain in Git
+history.
 
 Maintainers may optionally tag a reviewed commit and create a
 [GitHub Release](https://github.com/microsoft/vscode-common-python-lsp/releases)

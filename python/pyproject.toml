@@ -3,12 +3,13 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vscode-common-python-lsp"
+name = "vscode-python-tool-internal"
 version = "0.8.3"
-description = "Shared Python utilities for VS Code Python tool extensions"
+description = "Internal source-only Python utilities for VS Code Python tool extensions"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+classifiers = ["Private :: Do Not Upload"]
 authors = [
     { name = "Microsoft Corporation" },
 ]

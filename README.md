@@ -11,15 +11,15 @@ Shared Python and TypeScript libraries for VS Code Python tool extensions
 
 ```
 vscode-common-python-lsp/
-├── python/                         # Python package (bundled server-side)
-│   ├── vscode_common_python_lsp/   # Package source
+├── python/                         # Python source (bundled server-side)
+│   ├── vscode_common_python_lsp/   # Import package source
 │   │   └── __init__.py
 │   ├── tests/                      # Python tests (pytest)
-│   ├── pyproject.toml              # Package metadata & build config
+│   ├── pyproject.toml              # Local installation metadata & build config
 │   └── requirements-dev.txt        # Dev/test dependencies
 │
-├── typescript/                     # TypeScript package (VS Code client-side)
-│   ├── src/                        # Package source
+├── typescript/                     # TypeScript source (VS Code client-side)
+│   ├── src/                        # Public entry point and implementation
 │   │   └── index.ts
 │   ├── tests/                      # TypeScript tests (mocha)
 │   ├── package.json
@@ -31,7 +31,7 @@ vscode-common-python-lsp/
 └── README.md
 ```
 
-## Python Package
+## Python Source
 
 The `vscode_common_python_lsp` Python package provides server-side utilities shared
 across all five extensions: path resolution, context managers, tool execution runners,
@@ -45,9 +45,9 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
-## TypeScript Package
+## TypeScript Source
 
-The `vscode-common-python-lsp` TypeScript package provides VS Code client-side
+The TypeScript source provides VS Code client-side
 utilities: extension activation, server lifecycle, settings management, Python
 interpreter resolution, and logging.
 
@@ -55,7 +55,7 @@ interpreter resolution, and logging.
 
 ```bash
 cd typescript
-npm install
+npm ci
 npm run lint
 npm run build
 npm test
@@ -80,18 +80,61 @@ git submodule update --init --recursive
 Clone a consuming extension with `--recurse-submodules`, or run the update
 command above after cloning.
 
-Reference the TypeScript package from the submodule in `package.json`:
+#### TypeScript: build, type-check, then bundle
 
-```json
-{
-    "dependencies": {
-        "@vscode/common-python-lsp": "file:external/vscode-common-python-lsp/typescript"
-    }
-}
+The extension does not declare a shared-runtime npm dependency or alias. From
+the extension root, install its own locked development tools and the checkout's
+locked dependencies, then build the shared JavaScript and declarations **before**
+type-checking or bundling the extension:
+
+```powershell
+npm ci
+npm --prefix .\external\vscode-common-python-lsp\typescript ci
+npm --prefix .\external\vscode-common-python-lsp\typescript run build
 ```
 
-Install the Python package directly from the same submodule commit when
-building the extension bundle. For example, in `noxfile.py`:
+In the extension's `src/extension.ts`, import exported symbols from the built
+public entry point (not individual implementation files or a bare package name):
+
+```typescript
+import { createToolContext } from '../external/vscode-common-python-lsp/typescript/dist';
+```
+
+Use the extension's existing TypeScript configuration and development type
+dependencies, including `@types/vscode` and `@types/node`, to type-check its
+`src/` files. The shared declarations resolve their dependencies from the
+checkout's `typescript/node_modules`; the extension's `rootDir` can remain
+`src`. For example, with TypeScript already installed by the extension:
+
+```powershell
+npx --no-install tsc --noEmit
+```
+
+Bundle the source-relative entry and its JavaScript dependency closure into the
+extension. For example, an extension already using esbuild can run this from
+the extension root after the steps above:
+
+```powershell
+npx --no-install esbuild .\src\extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=.\dist\extension.js
+```
+
+VS Code supplies `vscode`, and esbuild leaves Node built-ins external. Do not
+externalize the shared entry or its npm dependencies: they must resolve from
+the checkout and be included in the bundle. Merely running `tsc` does not bundle
+them; shipping only the extension's emitted JavaScript would leave a relative
+runtime dependency on the checkout. Other bundlers must preserve the same
+resolution and packaging behavior. Rebuild both the shared entry and extension
+bundle whenever the pinned checkout changes.
+
+When migrating an existing consumer, remove its former shared-runtime
+dependency/alias, update its imports and regenerate its lockfile without that
+dependency. Review the consumer's own build and packaging rules; changing this
+repository's metadata alone does not migrate an extension.
+
+#### Python: install from the same checkout
+
+Install the Python source directly from the same submodule commit when building
+the extension bundle. For example, in `noxfile.py`:
 
 ```python
 import pathlib
@@ -118,8 +161,19 @@ def install_bundled_libs(session: nox.Session) -> None:
     )
 ```
 
-The package manifests support building from the submodule. This repository no
-longer publishes packages to npm or PyPI.
+The `--no-deps` example preserves the consumer's runtime dependency policy: the
+extension must also bundle the dependencies declared in `python/pyproject.toml`
+using its own reviewed requirements/locks. Keep the installed distribution
+metadata alongside `vscode_common_python_lsp`; the default server uses its
+version for diagnostics, or `v0.0.0-dev` if that metadata is absent. Python
+imports continue to use `vscode_common_python_lsp`.
+
+Both manifests use `vscode-python-tool-internal` solely as internal
+local build/install metadata. npm remains private, and Python metadata is marked
+`Private :: Do Not Upload`. Local-path pip installation and local wheel builds
+remain supported. Neither identity is a registry-facing consumption API: do not
+add a bare dependency or registry install for it. This repository publishes
+neither npm nor PyPI packages.
 
 ### Dependabot updates
 
