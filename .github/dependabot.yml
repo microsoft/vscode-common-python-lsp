@@ -40,7 +40,6 @@ updates:
     labels:
       - 'dependencies'
       - 'debt'
-      - 'no-changelog'
     directory: '/'
     schedule:
       interval: 'weekly'

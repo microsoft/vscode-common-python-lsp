@@ -1247,10 +1247,11 @@ class TestToolServerInit:
             patch(
                 "vscode_common_python_lsp.server.importlib.metadata.version",
                 return_value="1.2.3",
-            ),
+            ) as mock_version,
         ):
             mock_cls.return_value = MagicMock()
             ts = ToolServer(BASIC_CONFIG)
+            mock_version.assert_called_once_with("vscode-python-tool-internal")
             mock_cls.assert_called_once_with(
                 name="testtool-server",
                 version="v1.2.3",
@@ -1264,22 +1265,52 @@ class TestToolServerInit:
             patch(
                 "vscode_common_python_lsp.server.importlib.metadata.version",
                 side_effect=importlib.metadata.PackageNotFoundError(
-                    "vscode-common-python-lsp"
+                    "vscode-python-tool-internal"
                 ),
-            ),
+            ) as mock_version,
         ):
             mock_cls.return_value = MagicMock()
             ToolServer(BASIC_CONFIG)
+            mock_version.assert_called_once_with("vscode-python-tool-internal")
             mock_cls.assert_called_once_with(
                 name="testtool-server",
                 version="v0.0.0-dev",
                 max_workers=5,
             )
 
-    def test_accepts_custom_server(self):
-        custom = MagicMock()
-        ts = ToolServer(BASIC_CONFIG, server=custom)
-        assert ts.server is custom
+    def test_missing_internal_metadata_does_not_use_other_distributions(self):
+        def lookup_version(distribution_name):
+            if distribution_name == "vscode-python-tool-internal":
+                raise importlib.metadata.PackageNotFoundError(distribution_name)
+            return "9.9.9"
+
+        with (
+            patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls,
+            patch(
+                "vscode_common_python_lsp.server.importlib.metadata.version",
+                side_effect=lookup_version,
+            ) as mock_version,
+        ):
+            ToolServer(BASIC_CONFIG)
+            mock_version.assert_called_once_with("vscode-python-tool-internal")
+            mock_cls.assert_called_once_with(
+                name="testtool-server",
+                version="v0.0.0-dev",
+                max_workers=5,
+            )
+
+    def test_accepts_custom_server_without_metadata_lookup(self):
+        with (
+            patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls,
+            patch(
+                "vscode_common_python_lsp.server.importlib.metadata.version"
+            ) as mock_version,
+        ):
+            custom = MagicMock()
+            ts = ToolServer(BASIC_CONFIG, server=custom)
+            assert ts.server is custom
+            mock_version.assert_not_called()
+            mock_cls.assert_not_called()
 
     def test_empty_initial_state(self):
         ts = _make_server()

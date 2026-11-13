@@ -102,7 +102,7 @@ class ToolServer:
         self.global_settings: dict[str, Any] = {}
         if server is None:
             try:
-                _pkg_version = importlib.metadata.version("vscode-common-python-lsp")
+                _pkg_version = importlib.metadata.version("vscode-python-tool-internal")
             except importlib.metadata.PackageNotFoundError:
                 _pkg_version = "0.0.0-dev"
             server = LanguageServer(

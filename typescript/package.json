@@ -1,8 +1,8 @@
 {
-    "name": "@vscode/common-python-lsp",
+    "name": "vscode-python-tool-internal",
     "version": "0.8.3",
     "private": true,
-    "description": "Shared TypeScript utilities for VS Code Python tool extensions",
+    "description": "Internal source-only TypeScript utilities for VS Code Python tool extensions",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "files": [
