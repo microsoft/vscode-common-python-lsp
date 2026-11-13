@@ -197,6 +197,10 @@ notes, but they do not trigger or gate the submodule updates.
 
 ### Optional configuration
 
+For an opt-in typed settings contract without changing runtime behavior, see
+the [typed tool definition example](typescript/README.md#typed-tool-definitions).
+Existing `ToolConfig` callers do not need to migrate.
+
 Extensions whose servers run tools using the interpreter in each resolved
 settings entry can opt in to per-project environments:
 
