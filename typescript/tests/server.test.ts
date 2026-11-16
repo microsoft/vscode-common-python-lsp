@@ -15,6 +15,7 @@ import {
     RestartServerOptions,
     RestartServerResult,
     ServerLaunchContext,
+    ClientSetupContext,
 } from '../src/server';
 import * as envFileModule from '../src/envFile';
 import * as status from '../src/status';
@@ -543,6 +544,131 @@ suite('restartServer', () => {
         assert.isEmpty(result.disposables);
         assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
         sinon.assert.notCalled(start);
+    });
+
+    test('registers handlers on the new client before start and returns their owned scope', async () => {
+        const received = sandbox.spy();
+        const originalStart = LanguageClient.prototype.start;
+        const start = sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            (this as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 42);
+            await originalStart.call(this);
+        });
+        const configureClient = sandbox.spy((context: ClientSetupContext): undefined => {
+            assert.strictEqual(context.client.state, State.Stopped);
+            context.registerDisposable(context.client.onNotification('example/score', received));
+        });
+        const result = await restartServer(makeRestartOptions({ hooks: { configureClient } }));
+
+        try {
+            sinon.assert.calledOnce(configureClient);
+            assert.strictEqual(configureClient.firstCall.args[0].client, result.client);
+            sinon.assert.callOrder(configureClient, start, received);
+            sinon.assert.calledOnceWithExactly(received, 42);
+            assert.include(result.disposables, result.clientSetup);
+            result.disposables.forEach((disposable) => disposable.dispose());
+            (result.client as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 100);
+            sinon.assert.calledOnce(received);
+        } finally {
+            disposeResult(result);
+        }
+    });
+
+    for (const phase of ['setup', 'start', 'setTrace'] as const) {
+        test(`releases partially registered resources on ${phase} failure despite cleanup errors`, async () => {
+            const first = { dispose: sandbox.stub().throws(new Error('cleanup failed')) };
+            const second = { dispose: sandbox.stub().rejects(new Error('async cleanup failed')) };
+            const start = phase === 'start'
+                ? sandbox.stub(LanguageClient.prototype, 'start').rejects(new Error('start failed'))
+                : sandbox.spy(LanguageClient.prototype, 'start');
+            if (phase === 'setTrace') {
+                sandbox.stub(LanguageClient.prototype, 'setTrace').rejects(new Error('trace failed'));
+            }
+            const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+            const result = await restartServer(makeRestartOptions({
+                hooks: {
+                    configureClient: ({ registerDisposable }) => {
+                        registerDisposable(first);
+                        registerDisposable(second);
+                        if (phase === 'setup') {
+                            throw new Error('setup failed');
+                        }
+                    },
+                },
+            }));
+
+            assert.isUndefined(result.client);
+            assert.isEmpty(result.disposables);
+            sinon.assert.calledOnce(first.dispose);
+            sinon.assert.calledOnce(second.dispose);
+            sinon.assert.calledOnce(dispose);
+            if (phase === 'setup') {
+                sinon.assert.notCalled(start);
+            }
+        });
+    }
+
+    test('does not configure or start a client when shutdown occurs during environment loading', async () => {
+        const loading = deferred<void>();
+        const loaded = deferred<Record<string, string>>();
+        (envFileModule.getEnvFileVars as sinon.SinonStub).callsFake(() => {
+            loading.resolve();
+            return loaded.promise;
+        });
+        const controller = new AbortController();
+        const configureClient = sandbox.spy(() => undefined);
+        const start = sandbox.spy(LanguageClient.prototype, 'start');
+        const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+        const restarting = restartServer(makeRestartOptions({
+            signal: controller.signal,
+            hooks: { configureClient },
+        }));
+        await loading.promise;
+        controller.abort();
+        loaded.resolve({});
+        const result = await restarting;
+        assert.isUndefined(result.client);
+        sinon.assert.notCalled(configureClient);
+        sinon.assert.notCalled(start);
+        sinon.assert.calledOnce(dispose);
+    });
+
+    test('closes in-flight setup immediately and stops a late-started client after shutdown', async () => {
+        const entered = deferred<void>();
+        const started = deferred<void>();
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async () => {
+            entered.resolve();
+            await started.promise;
+        });
+        const controller = new AbortController();
+        const resource = { dispose: sandbox.stub() };
+        const lateResource = { dispose: sandbox.stub() };
+        let register!: ClientSetupContext['registerDisposable'];
+        const stop = sandbox.spy(LanguageClient.prototype, 'stop');
+        const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+        const trace = sandbox.spy(LanguageClient.prototype, 'setTrace');
+        const restarting = restartServer(makeRestartOptions({
+            signal: controller.signal,
+            hooks: {
+                configureClient: ({ registerDisposable }) => {
+                    register = registerDisposable;
+                    registerDisposable(resource);
+                },
+            },
+        }));
+        await entered.promise;
+        controller.abort();
+        sinon.assert.calledOnce(resource.dispose);
+        register(lateResource);
+        sinon.assert.calledOnce(lateResource.dispose);
+        started.resolve();
+        const result = await restarting;
+        assert.isUndefined(result.client);
+        sinon.assert.calledOnce(stop);
+        sinon.assert.calledOnce(dispose);
+        sinon.assert.notCalled(trace);
+        sinon.assert.calledOnce(resource.dispose);
     });
 
     for (const phase of ['start', 'setTrace'] as const) {

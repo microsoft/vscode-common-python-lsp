@@ -89,6 +89,42 @@ their existing precedence. A throwing hook fails that launch through the normal
 creation-error path. Hooks are not part of `ToolConfig` or the Python settings
 payload. Existing callers without hooks retain their environment behavior.
 
+`configureClient({ client, settings, serverId, serverName, registerDisposable })`
+registers tool-specific handlers on the new client **before** `client.start()`.
+For example, add this property alongside `serverInfo` and `toolConfig` in the
+activation options:
+
+```typescript
+hooks: {
+    configureClient: ({ client, registerDisposable }) => {
+        registerDisposable(client.onNotification('example/score', (score: number) => {
+            // Update extension-owned UI here.
+        }));
+    },
+},
+```
+
+Register each returned disposable immediately, so earlier registrations can be
+released if later setup throws. The callback must finish synchronously and
+return no value; its `undefined` return type deliberately rejects async callbacks.
+Do not start, stop or replace the client from this hook. The runtime owns client
+lifetime; tool-specific UI stays owned by the extension.
+
+Each actual client generation has an idempotent setup scope, separate from
+post-start state listeners. It is closed on setup/start/trace failure, retirement
+after an old stop settles or replacement takes ownership, missing-interpreter
+retirement, and shutdown. Registrations added to an already closed scope are
+disposed immediately. Cleanup errors are contained. Shutdown closes scopes even
+while creation/start is pending; it still does not promise to interrupt or drain
+every in-flight lifecycle operation. A late successful start is stopped.
+
+Lower-level `restartServer` callers can pass the same hooks and an optional
+shutdown `signal`. Its returned `disposables` include the setup scope. The optional
+`clientSetup` result property identifies that same scope for custom composition
+that needs to retire it separately from state listeners; it is not an additional
+resource to dispose twice. `createServer` alone accepts only the environment hook
+and remains an unstarted-client factory.
+
 ## Typed tool definitions
 
 Adoption is optional. Annotate a definition with `ToolDefinition<TSettings>` to

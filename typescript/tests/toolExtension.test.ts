@@ -10,7 +10,7 @@ import { LanguageClient } from 'vscode-languageclient/node';
 import * as activation from '../src/activation';
 import { registerLogger } from '../src/logging';
 import { PythonEnvironmentsProvider } from '../src/python';
-import { activateToolExtension, ToolExtensionRuntime } from '../src';
+import { activateToolExtension, ToolExtensionRuntime, ToolLifecycleHooks } from '../src';
 import { IServerInfo, ToolConfig } from '../src/types';
 import * as vscodeapi from '../src/vscodeapi';
 
@@ -71,10 +71,11 @@ suite('activateToolExtension', () => {
         return { context: { subscriptions } as vscode.ExtensionContext, unrelated };
     }
 
-    function activate(context: vscode.ExtensionContext, overrides?: Partial<ToolConfig>) {
+    function activate(context: vscode.ExtensionContext, overrides?: Partial<ToolConfig>, hooks?: ToolLifecycleHooks) {
         const runtime = activateToolExtension(context, {
             serverInfo,
             toolConfig: { ...toolConfig, ...overrides },
+            hooks,
         });
         runtimes.push(runtime);
         return runtime;
@@ -384,6 +385,163 @@ suite('activateToolExtension', () => {
             resources.filter((item) => item.name === 'formatter'),
             1,
         );
+    });
+
+    test('keeps old handlers through stop and retires them before replacement setup', async () => {
+        const clients: import('./_languageclient_mock').LanguageClient[] = [];
+        const handlers: ReturnType<typeof resource>[] = [];
+        const received = sandbox.spy();
+        const environment = sandbox.spy(() => ({ toolFlag: 'enabled' }));
+        start.restore();
+        const originalStart = LanguageClient.prototype.start;
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            (this as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 'during-start');
+            await originalStart.call(this);
+        });
+        const { context } = makeContext();
+        const runtime = activate(context, undefined, {
+            getLaunchEnvironment: environment,
+            configureClient: ({ client, registerDisposable }) => {
+                clients.push(client as unknown as import('./_languageclient_mock').LanguageClient);
+                const owned = resource('client.handlers');
+                handlers.push(owned);
+                registerDisposable(owned);
+                registerDisposable(client.onNotification('example/score', received));
+            },
+        });
+        await nextImmediate();
+        assert.lengthOf(clients, 1);
+        sinon.assert.calledOnceWithExactly(received, 'during-start');
+
+        stop.restore();
+        const originalStop = LanguageClient.prototype.stop;
+        const stopping = deferred<void>();
+        const stopped = deferred<void>();
+        sandbox.stub(LanguageClient.prototype, 'stop').callsFake(async function (this: LanguageClient) {
+            stopping.resolve();
+            await stopped.promise;
+            await originalStop.call(this);
+        });
+        const restarting = commands.get('example.restart')!();
+        await stopping.promise;
+        sinon.assert.notCalled(handlers[0].dispose);
+        clients[0].simulateNotification('example/score', 'before-stop');
+        sinon.assert.calledWithExactly(received, 'before-stop');
+        stopped.resolve();
+        await restarting;
+        assert.lengthOf(clients, 2);
+        sinon.assert.calledOnce(handlers[0].dispose);
+        sinon.assert.notCalled(handlers[1].dispose);
+        sinon.assert.calledTwice(environment);
+        const count = received.callCount;
+        clients[0].simulateNotification('example/score', 'stale');
+        assert.strictEqual(received.callCount, count);
+        clients[1].simulateNotification('example/score', 'current');
+        assert.strictEqual(received.callCount, count + 1);
+        await runtime.deactivate();
+        sinon.assert.calledOnce(handlers[1].dispose);
+        clients[1].simulateNotification('example/score', 'after-shutdown');
+        assert.strictEqual(received.callCount, count + 1);
+    });
+
+    test('does not run hooks for coalesced requests and cleans each actual generation once', async () => {
+        const { context } = makeContext();
+        const hooks = {
+            getLaunchEnvironment: sandbox.spy(() => ({})),
+            configureClient: sandbox.spy(({ registerDisposable }: Parameters<
+                NonNullable<ToolLifecycleHooks['configureClient']>
+            >[0]): undefined => {
+                registerDisposable(resource('client.handlers'));
+            }),
+        };
+        const runtime = activate(context, { restartDelay: 50 }, hooks);
+        await nextImmediate();
+        const clock = sandbox.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        start.restore();
+        const originalStart = LanguageClient.prototype.start;
+        const entered = deferred<void>();
+        const started = deferred<void>();
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            entered.resolve();
+            await started.promise;
+            await originalStart.call(this);
+        });
+        const restart = commands.get('example.restart')!;
+        const restarting = restart();
+        await entered.promise;
+        await restart();
+        await restart();
+        sinon.assert.calledTwice(hooks.getLaunchEnvironment);
+        sinon.assert.calledTwice(hooks.configureClient);
+        await clock.tickAsync(50);
+        sinon.assert.calledTwice(hooks.configureClient);
+        started.resolve();
+        await restarting;
+        await clock.tickAsync(50);
+        sinon.assert.calledThrice(hooks.configureClient);
+        sinon.assert.calledThrice(hooks.getLaunchEnvironment);
+        await runtime.deactivate();
+        const owned = resources.filter((item) => item.name === 'client.handlers');
+        assert.lengthOf(owned, 3);
+        owned.forEach((item) => sinon.assert.calledOnce(item.dispose));
+    });
+
+    for (const stopped of [false, true]) {
+        test(`retires old setup after a failed stop leaving the client ${stopped ? 'Stopped' : 'Running'}`, async () => {
+            const owned: ReturnType<typeof resource>[] = [];
+            const { context } = makeContext();
+            const runtime = activate(context, undefined, {
+                configureClient: ({ registerDisposable }) => {
+                    const handlers = resource('client.handlers');
+                    owned.push(handlers);
+                    registerDisposable(handlers);
+                },
+            });
+            await nextImmediate();
+            const oldClient = start.firstCall.thisValue as LanguageClient;
+            stop.restore();
+            const originalStop = LanguageClient.prototype.stop;
+            sandbox.stub(LanguageClient.prototype, 'stop').callsFake(async function (this: LanguageClient) {
+                if (this === oldClient) {
+                    if (stopped) {
+                        await originalStop.call(this);
+                    }
+                    throw new Error('stop failed');
+                }
+                await originalStop.call(this);
+            });
+            await commands.get('example.restart')!();
+            assert.lengthOf(owned, 2);
+            sinon.assert.calledOnce(owned[0].dispose);
+            sinon.assert.notCalled(owned[1].dispose);
+            await runtime.deactivate();
+            owned.forEach((item) => sinon.assert.calledOnce(item.dispose));
+        });
+    }
+
+    test('shutdown closes hook resources before an in-flight start settles', async () => {
+        const { context } = makeContext();
+        const entered = deferred<void>();
+        const started = deferred<void>();
+        start.restore();
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async () => {
+            entered.resolve();
+            await started.promise;
+        });
+        const owned = resource('client.handlers');
+        const runtime = activate(context, undefined, {
+            configureClient: ({ registerDisposable }) => {
+                registerDisposable(owned);
+            },
+        });
+        await entered.promise;
+        const shutdown = runtime.deactivate();
+        sinon.assert.calledOnce(owned.dispose);
+        started.resolve();
+        await shutdown;
+        sinon.assert.calledOnce(stop);
+        sinon.assert.calledOnce(owned.dispose);
     });
 
     test('contains unexpected initializer rejections and still cleans up', async () => {

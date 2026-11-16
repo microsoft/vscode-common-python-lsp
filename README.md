@@ -202,6 +202,9 @@ the [activation facade example](typescript/README.md#opt-in-activation-facade).
 `activateToolExtension(context, { serverInfo, toolConfig })` returns a small
 runtime handle; initialization remains deferred, not client-ready. Await
 `runtime.deactivate()` for facade cleanup and existing client-stop behavior.
+Optional [launch hooks](typescript/README.md#optional-launch-hooks) support
+per-server inherited-environment patches and pre-start notification registration
+with client-owned cleanup, without overriding `runServer` or changing settings.
 It preserves caller-owned subscriptions, but does not drain every legacy
 in-flight restart or isolate the module-global logger/status. Existing manual
 composition remains supported.

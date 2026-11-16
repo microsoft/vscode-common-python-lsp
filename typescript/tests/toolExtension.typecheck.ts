@@ -50,6 +50,12 @@ export async function checkActivationFacade(
                     /* eslint-enable @typescript-eslint/naming-convention */
                 };
             },
+            configureClient: ({ client, registerDisposable, settings }) => {
+                const interpreter: string[] = settings.interpreter;
+                registerDisposable(client.onNotification('example/score', (_score: number) => {
+                    void interpreter;
+                }));
+            },
         } satisfies ToolLifecycleHooks,
     };
     const runtime: ToolExtensionRuntime = activateToolExtension(context, typedOptions);
@@ -57,3 +63,8 @@ export async function checkActivationFacade(
     runtime.lsClient = undefined;
     await runtime.deactivate();
 }
+
+export const invalidAsyncSetup: ToolLifecycleHooks = {
+    // @ts-expect-error Setup is synchronous; client readiness cannot depend on an async callback.
+    configureClient: async () => {},
+};

@@ -71,6 +71,7 @@ export { createConfigFileWatchers } from './configWatcher';
 export {
     createServer,
     CreateServerOptions,
+    ClientSetupContext,
     getServerCwd,
     restartServer,
     RestartServerOptions,
