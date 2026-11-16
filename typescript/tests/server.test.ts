@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import { assert } from 'chai';
+import { execFileSync } from 'child_process';
 import * as sinon from 'sinon';
 import * as path from 'path';
 import { LanguageStatusSeverity, LogOutputChannel, Uri, LogLevel, WorkspaceFolder } from 'vscode';
@@ -196,6 +197,18 @@ suite('createServer', () => {
         };
     }
 
+    function serverEnvironment(client: LanguageClient): NodeJS.ProcessEnv {
+        return (client as unknown as {
+            serverOptions: { options: { env: NodeJS.ProcessEnv } };
+        }).serverOptions.options.env;
+    }
+
+    function launchedEnvironment(client: LanguageClient): NodeJS.ProcessEnv {
+        return JSON.parse(execFileSync(process.execPath, [
+            '-e', 'process.stdout.write(JSON.stringify(process.env))',
+        ], { env: serverEnvironment(client), encoding: 'utf8' })) as NodeJS.ProcessEnv;
+    }
+
     test('returns a LanguageClient instance', async () => {
         const client = await createServer(makeCreateOptions());
         assert.instanceOf(client, LanguageClient);
@@ -287,7 +300,7 @@ suite('createServer', () => {
 
         assert.strictEqual(environment(first).S7_VALUE, 'first');
         assert.strictEqual(environment(second).S7_VALUE, 'second');
-        assert.notProperty(environment(first), 'S7_REMOVE');
+        assert.notProperty(launchedEnvironment(first), 'S7_REMOVE');
         assert.strictEqual(environment(first).S7_EMPTY, '');
         assert.strictEqual(environment(first).S7_KEEP, 'inherited');
         assert.strictEqual(process.env, host);
@@ -297,6 +310,78 @@ suite('createServer', () => {
         assert.deepEqual(settings, originalSettings);
         sinon.assert.calledTwice(getLaunchEnvironment);
         sinon.assert.calledWithExactly(getLaunchEnvironment, { settings, serverId: 'flake8', serverName: 'Flake8' });
+    });
+
+    test('replaces every inherited Windows casing without adding a competing alias', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        const host = { ...process.env, Path: 'first', PATH: 'second', S7_MiXeD: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ path: 'replacement', S7_MIXED: '' }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.Path, 'replacement');
+        assert.strictEqual(environment.PATH, 'replacement');
+        assert.notProperty(environment, 'path');
+        assert.strictEqual(environment.S7_MiXeD, '');
+        assert.notProperty(environment, 'S7_MIXED');
+        const launched = launchedEnvironment(client);
+        const paths = Object.entries(launched).filter(([key]) => key.toLowerCase() === 'path');
+        assert.isNotEmpty(paths);
+        paths.forEach(([, value]) => assert.strictEqual(value, 'replacement'));
+        assert.strictEqual(host.Path, 'first');
+        assert.strictEqual(host.PATH, 'second');
+        assert.strictEqual(host.S7_MiXeD, 'inherited');
+    });
+
+    test('removes every inherited Windows casing from the executable child', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        const host = { ...process.env, Path: 'first', PATH: 'second', S7_MiXeD: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ path: undefined, S7_MIXED: undefined }) },
+        }));
+
+        const removed = Object.keys(serverEnvironment(client))
+            .filter((key) => ['path', 's7_mixed'].includes(key.toLowerCase()));
+        assert.deepEqual(removed, []);
+        const launchedKeys = Object.keys(launchedEnvironment(client));
+        assert.notInclude(launchedKeys.map((key) => key.toLowerCase()), 's7_mixed');
+        assert.strictEqual(host.Path, 'first');
+        assert.strictEqual(host.PATH, 'second');
+        assert.strictEqual(host.S7_MiXeD, 'inherited');
+    });
+
+    test('lets an env file reintroduce a removed Windows alias', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        sandbox.stub(process, 'env').value({ ...process.env, S7_MiXeD: 'inherited' });
+        (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({ s7_mixed: 'env-file' });
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: undefined }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.notProperty(environment, 'S7_MiXeD');
+        assert.strictEqual(environment.s7_mixed, 'env-file');
+        const launched = Object.entries(launchedEnvironment(client))
+            .filter(([key]) => key.toLowerCase() === 's7_mixed');
+        assert.lengthOf(launched, 1);
+        assert.strictEqual(launched[0][1], 'env-file');
+    });
+
+    test('keeps hook environment keys case-sensitive outside Windows', async () => {
+        sandbox.stub(process, 'platform').value('linux');
+        sandbox.stub(process, 'env').value({ S7_MiXeD: 'inherited', S7_KEEP: 'inherited' });
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: 'replacement', s7_keep: undefined }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.S7_MiXeD, 'inherited');
+        assert.strictEqual(environment.S7_MIXED, 'replacement');
+        assert.strictEqual(environment.S7_KEEP, 'inherited');
+        assert.notProperty(environment, 's7_keep');
     });
 
     test('keeps env-file, built-in and static precedence over the launch patch', async () => {

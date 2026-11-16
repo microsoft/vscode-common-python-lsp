@@ -80,7 +80,8 @@ customization. `getLaunchEnvironment({ settings, serverId, serverName })`
 synchronously returns an environment patch for each actual client-creation
 attempt, not each debounced restart request. It must not mutate settings or
 `process.env`. An omitted key preserves its inherited value, `''` sets an empty
-value, and an explicit `undefined` removes the inherited key.
+value, and an explicit `undefined` removes the inherited key. Inherited names
+match case-insensitively on Windows and case-sensitively elsewhere.
 
 The patch is applied to a fresh copy of `process.env` **before** env-file merging,
 debugger/built-in assignments, extra paths and finally static `extraEnvVars`.
