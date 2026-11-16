@@ -343,9 +343,13 @@ suite('createServer', () => {
             hooks: { getLaunchEnvironment: () => ({ path: undefined, S7_MIXED: undefined }) },
         }));
 
-        const removed = Object.keys(serverEnvironment(client))
-            .filter((key) => ['path', 's7_mixed'].includes(key.toLowerCase()));
-        assert.deepEqual(removed, []);
+        const environment = serverEnvironment(client);
+        assert.property(environment, 'Path');
+        assert.isUndefined(environment.Path);
+        assert.property(environment, 'PATH');
+        assert.isUndefined(environment.PATH);
+        assert.property(environment, 'S7_MiXeD');
+        assert.isUndefined(environment.S7_MiXeD);
         const launchedKeys = Object.keys(launchedEnvironment(client));
         assert.notInclude(launchedKeys.map((key) => key.toLowerCase()), 's7_mixed');
         assert.strictEqual(host.Path, 'first');
@@ -362,7 +366,8 @@ suite('createServer', () => {
         }));
         const environment = serverEnvironment(client);
 
-        assert.notProperty(environment, 'S7_MiXeD');
+        assert.property(environment, 'S7_MiXeD');
+        assert.isUndefined(environment.S7_MiXeD);
         assert.strictEqual(environment.s7_mixed, 'env-file');
         const launched = Object.entries(launchedEnvironment(client))
             .filter(([key]) => key.toLowerCase() === 's7_mixed');

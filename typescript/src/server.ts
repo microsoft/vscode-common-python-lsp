@@ -116,8 +116,8 @@ export interface ToolLifecycleHooks {
     /**
      * Synchronously patch a fresh copy of the inherited environment before
      * env-file merging and built-in/static assignments. An explicit undefined
-     * deletes an inherited key; omitted keys are unchanged. Inherited key
-     * matching is case-insensitive on Windows.
+     * removes an inherited key from the launched environment; omitted keys are
+     * unchanged. Inherited key matching is case-insensitive on Windows.
      */
     getLaunchEnvironment?(context: ServerLaunchContext): Readonly<Record<string, string | undefined>>;
     /** Synchronous registration only: do not start/stop the client or return an async task. */
@@ -160,15 +160,11 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
     const launchEnvironment = options.hooks?.getLaunchEnvironment?.({ settings, serverId, serverName });
     if (launchEnvironment) {
         for (const [key, value] of Object.entries(launchEnvironment)) {
-            const inheritedKeys = process.platform === 'win32'
-                ? Object.keys(newEnv).filter((inheritedKey) => inheritedKey.toLowerCase() === key.toLowerCase())
+            const matchingKeys = process.platform === 'win32'
+                ? Object.keys(newEnv).filter((existingKey) => existingKey.toLowerCase() === key.toLowerCase())
                 : [];
-            for (const inheritedKey of inheritedKeys.length ? inheritedKeys : [key]) {
-                if (value === undefined) {
-                    delete newEnv[inheritedKey];
-                } else {
-                    newEnv[inheritedKey] = value;
-                }
+            for (const matchingKey of matchingKeys.length ? matchingKeys : [key]) {
+                newEnv[matchingKey] = value;
             }
         }
     }
