@@ -357,22 +357,27 @@ suite('createServer', () => {
         assert.strictEqual(host.S7_MiXeD, 'inherited');
     });
 
-    test('lets an env file reintroduce a removed Windows alias', async () => {
+    test('lets later layers reintroduce removed Windows aliases', async () => {
         sandbox.stub(process, 'platform').value('win32');
-        sandbox.stub(process, 'env').value({ ...process.env, S7_MiXeD: 'inherited' });
+        sandbox.stub(process, 'env').value({ ...process.env, S7_MiXeD: 'inherited', S7_Static: 'inherited' });
         (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({ s7_mixed: 'env-file' });
         const client = await createServer(makeCreateOptions({
-            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: undefined }) },
+            toolConfig: makeToolConfig({ extraEnvVars: { s7_static: 'static' } }),
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: undefined, S7_STATIC: undefined }) },
         }));
         const environment = serverEnvironment(client);
 
-        assert.property(environment, 'S7_MiXeD');
-        assert.isUndefined(environment.S7_MiXeD);
+        assert.strictEqual(environment.S7_MiXeD, 'env-file');
         assert.strictEqual(environment.s7_mixed, 'env-file');
-        const launched = Object.entries(launchedEnvironment(client))
+        assert.strictEqual(environment.S7_Static, 'static');
+        const launchedEnvironmentVariables = Object.entries(launchedEnvironment(client));
+        const launched = launchedEnvironmentVariables
             .filter(([key]) => key.toLowerCase() === 's7_mixed');
         assert.lengthOf(launched, 1);
         assert.strictEqual(launched[0][1], 'env-file');
+        const launchedStatic = launchedEnvironmentVariables.filter(([key]) => key.toLowerCase() === 's7_static');
+        assert.lengthOf(launchedStatic, 1);
+        assert.strictEqual(launchedStatic[0][1], 'static');
     });
 
     test('keeps hook environment keys case-sensitive outside Windows', async () => {
@@ -386,7 +391,7 @@ suite('createServer', () => {
         assert.strictEqual(environment.S7_MiXeD, 'inherited');
         assert.strictEqual(environment.S7_MIXED, 'replacement');
         assert.strictEqual(environment.S7_KEEP, 'inherited');
-        assert.notProperty(environment, 's7_keep');
+        assert.isUndefined(environment.s7_keep);
     });
 
     test('keeps env-file, built-in and static precedence over the launch patch', async () => {

@@ -224,6 +224,21 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
         }
     }
 
+    // A later Windows override must not be shadowed by an earlier removal alias.
+    if (launchEnvironment && process.platform === 'win32') {
+        const environmentKeys = Object.keys(newEnv).sort();
+        for (const key of environmentKeys) {
+            if (newEnv[key] === undefined) {
+                const overrideKey = environmentKeys.find(
+                    (candidate) => candidate.toLowerCase() === key.toLowerCase() && newEnv[candidate] !== undefined,
+                );
+                if (overrideKey) {
+                    newEnv[key] = newEnv[overrideKey];
+                }
+            }
+        }
+    }
+
     // Choose server script (debug vs normal)
     const isDebugScript = toolConfig.debugServerScript ? await fsapi.pathExists(toolConfig.debugServerScript) : false;
     const scriptPath =
