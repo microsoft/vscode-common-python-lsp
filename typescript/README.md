@@ -10,6 +10,69 @@ published package or a supported bare-module import.
 See the [main README](../README.md#consuming-in-extensions) for build order,
 consumer type-checking and bundling instructions.
 
+## Opt-in activation facade
+
+For conventional tools, `activateToolExtension` composes the existing shared
+helpers. It accepts explicit `IServerInfo` and either a legacy `ToolConfig` or
+a `ToolDefinition<TSettings>`; it does not load a manifest or infer tool policy.
+For example, in the consuming extension's `src/extension.ts`:
+
+```typescript
+import { ExtensionContext } from 'vscode';
+import {
+    activateToolExtension,
+    loadServerDefaults,
+    ToolExtensionRuntime,
+} from '../external/vscode-common-python-lsp/typescript/dist';
+import { toolDefinition } from './toolDefinition';
+
+let runtime: ToolExtensionRuntime | undefined;
+
+export function activate(context: ExtensionContext): void {
+    runtime = activateToolExtension(context, {
+        serverInfo: loadServerDefaults(context.extensionPath),
+        toolConfig: toolDefinition,
+    });
+}
+
+export async function deactivate(): Promise<void> {
+    await runtime?.deactivate();
+    runtime = undefined;
+}
+```
+
+`toolDefinition` supplies the extension's existing policies and server script
+path (see the typed example below). Build the pinned shared checkout before
+type-checking and bundle its public entry and dependencies as described in the
+main README.
+
+The facade installs common listeners and, for formatters, the placeholder
+synchronously, then initializes with `setImmediate`. **The returned handle is
+not a client-ready promise**: Python resolution and client startup remain
+deferred. Common listeners are present before Python can emit its initial
+interpreter event.
+
+The facade owns its output channel, logger registration, Python provider,
+tool context, commands, watchers and listeners. It adds one cleanup disposable
+to `context.subscriptions`; it does not remove or dispose unrelated caller
+subscriptions. Context disposal initiates shutdown; `await runtime.deactivate()`
+observes it. Both paths are idempotent. Shutdown cancels pending initialization,
+disposes the tool context, and delegates client stopping to `deactivateServer`.
+If initialization already started, shutdown waits for that `initialize()` call
+to settle and disposes any late subscriptions immediately; unresolved Python
+API acquisition can therefore delay shutdown. Logging stays available during
+this cleanup. Synchronous activation failures roll back owned resources and
+are rethrown; asynchronous initialization/cleanup failures are caught and logged.
+
+This is composition, not a new restart scheduler. As with the low-level APIs,
+`runServer()` may resolve after scheduling a delayed retry, and shutdown does
+**not** drain every in-flight restart/start (including startup triggered by a
+Python event). No stronger client-readiness or full-quiescence guarantee is
+implied. Logger and status are still module-global: this is not independent
+multi-tool-instance isolation. Existing low-level activation APIs remain
+available unchanged for custom composition; no consumer migration or custom
+lifecycle hooks are required.
+
 ## Typed tool definitions
 
 Adoption is optional. Annotate a definition with `ToolDefinition<TSettings>` to

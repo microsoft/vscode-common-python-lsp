@@ -496,7 +496,7 @@ export interface RegisterSubscriptionsOptions {
  * this call.
  */
 export function registerCommonSubscriptions(
-    context: vscode.ExtensionContext,
+    context: Pick<vscode.ExtensionContext, 'subscriptions'>,
     options: RegisterSubscriptionsOptions,
 ): void {
     const { serverInfo, outputChannel, toolConfig, toolContext, pythonProvider } = options;
@@ -517,6 +517,8 @@ export function registerCommonSubscriptions(
         outputChannel.onDidChangeLogLevel(async (e) => {
             await changeLogLevel(e, vscode.env.logLevel);
         }),
+    );
+    context.subscriptions.push(
         vscode.env.onDidChangeLogLevel(async (e) => {
             await changeLogLevel(outputChannel.logLevel, e);
         }),
@@ -534,6 +536,8 @@ export function registerCommonSubscriptions(
         registerCommand(`${serverId}.showLogs`, async () => {
             outputChannel.show();
         }),
+    );
+    context.subscriptions.push(
         registerCommand(`${serverId}.restart`, async () => {
             await safeRunServer(toolContext, 'restart command');
         }),
