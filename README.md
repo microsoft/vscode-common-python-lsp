@@ -197,6 +197,15 @@ notes, but they do not trigger or gate the submodule updates.
 
 ### Optional configuration
 
+For an additive activation entry point with explicit resource ownership, see
+the [activation facade example](typescript/README.md#opt-in-activation-facade).
+`activateToolExtension(context, { serverInfo, toolConfig })` returns a small
+runtime handle; initialization remains deferred, not client-ready. Await
+`runtime.deactivate()` for facade cleanup and existing client-stop behavior.
+It preserves caller-owned subscriptions, but does not drain every legacy
+in-flight restart or isolate the module-global logger/status. Existing manual
+composition remains supported.
+
 For an opt-in typed settings contract without changing runtime behavior, see
 the [typed tool definition example](typescript/README.md#typed-tool-definitions).
 Existing `ToolConfig` callers do not need to migrate.

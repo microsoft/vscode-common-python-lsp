@@ -89,3 +89,6 @@ export {
     RegisterSubscriptionsOptions,
     ToolExtensionContext,
 } from './activation';
+
+// Opt-in activation facade
+export { activateToolExtension, ActivateToolExtensionOptions, ToolExtensionRuntime } from './toolExtension';
