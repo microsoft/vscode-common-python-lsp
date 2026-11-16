@@ -258,9 +258,12 @@ suite('createToolContext', () => {
     test('runServer stops stale client when interpreter is cleared', async () => {
         const stopStub = sandbox.stub().resolves();
         const mockClient = { stop: stopStub } as unknown as import('vscode-languageclient/node').LanguageClient;
+        const clientSetup = { dispose: sandbox.stub() };
 
         // First run succeeds — sets up a client
-        (serverModule.restartServer as sinon.SinonStub).resolves({ client: mockClient, disposables: [] });
+        (serverModule.restartServer as sinon.SinonStub).resolves({
+            client: mockClient, disposables: [clientSetup], clientSetup,
+        });
         const ctx = createToolContext(makeOptions());
         await ctx.runServer();
         assert.strictEqual(ctx.lsClient, mockClient);
@@ -279,6 +282,9 @@ suite('createToolContext', () => {
         await ctx.runServer();
         assert.isTrue(stopStub.calledOnce, 'should stop the stale client');
         assert.isUndefined(ctx.lsClient, 'client should be cleared');
+        sinon.assert.calledOnce(clientSetup.dispose);
+        ctx.dispose();
+        sinon.assert.calledOnce(clientSetup.dispose);
     });
 
     test('dispose during in-flight restart cleans up late results and cancels queued retry', async () => {

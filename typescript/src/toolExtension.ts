@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { createToolContext, deactivateServer, registerCommonSubscriptions, ToolExtensionContext } from './activation';
 import { registerLogger } from './logging';
 import { PythonEnvironmentsProvider } from './python';
+import { ToolLifecycleHooks } from './server';
 import { IServerInfo, ToolConfig } from './types';
 import { createOutputChannel } from './vscodeapi';
 
@@ -13,6 +14,7 @@ export interface ActivateToolExtensionOptions {
     serverInfo: IServerInfo;
     /** Accepts legacy ToolConfig and structurally compatible ToolDefinition values. */
     toolConfig: ToolConfig;
+    hooks?: ToolLifecycleHooks;
 }
 
 /** The facade's lifetime handle, not a client-ready notification. */
@@ -129,6 +131,7 @@ export function activateToolExtension(
             outputChannel,
             toolConfig,
             pythonProvider,
+            hooks: options.hooks,
         });
         registerCommonSubscriptions(
             { subscriptions },

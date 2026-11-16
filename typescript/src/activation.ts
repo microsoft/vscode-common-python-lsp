@@ -19,7 +19,7 @@ import { createConfigFileWatchers } from './configWatcher';
 import { traceError, traceLog, traceVerbose } from './logging';
 import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
-import { restartServer, RestartServerOptions } from './server';
+import { restartServer, RestartServerOptions, ToolLifecycleHooks } from './server';
 import { checkIfConfigurationChanged, getExtensionSettings, getWorkspaceSettings } from './settings';
 import { registerLanguageStatusItem, updateStatus } from './status';
 import { IBaseSettings, IServerInfo, ToolConfig } from './types';
@@ -139,6 +139,7 @@ export interface CreateToolContextOptions {
     outputChannel: vscode.LogOutputChannel;
     toolConfig: ToolConfig;
     pythonProvider: PythonEnvironmentsProvider;
+    hooks?: ToolLifecycleHooks;
 }
 
 /**
@@ -163,6 +164,13 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
     let pythonInitialized = false;
     let extensionSubscriptions: vscode.Disposable[] | undefined;
     let serverDisposables: vscode.Disposable[] = [];
+    let clientSetup: vscode.Disposable | undefined;
+    const hookShutdown = options.hooks ? new AbortController() : undefined;
+
+    function disposeClientSetup(): void {
+        clientSetup?.dispose();
+        clientSetup = undefined;
+    }
 
     const nullFormatter = toolConfig.isFormatter ? new NullFormatter() : undefined;
     nullFormatter?.register();
@@ -238,6 +246,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         }
                         ctx.lsClient = undefined;
                     }
+                    disposeClientSetup();
                     for (const d of serverDisposables) {
                         try {
                             d.dispose();
@@ -288,7 +297,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         toolConfig,
                         pythonProvider,
                         extensionSettings,
+                        hooks: options.hooks,
+                        signal: hookShutdown?.signal,
                         onOldClientStopped: () => {
+                            disposeClientSetup();
                             if (!disposed) {
                                 nullFormatter?.register();
                             }
@@ -316,8 +328,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         return;
                     }
 
+                    disposeClientSetup();
                     ctx.lsClient = result.client;
-                    serverDisposables = result.disposables;
+                    clientSetup = result.clientSetup;
+                    serverDisposables = result.disposables.filter((disposable) => disposable !== clientSetup);
 
                     if (nullFormatter && result.client) {
                         if (result.client.state === State.Running) {
@@ -404,6 +418,8 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
         dispose(): void {
             disposed = true;
+            hookShutdown?.abort();
+            disposeClientSetup();
             if (restartTimer) {
                 clearTimeout(restartTimer);
                 restartTimer = undefined;

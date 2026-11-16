@@ -71,10 +71,13 @@ export { createConfigFileWatchers } from './configWatcher';
 export {
     createServer,
     CreateServerOptions,
+    ClientSetupContext,
     getServerCwd,
     restartServer,
     RestartServerOptions,
     RestartServerResult,
+    ServerLaunchContext,
+    ToolLifecycleHooks,
 } from './server';
 
 // Null formatter helper

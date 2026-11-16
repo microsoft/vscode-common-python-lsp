@@ -2,11 +2,22 @@
 // Licensed under the MIT License.
 
 import { assert } from 'chai';
+import { execFileSync } from 'child_process';
 import * as sinon from 'sinon';
+import * as path from 'path';
 import { LanguageStatusSeverity, LogOutputChannel, Uri, LogLevel, WorkspaceFolder } from 'vscode';
 import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { getServerCwd, createServer, restartServer, CreateServerOptions, RestartServerOptions, RestartServerResult } from '../src/server';
+import {
+    getServerCwd,
+    createServer,
+    restartServer,
+    CreateServerOptions,
+    RestartServerOptions,
+    RestartServerResult,
+    ServerLaunchContext,
+    ClientSetupContext,
+} from '../src/server';
 import * as envFileModule from '../src/envFile';
 import * as status from '../src/status';
 import * as utilities from '../src/utilities';
@@ -186,6 +197,18 @@ suite('createServer', () => {
         };
     }
 
+    function serverEnvironment(client: LanguageClient): NodeJS.ProcessEnv {
+        return (client as unknown as {
+            serverOptions: { options: { env: NodeJS.ProcessEnv } };
+        }).serverOptions.options.env;
+    }
+
+    function launchedEnvironment(client: LanguageClient): NodeJS.ProcessEnv {
+        return JSON.parse(execFileSync(process.execPath, [
+            '-e', 'process.stdout.write(JSON.stringify(process.env))',
+        ], { env: serverEnvironment(client), encoding: 'utf8' })) as NodeJS.ProcessEnv;
+    }
+
     test('returns a LanguageClient instance', async () => {
         const client = await createServer(makeCreateOptions());
         assert.instanceOf(client, LanguageClient);
@@ -256,6 +279,153 @@ suite('createServer', () => {
         const env = ((client as unknown as { serverOptions: { options: { env: Record<string, string> } } }).serverOptions).options.env;
         assert.include(env.PYTHONPATH, '/envfile/path');
     });
+
+    /* eslint-disable @typescript-eslint/naming-convention -- Environment keys retain their actual spelling. */
+    test('patches inherited environment per launch without mutating the host or settings', async () => {
+        const host = { ...process.env, S7_REMOVE: 'inherited', S7_EMPTY: 'inherited', S7_KEEP: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const settings = makeSettings({ custom: false });
+        const originalSettings = structuredClone(settings);
+        let value = 'first';
+        const getLaunchEnvironment = sandbox.spy((context: ServerLaunchContext) => {
+            assert.strictEqual(context.settings, settings);
+            return { S7_VALUE: value, S7_REMOVE: undefined, S7_EMPTY: '' };
+        });
+        const options = makeCreateOptions({ settings, hooks: { getLaunchEnvironment } });
+        const first = await createServer(options);
+        value = 'second';
+        const second = await createServer(options);
+        const environment = (client: LanguageClient) =>
+            (client as unknown as { serverOptions: { options: { env: NodeJS.ProcessEnv } } }).serverOptions.options.env;
+
+        assert.strictEqual(environment(first).S7_VALUE, 'first');
+        assert.strictEqual(environment(second).S7_VALUE, 'second');
+        assert.notProperty(launchedEnvironment(first), 'S7_REMOVE');
+        assert.strictEqual(environment(first).S7_EMPTY, '');
+        assert.strictEqual(environment(first).S7_KEEP, 'inherited');
+        assert.strictEqual(process.env, host);
+        assert.strictEqual(host.S7_REMOVE, 'inherited');
+        assert.strictEqual(host.S7_EMPTY, 'inherited');
+        assert.notProperty(host, 'S7_VALUE');
+        assert.deepEqual(settings, originalSettings);
+        sinon.assert.calledTwice(getLaunchEnvironment);
+        sinon.assert.calledWithExactly(getLaunchEnvironment, { settings, serverId: 'flake8', serverName: 'Flake8' });
+    });
+
+    test('replaces every inherited Windows casing without adding a competing alias', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        const host = { ...process.env, Path: 'first', PATH: 'second', S7_MiXeD: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ path: 'replacement', S7_MIXED: '' }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.Path, 'replacement');
+        assert.strictEqual(environment.PATH, 'replacement');
+        assert.notProperty(environment, 'path');
+        assert.strictEqual(environment.S7_MiXeD, '');
+        assert.notProperty(environment, 'S7_MIXED');
+        const launched = launchedEnvironment(client);
+        const paths = Object.entries(launched).filter(([key]) => key.toLowerCase() === 'path');
+        assert.isNotEmpty(paths);
+        paths.forEach(([, value]) => assert.strictEqual(value, 'replacement'));
+        assert.strictEqual(host.Path, 'first');
+        assert.strictEqual(host.PATH, 'second');
+        assert.strictEqual(host.S7_MiXeD, 'inherited');
+    });
+
+    test('removes every inherited Windows casing from the executable child', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        const host = { ...process.env, Path: 'first', PATH: 'second', S7_MiXeD: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ path: undefined, S7_MIXED: undefined }) },
+        }));
+
+        const environment = serverEnvironment(client);
+        assert.property(environment, 'Path');
+        assert.isUndefined(environment.Path);
+        assert.property(environment, 'PATH');
+        assert.isUndefined(environment.PATH);
+        assert.property(environment, 'S7_MiXeD');
+        assert.isUndefined(environment.S7_MiXeD);
+        const launchedKeys = Object.keys(launchedEnvironment(client));
+        assert.notInclude(launchedKeys.map((key) => key.toLowerCase()), 's7_mixed');
+        assert.strictEqual(host.Path, 'first');
+        assert.strictEqual(host.PATH, 'second');
+        assert.strictEqual(host.S7_MiXeD, 'inherited');
+    });
+
+    test('lets later layers reintroduce removed Windows aliases', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        sandbox.stub(process, 'env').value({ ...process.env, S7_MiXeD: 'inherited', S7_Static: 'inherited' });
+        (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({ s7_mixed: 'env-file' });
+        const client = await createServer(makeCreateOptions({
+            toolConfig: makeToolConfig({ extraEnvVars: { s7_static: 'static' } }),
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: undefined, S7_STATIC: undefined }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.S7_MiXeD, 'env-file');
+        assert.strictEqual(environment.s7_mixed, 'env-file');
+        assert.strictEqual(environment.S7_Static, 'static');
+        const launchedEnvironmentVariables = Object.entries(launchedEnvironment(client));
+        const launched = launchedEnvironmentVariables
+            .filter(([key]) => key.toLowerCase() === 's7_mixed');
+        assert.lengthOf(launched, 1);
+        assert.strictEqual(launched[0][1], 'env-file');
+        const launchedStatic = launchedEnvironmentVariables.filter(([key]) => key.toLowerCase() === 's7_static');
+        assert.lengthOf(launchedStatic, 1);
+        assert.strictEqual(launchedStatic[0][1], 'static');
+    });
+
+    test('keeps hook environment keys case-sensitive outside Windows', async () => {
+        sandbox.stub(process, 'platform').value('linux');
+        sandbox.stub(process, 'env').value({ S7_MiXeD: 'inherited', S7_KEEP: 'inherited' });
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: 'replacement', s7_keep: undefined }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.S7_MiXeD, 'inherited');
+        assert.strictEqual(environment.S7_MIXED, 'replacement');
+        assert.strictEqual(environment.S7_KEEP, 'inherited');
+        assert.isUndefined(environment.s7_keep);
+    });
+
+    test('keeps env-file, built-in and static precedence over the launch patch', async () => {
+        sandbox.stub(process, 'env').value({ S7_REMOVED_THEN_LOADED: 'inherited' });
+        (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({
+            S7_REMOVED_THEN_LOADED: 'env-file',
+            S7_STATIC: 'env-file',
+            PYTHONPATH: 'env-file-path',
+        });
+        const client = await createServer(makeCreateOptions({
+            settings: makeSettings({ extraPaths: ['extra-path'] }),
+            toolConfig: makeToolConfig({ extraEnvVars: { S7_STATIC: 'static', PYTHONUTF8: 'static' } }),
+            hooks: {
+                getLaunchEnvironment: () => ({
+                    S7_REMOVED_THEN_LOADED: undefined,
+                    S7_STATIC: 'hook',
+                    LS_IMPORT_STRATEGY: 'hook',
+                    LS_SHOW_NOTIFICATION: 'hook',
+                    PYTHONUTF8: 'hook',
+                    PYTHONPATH: 'hook-path',
+                }),
+            },
+        }));
+        const environment = (client as unknown as {
+            serverOptions: { options: { env: NodeJS.ProcessEnv } };
+        }).serverOptions.options.env;
+        assert.strictEqual(environment.S7_REMOVED_THEN_LOADED, 'env-file');
+        assert.strictEqual(environment.S7_STATIC, 'static');
+        assert.strictEqual(environment.LS_IMPORT_STRATEGY, 'useBundled');
+        assert.strictEqual(environment.LS_SHOW_NOTIFICATION, 'off');
+        assert.strictEqual(environment.PYTHONUTF8, 'static');
+        assert.strictEqual(environment.PYTHONPATH, ['hook-path', 'env-file-path', 'extra-path'].join(path.delimiter));
+    });
+    /* eslint-enable @typescript-eslint/naming-convention */
 
     test('throws when interpreter array is empty', async () => {
         const options = makeCreateOptions({
@@ -458,6 +628,142 @@ suite('restartServer', () => {
         } finally {
             disposeResult(result);
         }
+    });
+
+    test('contains environment hook failure without starting a client', async () => {
+        const start = sandbox.spy(LanguageClient.prototype, 'start');
+        const result = await restartServer(makeRestartOptions({
+            hooks: { getLaunchEnvironment: () => { throw new Error('environment hook failed'); } },
+        }));
+        assert.isUndefined(result.client);
+        assert.isEmpty(result.disposables);
+        assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+        sinon.assert.notCalled(start);
+    });
+
+    test('registers handlers on the new client before start and returns their owned scope', async () => {
+        const received = sandbox.spy();
+        const originalStart = LanguageClient.prototype.start;
+        const start = sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            (this as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 42);
+            await originalStart.call(this);
+        });
+        const configureClient = sandbox.spy((context: ClientSetupContext): undefined => {
+            assert.strictEqual(context.client.state, State.Stopped);
+            context.registerDisposable(context.client.onNotification('example/score', received));
+        });
+        const result = await restartServer(makeRestartOptions({ hooks: { configureClient } }));
+
+        try {
+            sinon.assert.calledOnce(configureClient);
+            assert.strictEqual(configureClient.firstCall.args[0].client, result.client);
+            sinon.assert.callOrder(configureClient, start, received);
+            sinon.assert.calledOnceWithExactly(received, 42);
+            assert.include(result.disposables, result.clientSetup);
+            result.disposables.forEach((disposable) => disposable.dispose());
+            (result.client as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 100);
+            sinon.assert.calledOnce(received);
+        } finally {
+            disposeResult(result);
+        }
+    });
+
+    for (const phase of ['setup', 'start', 'setTrace'] as const) {
+        test(`releases partially registered resources on ${phase} failure despite cleanup errors`, async () => {
+            const first = { dispose: sandbox.stub().throws(new Error('cleanup failed')) };
+            const second = { dispose: sandbox.stub().rejects(new Error('async cleanup failed')) };
+            const start = phase === 'start'
+                ? sandbox.stub(LanguageClient.prototype, 'start').rejects(new Error('start failed'))
+                : sandbox.spy(LanguageClient.prototype, 'start');
+            if (phase === 'setTrace') {
+                sandbox.stub(LanguageClient.prototype, 'setTrace').rejects(new Error('trace failed'));
+            }
+            const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+            const result = await restartServer(makeRestartOptions({
+                hooks: {
+                    configureClient: ({ registerDisposable }) => {
+                        registerDisposable(first);
+                        registerDisposable(second);
+                        if (phase === 'setup') {
+                            throw new Error('setup failed');
+                        }
+                    },
+                },
+            }));
+
+            assert.isUndefined(result.client);
+            assert.isEmpty(result.disposables);
+            sinon.assert.calledOnce(first.dispose);
+            sinon.assert.calledOnce(second.dispose);
+            sinon.assert.calledOnce(dispose);
+            if (phase === 'setup') {
+                sinon.assert.notCalled(start);
+            }
+        });
+    }
+
+    test('does not configure or start a client when shutdown occurs during environment loading', async () => {
+        const loading = deferred<void>();
+        const loaded = deferred<Record<string, string>>();
+        (envFileModule.getEnvFileVars as sinon.SinonStub).callsFake(() => {
+            loading.resolve();
+            return loaded.promise;
+        });
+        const controller = new AbortController();
+        const configureClient = sandbox.spy(() => undefined);
+        const start = sandbox.spy(LanguageClient.prototype, 'start');
+        const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+        const restarting = restartServer(makeRestartOptions({
+            signal: controller.signal,
+            hooks: { configureClient },
+        }));
+        await loading.promise;
+        controller.abort();
+        loaded.resolve({});
+        const result = await restarting;
+        assert.isUndefined(result.client);
+        sinon.assert.notCalled(configureClient);
+        sinon.assert.notCalled(start);
+        sinon.assert.calledOnce(dispose);
+    });
+
+    test('closes in-flight setup immediately and stops a late-started client after shutdown', async () => {
+        const entered = deferred<void>();
+        const started = deferred<void>();
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async () => {
+            entered.resolve();
+            await started.promise;
+        });
+        const controller = new AbortController();
+        const resource = { dispose: sandbox.stub() };
+        const lateResource = { dispose: sandbox.stub() };
+        let register!: ClientSetupContext['registerDisposable'];
+        const stop = sandbox.spy(LanguageClient.prototype, 'stop');
+        const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+        const trace = sandbox.spy(LanguageClient.prototype, 'setTrace');
+        const restarting = restartServer(makeRestartOptions({
+            signal: controller.signal,
+            hooks: {
+                configureClient: ({ registerDisposable }) => {
+                    register = registerDisposable;
+                    registerDisposable(resource);
+                },
+            },
+        }));
+        await entered.promise;
+        controller.abort();
+        sinon.assert.calledOnce(resource.dispose);
+        register(lateResource);
+        sinon.assert.calledOnce(lateResource.dispose);
+        started.resolve();
+        const result = await restarting;
+        assert.isUndefined(result.client);
+        sinon.assert.calledOnce(stop);
+        sinon.assert.calledOnce(dispose);
+        sinon.assert.notCalled(trace);
+        sinon.assert.calledOnce(resource.dispose);
     });
 
     for (const phase of ['start', 'setTrace'] as const) {
