@@ -19,7 +19,7 @@ import { createConfigFileWatchers } from './configWatcher';
 import { traceError, traceLog, traceVerbose } from './logging';
 import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
-import { restartServer, RestartServerOptions } from './server';
+import { restartServer, RestartServerOptions, ToolLifecycleHooks } from './server';
 import { checkIfConfigurationChanged, getExtensionSettings, getWorkspaceSettings } from './settings';
 import { registerLanguageStatusItem, updateStatus } from './status';
 import { IBaseSettings, IServerInfo, ToolConfig } from './types';
@@ -139,6 +139,7 @@ export interface CreateToolContextOptions {
     outputChannel: vscode.LogOutputChannel;
     toolConfig: ToolConfig;
     pythonProvider: PythonEnvironmentsProvider;
+    hooks?: ToolLifecycleHooks;
 }
 
 /**
@@ -288,6 +289,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         toolConfig,
                         pythonProvider,
                         extensionSettings,
+                        hooks: options.hooks,
                         onOldClientStopped: () => {
                             if (!disposed) {
                                 nullFormatter?.register();

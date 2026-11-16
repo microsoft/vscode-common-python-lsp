@@ -73,6 +73,22 @@ multi-tool-instance isolation. Existing low-level activation APIs remain
 available unchanged for custom composition; no consumer migration or custom
 lifecycle hooks are required.
 
+## Optional launch hooks
+
+Pass `hooks` to `activateToolExtension` or `createToolContext` for runtime-only
+customization. `getLaunchEnvironment({ settings, serverId, serverName })`
+synchronously returns an environment patch for each actual client-creation
+attempt, not each debounced restart request. It must not mutate settings or
+`process.env`. An omitted key preserves its inherited value, `''` sets an empty
+value, and an explicit `undefined` removes the inherited key.
+
+The patch is applied to a fresh copy of `process.env` **before** env-file merging,
+debugger/built-in assignments, extra paths and finally static `extraEnvVars`.
+Thus an env file can reintroduce a removed inherited key; static overrides keep
+their existing precedence. A throwing hook fails that launch through the normal
+creation-error path. Hooks are not part of `ToolConfig` or the Python settings
+payload. Existing callers without hooks retain their environment behavior.
+
 ## Typed tool definitions
 
 Adoption is optional. Annotate a definition with `ToolDefinition<TSettings>` to

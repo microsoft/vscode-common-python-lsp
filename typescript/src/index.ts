@@ -75,6 +75,8 @@ export {
     restartServer,
     RestartServerOptions,
     RestartServerResult,
+    ServerLaunchContext,
+    ToolLifecycleHooks,
 } from './server';
 
 // Null formatter helper

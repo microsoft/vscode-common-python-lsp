@@ -3,10 +3,19 @@
 
 import { assert } from 'chai';
 import * as sinon from 'sinon';
+import * as path from 'path';
 import { LanguageStatusSeverity, LogOutputChannel, Uri, LogLevel, WorkspaceFolder } from 'vscode';
 import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { getServerCwd, createServer, restartServer, CreateServerOptions, RestartServerOptions, RestartServerResult } from '../src/server';
+import {
+    getServerCwd,
+    createServer,
+    restartServer,
+    CreateServerOptions,
+    RestartServerOptions,
+    RestartServerResult,
+    ServerLaunchContext,
+} from '../src/server';
 import * as envFileModule from '../src/envFile';
 import * as status from '../src/status';
 import * as utilities from '../src/utilities';
@@ -257,6 +266,71 @@ suite('createServer', () => {
         assert.include(env.PYTHONPATH, '/envfile/path');
     });
 
+    /* eslint-disable @typescript-eslint/naming-convention -- Environment keys retain their actual spelling. */
+    test('patches inherited environment per launch without mutating the host or settings', async () => {
+        const host = { ...process.env, S7_REMOVE: 'inherited', S7_EMPTY: 'inherited', S7_KEEP: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const settings = makeSettings({ custom: false });
+        const originalSettings = structuredClone(settings);
+        let value = 'first';
+        const getLaunchEnvironment = sandbox.spy((context: ServerLaunchContext) => {
+            assert.strictEqual(context.settings, settings);
+            return { S7_VALUE: value, S7_REMOVE: undefined, S7_EMPTY: '' };
+        });
+        const options = makeCreateOptions({ settings, hooks: { getLaunchEnvironment } });
+        const first = await createServer(options);
+        value = 'second';
+        const second = await createServer(options);
+        const environment = (client: LanguageClient) =>
+            (client as unknown as { serverOptions: { options: { env: NodeJS.ProcessEnv } } }).serverOptions.options.env;
+
+        assert.strictEqual(environment(first).S7_VALUE, 'first');
+        assert.strictEqual(environment(second).S7_VALUE, 'second');
+        assert.notProperty(environment(first), 'S7_REMOVE');
+        assert.strictEqual(environment(first).S7_EMPTY, '');
+        assert.strictEqual(environment(first).S7_KEEP, 'inherited');
+        assert.strictEqual(process.env, host);
+        assert.strictEqual(host.S7_REMOVE, 'inherited');
+        assert.strictEqual(host.S7_EMPTY, 'inherited');
+        assert.notProperty(host, 'S7_VALUE');
+        assert.deepEqual(settings, originalSettings);
+        sinon.assert.calledTwice(getLaunchEnvironment);
+        sinon.assert.calledWithExactly(getLaunchEnvironment, { settings, serverId: 'flake8', serverName: 'Flake8' });
+    });
+
+    test('keeps env-file, built-in and static precedence over the launch patch', async () => {
+        sandbox.stub(process, 'env').value({ S7_REMOVED_THEN_LOADED: 'inherited' });
+        (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({
+            S7_REMOVED_THEN_LOADED: 'env-file',
+            S7_STATIC: 'env-file',
+            PYTHONPATH: 'env-file-path',
+        });
+        const client = await createServer(makeCreateOptions({
+            settings: makeSettings({ extraPaths: ['extra-path'] }),
+            toolConfig: makeToolConfig({ extraEnvVars: { S7_STATIC: 'static', PYTHONUTF8: 'static' } }),
+            hooks: {
+                getLaunchEnvironment: () => ({
+                    S7_REMOVED_THEN_LOADED: undefined,
+                    S7_STATIC: 'hook',
+                    LS_IMPORT_STRATEGY: 'hook',
+                    LS_SHOW_NOTIFICATION: 'hook',
+                    PYTHONUTF8: 'hook',
+                    PYTHONPATH: 'hook-path',
+                }),
+            },
+        }));
+        const environment = (client as unknown as {
+            serverOptions: { options: { env: NodeJS.ProcessEnv } };
+        }).serverOptions.options.env;
+        assert.strictEqual(environment.S7_REMOVED_THEN_LOADED, 'env-file');
+        assert.strictEqual(environment.S7_STATIC, 'static');
+        assert.strictEqual(environment.LS_IMPORT_STRATEGY, 'useBundled');
+        assert.strictEqual(environment.LS_SHOW_NOTIFICATION, 'off');
+        assert.strictEqual(environment.PYTHONUTF8, 'static');
+        assert.strictEqual(environment.PYTHONPATH, ['hook-path', 'env-file-path', 'extra-path'].join(path.delimiter));
+    });
+    /* eslint-enable @typescript-eslint/naming-convention */
+
     test('throws when interpreter array is empty', async () => {
         const options = makeCreateOptions({
             settings: makeSettings({ interpreter: [] }),
@@ -458,6 +532,17 @@ suite('restartServer', () => {
         } finally {
             disposeResult(result);
         }
+    });
+
+    test('contains environment hook failure without starting a client', async () => {
+        const start = sandbox.spy(LanguageClient.prototype, 'start');
+        const result = await restartServer(makeRestartOptions({
+            hooks: { getLaunchEnvironment: () => { throw new Error('environment hook failed'); } },
+        }));
+        assert.isUndefined(result.client);
+        assert.isEmpty(result.disposables);
+        assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+        sinon.assert.notCalled(start);
     });
 
     for (const phase of ['start', 'setTrace'] as const) {

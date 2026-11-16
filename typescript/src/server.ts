@@ -97,6 +97,23 @@ export function getServerCwd(settings: IBaseSettings): string {
 // Server creation
 // ---------------------------------------------------------------------------
 
+/** Resolved bootstrap settings and identity for one actual client launch. */
+export interface ServerLaunchContext {
+    readonly settings: Readonly<IBaseSettings>;
+    readonly serverId: string;
+    readonly serverName: string;
+}
+
+/** Optional runtime customization, never serialized into Python settings. */
+export interface ToolLifecycleHooks {
+    /**
+     * Synchronously patch a fresh copy of the inherited environment before
+     * env-file merging and built-in/static assignments. An explicit undefined
+     * deletes an inherited key; omitted keys are unchanged.
+     */
+    getLaunchEnvironment?(context: ServerLaunchContext): Readonly<Record<string, string | undefined>>;
+}
+
 /** Options for {@link createServer}. */
 export interface CreateServerOptions {
     settings: IBaseSettings;
@@ -106,6 +123,7 @@ export interface CreateServerOptions {
     initializationOptions: IInitOptions;
     toolConfig: ToolConfig;
     debuggerPath?: string;
+    hooks?: Pick<ToolLifecycleHooks, 'getLaunchEnvironment'>;
 }
 
 /**
@@ -129,6 +147,16 @@ export async function createServer(options: CreateServerOptions): Promise<Langua
 
     // Build server environment
     const newEnv: Record<string, string | undefined> = { ...process.env };
+    const launchEnvironment = options.hooks?.getLaunchEnvironment?.({ settings, serverId, serverName });
+    if (launchEnvironment) {
+        for (const [key, value] of Object.entries(launchEnvironment)) {
+            if (value === undefined) {
+                delete newEnv[key];
+            } else {
+                newEnv[key] = value;
+            }
+        }
+    }
 
     // Load environment variables from python.envFile (.env)
     const workspaceUri = parseWorkspaceUri(settings.workspace);
@@ -231,6 +259,7 @@ export interface RestartServerOptions {
     outputChannel: LogOutputChannel;
     toolConfig: ToolConfig;
     pythonProvider: PythonEnvironmentsProvider;
+    hooks?: ToolLifecycleHooks;
     /**
      * Synchronous notification after the old client's stop settles with state Stopped,
      * before replacement creation. Also applies when stop rejects but leaves
@@ -286,6 +315,7 @@ export async function restartServer(
             outputChannel,
             toolConfig,
             debuggerPath,
+            hooks: options.hooks,
             initializationOptions: {
                 settings: extensionSettings ?? (await getExtensionSettings(serverId, toolConfig, resolveInterpreter)),
                 globalSettings: await getGlobalSettings(serverId, toolConfig),
