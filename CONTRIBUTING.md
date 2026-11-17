@@ -45,6 +45,11 @@ Extensions consume this repository at a pinned Git commit and build both the
 TypeScript and Python runtimes from that revision. The pinned source revision,
 not the version strings in the package manifests, is the compatibility identity.
 
+The [S9 consumer compatibility audit](docs/compatibility-audit.md) records
+revision-linked usage and compatibility decisions across the five tool
+extensions. Consult it before proposing deprecations; missing imports alone do
+not demonstrate an unused API.
+
 The private npm manifest and Python distribution metadata use the internal
 build identity `vscode-python-tool-internal` and retain fixed version
 values needed for local builds and installation. This identity is not a consumer
