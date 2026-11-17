@@ -11,11 +11,16 @@ updates:
       all-npm:
         patterns:
           - '*'
+        exclude-patterns:
+          - 'typescript'
     open-pull-requests-limit: 10
     cooldown:
       # Delay updates beyond the highest-risk window after a release.
       default-days: 14
     ignore:
+      - dependency-name: 'typescript'
+        update-types:
+          - 'version-update:semver-major'
       - dependency-name: '@types/vscode'
       - dependency-name: '@types/node'
       - dependency-name: 'vscode-languageclient'
