@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as sinon from 'sinon';
 import { pathToFileURL } from 'url';
 import { Uri, WorkspaceFolder } from 'vscode';
+import { ToolDefinition } from '../src';
 import {
     checkIfConfigurationChanged,
     expandTilde,
@@ -82,6 +83,10 @@ suite('settings — workspace & global resolution', () => {
             'settings',
             'producer.json',
         );
+        interface FixtureSettings {
+            severity: Record<string, string>;
+            extensionOption: { enabled: boolean; label?: string };
+        }
         const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'), (_key: string, value: unknown) => {
             if (typeof value !== 'string') {
                 return value;
@@ -92,7 +97,7 @@ suite('settings — workspace & global resolution', () => {
             }
             return expanded;
         }) as {
-            toolDefaults: Record<string, unknown>;
+            toolDefaults: ToolDefinition<FixtureSettings>['settingsDefaults'];
             configuration: { workspace: Record<string, unknown>; global: Record<string, unknown> };
             initializationOptions: IInitOptions;
         };
@@ -109,6 +114,63 @@ suite('settings — workspace & global resolution', () => {
         };
 
         assert.deepEqual(actual, fixture.initializationOptions);
+
+        const typedToolConfig: ToolDefinition<FixtureSettings> = {
+            ...toolConfig,
+            settingsDefaults: fixture.toolDefaults,
+        };
+        const typed: IInitOptions = {
+            settings: await getExtensionSettings('flake8', typedToolConfig, undefined, [root]),
+            globalSettings: await getGlobalSettings('flake8', typedToolConfig),
+        };
+        assert.deepEqual(typed, actual);
+        assert.deepEqual(await getWorkspaceSettings('flake8', root, typedToolConfig), actual.settings[0]);
+    });
+
+    test('typed definitions preserve defaults and project only declared custom keys', async () => {
+        interface OptionalSettings {
+            enabled: boolean;
+            ignorePatterns: string[];
+            optionalLabel?: string;
+        }
+        const typed: ToolDefinition<OptionalSettings> = {
+            ...makeToolConfig(),
+            settingsDefaults: { enabled: false, ignorePatterns: [] },
+            trackedSettings: ['enabled', 'ignorePatterns', 'envFile'],
+        };
+        const configured: Record<string, unknown> = {
+            optionalLabel: 'not projected without a default',
+            envFile: 'client-only.env',
+            futureOption: true,
+        };
+        getConfigurationStub.returns({
+            get: (key: string, fallback?: unknown) => configured[key] ?? fallback,
+            inspect: (key: string) => ({ globalValue: configured[key] }),
+        });
+        const legacy: ToolConfig = typed;
+        const typedInitialization: IInitOptions = {
+            settings: await getExtensionSettings('flake8', typed),
+            globalSettings: await getGlobalSettings('flake8', typed),
+        };
+        assert.deepEqual(typedInitialization, {
+            settings: await getExtensionSettings('flake8', legacy),
+            globalSettings: await getGlobalSettings('flake8', legacy),
+        });
+        for (const resolved of [...typedInitialization.settings, typedInitialization.globalSettings]) {
+            assert.isFalse(resolved.enabled);
+            assert.deepEqual(resolved.ignorePatterns, []);
+            assert.notProperty(resolved, 'optionalLabel');
+            assert.notProperty(resolved, 'envFile');
+            assert.notProperty(resolved, 'futureOption');
+        }
+        assert.deepEqual(Object.keys(typedInitialization).sort(), ['globalSettings', 'settings']);
+        assert.isTrue(
+            checkIfConfigurationChanged(
+                { affectsConfiguration: (key: string) => key === 'flake8.envFile' },
+                'flake8',
+                typed.trackedSettings,
+            ),
+        );
     });
 
     suite('getWorkspaceSettings', () => {

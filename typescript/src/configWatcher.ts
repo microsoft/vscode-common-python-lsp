@@ -28,41 +28,53 @@ export function createConfigFileWatchers(
     toolName: string,
     onConfigChanged: () => Promise<void>,
 ): Disposable[] {
-    return configFiles.map((pattern) => {
-        const watcher = workspace.createFileSystemWatcher(`**/${pattern}`);
-        let disposed = false;
-        let pending: Promise<void> | undefined;
+    const watchers: Disposable[] = [];
+    try {
+        for (const pattern of configFiles) {
+            const watcher = workspace.createFileSystemWatcher(`**/${pattern}`);
+            const registrations: Disposable[] = [watcher];
+            let disposed = false;
+            let pending: Promise<void> | undefined;
 
-        const handleEvent = (event: string) => {
-            if (disposed) {
-                return;
-            }
-            traceLog(`${toolName} config file ${event}: ${pattern}`);
-            const run = () =>
-                onConfigChanged().catch((e) => traceError(`Config file ${event} handler failed`, e));
-
-            const nextPending = (pending ? pending.then(run, run) : run()).finally(() => {
-                if (pending === nextPending) {
-                    pending = undefined;
+            const handleEvent = (event: string) => {
+                if (disposed) {
+                    return;
                 }
+                traceLog(`${toolName} config file ${event}: ${pattern}`);
+                const run = () => onConfigChanged().catch((e) => traceError(`Config file ${event} handler failed`, e));
+
+                const nextPending = (pending ? pending.then(run, run) : run()).finally(() => {
+                    if (pending === nextPending) {
+                        pending = undefined;
+                    }
+                });
+
+                pending = nextPending;
+            };
+
+            watchers.push({
+                dispose(): void {
+                    disposed = true;
+                    pending = undefined;
+                    for (const disposable of registrations.splice(0).reverse()) {
+                        try {
+                            disposable.dispose();
+                        } catch (error) {
+                            traceError('Config watcher cleanup failed', error);
+                        }
+                    }
+                },
             });
-
-            pending = nextPending;
-        };
-
-        const changeDisposable = watcher.onDidChange(() => handleEvent('changed'));
-        const createDisposable = watcher.onDidCreate(() => handleEvent('created'));
-        const deleteDisposable = watcher.onDidDelete(() => handleEvent('deleted'));
-
-        return {
-            dispose(): void {
-                disposed = true;
-                pending = undefined;
-                changeDisposable.dispose();
-                createDisposable.dispose();
-                deleteDisposable.dispose();
-                watcher.dispose();
-            },
-        };
-    });
+            registrations.push(watcher.onDidChange(() => handleEvent('changed')));
+            registrations.push(watcher.onDidCreate(() => handleEvent('created')));
+            registrations.push(watcher.onDidDelete(() => handleEvent('deleted')));
+        }
+        return watchers;
+    } catch (error) {
+        // A caller cannot own watchers that this factory never returned.
+        for (const watcher of watchers.reverse()) {
+            watcher.dispose();
+        }
+        throw error;
+    }
 }

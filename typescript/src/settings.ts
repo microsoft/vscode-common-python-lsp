@@ -14,7 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ConfigurationChangeEvent, Uri, WorkspaceConfiguration, WorkspaceFolder } from 'vscode';
 import { traceLog, traceWarn } from './logging';
-import { IBaseSettings, ToolConfig } from './types';
+import { IBaseSettings, ToolConfig, ToolSettings } from './types';
 import { getConfiguration, getWorkspaceFolder, getWorkspaceFolders } from './vscodeapi';
 
 // Re-export for convenience — callers that used these from the old
@@ -165,6 +165,12 @@ function getInterpreterSettingValue(namespace: string, workspace?: WorkspaceFold
  * When `workspace` is a Python project nested inside a VS Code workspace,
  * variable substitution still uses the containing VS Code workspace folder.
  */
+export function getWorkspaceSettings<TConfig extends ToolConfig>(
+    namespace: string,
+    workspace: WorkspaceFolder,
+    toolConfig: TConfig,
+    resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
+): Promise<ToolSettings<TConfig['settingsDefaults']>>;
 export async function getWorkspaceSettings(
     namespace: string,
     workspace: WorkspaceFolder,
@@ -233,6 +239,11 @@ export async function getWorkspaceSettings(
 /**
  * Resolve global (user-level) settings.
  */
+export function getGlobalSettings<TConfig extends ToolConfig>(
+    namespace: string,
+    toolConfig: TConfig,
+    resolveInterpreter?: () => Promise<{ path?: string[] }>,
+): Promise<ToolSettings<TConfig['settingsDefaults']>>;
 export async function getGlobalSettings(
     namespace: string,
     toolConfig: ToolConfig,
@@ -278,6 +289,12 @@ export async function getGlobalSettings(
  * default. Consumers may supply Python project roots to enable per-project
  * interpreter resolution while retaining a singleton language server.
  */
+export function getExtensionSettings<TConfig extends ToolConfig>(
+    namespace: string,
+    toolConfig: TConfig,
+    resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
+    workspaces?: readonly WorkspaceFolder[],
+): Promise<ToolSettings<TConfig['settingsDefaults']>[]>;
 export function getExtensionSettings(
     namespace: string,
     toolConfig: ToolConfig,

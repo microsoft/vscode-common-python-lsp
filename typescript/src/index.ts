@@ -8,7 +8,15 @@
  */
 
 // Types
-export { IBaseSettings, IInitOptions, IResolvedPythonEnvironment, IServerInfo, ToolConfig } from './types';
+export {
+    IBaseSettings,
+    IInitOptions,
+    IResolvedPythonEnvironment,
+    IServerInfo,
+    ToolConfig,
+    ToolDefinition,
+    ToolSettings,
+} from './types';
 
 // Logging
 export { registerLogger, traceError, traceInfo, traceLog, traceVerbose, traceWarn } from './logging';
@@ -63,10 +71,13 @@ export { createConfigFileWatchers } from './configWatcher';
 export {
     createServer,
     CreateServerOptions,
+    ClientSetupContext,
     getServerCwd,
     restartServer,
     RestartServerOptions,
     RestartServerResult,
+    ServerLaunchContext,
+    ToolLifecycleHooks,
 } from './server';
 
 // Null formatter helper
@@ -81,3 +92,6 @@ export {
     RegisterSubscriptionsOptions,
     ToolExtensionContext,
 } from './activation';
+
+// Opt-in activation facade
+export { activateToolExtension, ActivateToolExtensionOptions, ToolExtensionRuntime } from './toolExtension';

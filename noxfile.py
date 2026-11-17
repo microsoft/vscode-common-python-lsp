@@ -35,8 +35,6 @@ def lint(session: nox.Session) -> None:
     session.run("isort", "--check", "python/vscode_common_python_lsp")
     session.run("isort", "--check", "python/tests")
     scripts = [
-        "scripts/localization.py",
-        "scripts/localization_test.py",
         "scripts/source_build.py",
         "scripts/source_build_test.py",
     ]

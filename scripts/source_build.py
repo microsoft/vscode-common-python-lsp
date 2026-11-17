@@ -59,7 +59,12 @@ def source_identity(
     commit = git(root, "rev-parse", "HEAD")
     if commit != expected_commit:
         raise ValueError(f"Shared source pin mismatch: {commit} != {expected_commit}")
-    dirty = bool(git(root, "status", "--porcelain", "--untracked-files=normal"))
+    # Diff canonical contents, not status's potentially stale CRLF stat cache.
+    dirty = bool(
+        git(root, "diff", "--name-only")
+        or git(root, "diff", "--cached", "--name-only")
+        or git(root, "ls-files", "--others", "--exclude-standard")
+    )
     paths = git(
         root,
         "ls-files",

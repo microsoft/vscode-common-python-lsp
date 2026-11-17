@@ -224,6 +224,14 @@ class TestUpdateWorkspaceSettings:
         assert settings["workspace"] == "file:///local-workspace"
         assert settings["workspaceFS"]
 
+    def test_only_virtual_workspaces_do_not_add_a_cwd_fallback(self):
+        ts = _make_server()
+        workspaces = ts.workspace_settings
+        ts.update_workspace_settings([{"workspace": "pico:"}])
+
+        assert ts.workspace_settings is workspaces
+        assert workspaces == {}
+
 
 class TestGetSettingsByPath:
     def test_matches_closest_workspace(self):
@@ -961,6 +969,79 @@ class TestLifecycle:
 
 
 class TestSettingsContract:
+    def test_routing_uses_replaced_and_mutated_settings_maps(self, tmp_path):
+        ts = _make_server()
+        root = tmp_path / "workspace"
+        project = root / "project"
+        document = TextDocument((project / "demo.py").as_uri())
+        file_path = pathlib.Path(document.path)
+        ts.update_workspace_settings([{"workspace": root.as_uri()}])
+        original = next(iter(ts.workspace_settings.values()))
+        assert ts.get_settings_by_document(document) is original
+        assert ts.get_settings_by_path(file_path) is original
+
+        root_key = str(pathlib.Path(uris.to_fs_path(root.as_uri())))
+        project_key = str(pathlib.Path(uris.to_fs_path(project.as_uri())))
+        root_settings = {"workspaceFS": root_key}
+        project_settings = {"workspaceFS": project_key}
+        workspaces = {root_key: root_settings, project_key: project_settings}
+        globals_ = {"args": ["--replacement"]}
+        ts.workspace_settings = workspaces
+        ts.global_settings = globals_
+
+        assert ts.get_document_key(document) == project_key
+        assert ts.get_settings_by_document(document) is project_settings
+        assert ts.get_settings_by_path(file_path) is project_settings
+
+        del workspaces[project_key]
+        assert ts.get_document_key(document) == root_key
+        assert ts.get_settings_by_document(document) is root_settings
+        assert ts.get_settings_by_path(file_path) is root_settings
+
+        workspaces.clear()
+        assert ts.get_document_key(document) is None
+        assert ts.get_settings_by_path(file_path)["args"] is globals_["args"]
+        globals_["args"] = ["--mutated"]
+        assert ts.get_settings_by_document(document)["args"] is globals_["args"]
+        assert ts.workspace_settings is workspaces
+        assert workspaces == {}
+
+    def test_document_routing_preserves_facade_method_overrides(self, tmp_path):
+        ts = _make_server()
+        document = TextDocument((tmp_path / "demo.py").as_uri())
+        settings = {"custom": True}
+        ts.workspace_settings = {"custom-key": settings}
+        ts.get_document_key = MagicMock(return_value="custom-key")
+
+        assert ts.get_settings_by_document(document) is settings
+        ts.get_document_key.assert_called_once_with(document)
+
+        args = ["--custom-default"]
+        ts.get_global_defaults = MagicMock(return_value={"args": args})
+        ts.get_document_key.return_value = None
+        fallback = ts.get_settings_by_document(document)
+        assert fallback["args"] is args
+        ts.get_global_defaults.assert_called_once_with()
+        assert ts.workspace_settings == {"custom-key": settings}
+
+    @pytest.mark.parametrize("relative", [False, True], ids=["anchor", "rootless"])
+    def test_routing_does_not_match_the_terminal_parent(self, tmp_path, relative):
+        ts = _make_server()
+        terminal = pathlib.Path(".") if relative else pathlib.Path(tmp_path.anchor)
+        file_path = terminal / "src" / "demo.py"
+        document = _make_document(str(file_path))
+        first = {"workspaceFS": "first-workspace"}
+        ts.workspace_settings = {
+            "first-workspace": first,
+            str(terminal): {"workspaceFS": str(terminal)},
+        }
+
+        assert ts.get_document_key(document) is None
+        assert ts.get_settings_by_path(file_path) is first
+        fallback = ts.get_settings_by_document(document)
+        assert fallback["workspaceFS"] == str(file_path.parent)
+        assert fallback is not first
+
     def test_shared_producer_payload_and_staged_cwd(self, tmp_path):
         root = tmp_path / "workspace café"
         root.mkdir()
@@ -1152,6 +1233,132 @@ class TestSettingsContract:
                 )
             )
 
+    def test_replaced_settings_maps_are_used_after_initial_application(self, tmp_path):
+        ts = _make_server()
+        params = lsp.InitializeParams(
+            capabilities=lsp.ClientCapabilities(),
+            process_id=None,
+            initialization_options={
+                "globalSettings": {"args": ["--original"]},
+                "settings": [{"workspace": tmp_path.as_uri()}],
+            },
+        )
+        ts.apply_settings(params)
+        old_globals = ts.global_settings
+        old_workspaces = ts.workspace_settings
+        old_entry = next(iter(old_workspaces.values()))
+
+        args = ["--replacement"]
+        globals_ = {"args": args, "unknownGlobal": {"keep": True}}
+        retained = {"workspaceFS": "retained"}
+        workspaces = {"retained": retained}
+        ts.global_settings = globals_
+        ts.workspace_settings = workspaces
+        params.initialization_options = {
+            "globalSettings": {"path": []},
+            "settings": [{"workspace": tmp_path.as_uri()}],
+        }
+        ts.apply_settings(params)
+
+        key = str(pathlib.Path(uris.to_fs_path(tmp_path.as_uri())))
+        assert ts.global_settings is globals_
+        assert ts.workspace_settings is workspaces
+        assert globals_["path"] == []
+        assert ts.get_global_defaults()["args"] is args
+        assert workspaces[key]["args"] is args
+        assert workspaces["retained"] is retained
+        assert old_globals == {"args": ["--original"]}
+        assert old_workspaces == {key: old_entry}
+        assert old_entry["args"] == ["--original"]
+
+        args.append("--mutated")
+        ts.global_settings["path"] = ["replacement-tool"]
+        ts.update_workspace_settings([{"workspace": tmp_path.as_uri()}])
+        assert workspaces[key]["args"] is args
+        assert workspaces[key]["path"] is globals_["path"]
+
+    def test_settings_values_keep_shallow_aliases_and_live_config(self, tmp_path):
+        severity = {"E": "Error"}
+        ignored = ["configured/**"]
+        config = ToolServerConfig(
+            tool_module="testtool",
+            tool_display="Test Tool",
+            default_settings={"severity": severity},
+            hardcoded_settings={"ignorePatterns": ignored},
+        )
+        ts = _make_server(config)
+        ts.global_settings["ignorePatterns"] = ["ignored-global/**"]
+        first_defaults = ts.get_global_defaults()
+        defaults = ts.get_global_defaults()
+        assert defaults is not first_defaults
+        assert defaults["args"] is not first_defaults["args"]
+        assert defaults["severity"] is severity
+        assert defaults["ignorePatterns"] is ignored
+
+        supplied_severity = {"W": "Hint"}
+        settings = [
+            {"workspace": tmp_path.as_uri()},
+            {
+                "workspace": (tmp_path / "nested").as_uri(),
+                "severity": supplied_severity,
+            },
+        ]
+        ts.update_workspace_settings(settings)
+        inherited, explicit = ts.workspace_settings.values()
+        assert inherited["severity"] is severity
+        assert explicit["severity"] is supplied_severity
+        assert explicit is not settings[1]
+        assert inherited["ignorePatterns"] is explicit["ignorePatterns"] is ignored
+        inherited["severity"]["E"] = "Warning"
+        assert ts.get_global_defaults()["severity"] == {"E": "Warning"}
+
+        config.default_settings = {"severity": {}}
+        config.hardcoded_settings = {"ignorePatterns": []}
+        ts.update_workspace_settings(settings[:1])
+        refreshed = next(iter(ts.workspace_settings.values()))
+        assert refreshed["severity"] is config.default_settings["severity"]
+        assert (
+            refreshed["ignorePatterns"] is config.hardcoded_settings["ignorePatterns"]
+        )
+        assert explicit["severity"] is supplied_severity
+
+    @pytest.mark.parametrize("lookup", ["populate", "path", "none", "outside"])
+    def test_fallback_context_is_overlaid_by_configured_defaults(
+        self, tmp_path, lookup
+    ):
+        contextual_defaults = {
+            "cwd": "",
+            "workspaceFS": "configured-path",
+            "workspace": None,
+        }
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings=contextual_defaults,
+            )
+        )
+        if lookup == "populate":
+            ts.update_workspace_settings(None)
+            settings = next(iter(ts.workspace_settings.values()))
+        elif lookup == "path":
+            settings = ts.get_settings_by_path(tmp_path / "demo.py")
+        elif lookup == "none":
+            settings = ts.get_settings_by_document(None)
+        else:
+            settings = ts.get_settings_by_document(
+                TextDocument((tmp_path / "demo.py").as_uri())
+            )
+
+        assert {
+            key: settings[key] for key in contextual_defaults
+        } == contextual_defaults
+        ts.update_workspace_settings([{"workspace": tmp_path.as_uri()}])
+        key = str(pathlib.Path(uris.to_fs_path(tmp_path.as_uri())))
+        assert ts.workspace_settings[key]["workspaceFS"] == key
+        assert ts.workspace_settings[key]["workspace"] == tmp_path.as_uri()
+        assert ts.workspace_settings[key]["cwd"] == ""
+
     def test_repeated_application_retains_aliases_and_routes_real_uris(self, tmp_path):
         ts = _make_server()
         workspaces = ts.workspace_settings
@@ -1247,10 +1454,11 @@ class TestToolServerInit:
             patch(
                 "vscode_common_python_lsp.server.importlib.metadata.version",
                 return_value="1.2.3",
-            ),
+            ) as mock_version,
         ):
             mock_cls.return_value = MagicMock()
             ts = ToolServer(BASIC_CONFIG)
+            mock_version.assert_called_once_with("vscode-python-tool-internal")
             mock_cls.assert_called_once_with(
                 name="testtool-server",
                 version="v1.2.3",
@@ -1264,22 +1472,52 @@ class TestToolServerInit:
             patch(
                 "vscode_common_python_lsp.server.importlib.metadata.version",
                 side_effect=importlib.metadata.PackageNotFoundError(
-                    "vscode-common-python-lsp"
+                    "vscode-python-tool-internal"
                 ),
-            ),
+            ) as mock_version,
         ):
             mock_cls.return_value = MagicMock()
             ToolServer(BASIC_CONFIG)
+            mock_version.assert_called_once_with("vscode-python-tool-internal")
             mock_cls.assert_called_once_with(
                 name="testtool-server",
                 version="v0.0.0-dev",
                 max_workers=5,
             )
 
-    def test_accepts_custom_server(self):
-        custom = MagicMock()
-        ts = ToolServer(BASIC_CONFIG, server=custom)
-        assert ts.server is custom
+    def test_missing_internal_metadata_does_not_use_other_distributions(self):
+        def lookup_version(distribution_name):
+            if distribution_name == "vscode-python-tool-internal":
+                raise importlib.metadata.PackageNotFoundError(distribution_name)
+            return "9.9.9"
+
+        with (
+            patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls,
+            patch(
+                "vscode_common_python_lsp.server.importlib.metadata.version",
+                side_effect=lookup_version,
+            ) as mock_version,
+        ):
+            ToolServer(BASIC_CONFIG)
+            mock_version.assert_called_once_with("vscode-python-tool-internal")
+            mock_cls.assert_called_once_with(
+                name="testtool-server",
+                version="v0.0.0-dev",
+                max_workers=5,
+            )
+
+    def test_accepts_custom_server_without_metadata_lookup(self):
+        with (
+            patch("vscode_common_python_lsp.server.LanguageServer") as mock_cls,
+            patch(
+                "vscode_common_python_lsp.server.importlib.metadata.version"
+            ) as mock_version,
+        ):
+            custom = MagicMock()
+            ts = ToolServer(BASIC_CONFIG, server=custom)
+            assert ts.server is custom
+            mock_version.assert_not_called()
+            mock_cls.assert_not_called()
 
     def test_empty_initial_state(self):
         ts = _make_server()

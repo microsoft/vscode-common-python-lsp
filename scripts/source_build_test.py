@@ -28,7 +28,7 @@ class SourceBuildTests(unittest.TestCase):
         }.items():
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            path.write_bytes(content.encode("utf-8"))
         build.git(self.root, "add", ".")
         build.git(
             self.root,
@@ -107,6 +107,21 @@ class SourceBuildTests(unittest.TestCase):
                     finally:
                         source.write_bytes(original)
                         build.git(self.root, "update-index", f"--no-{flag}", "--", name)
+
+    def test_untracked_and_staged_unrelated_changes_are_dirty(self):
+        source = self.root / "unrelated.txt"
+        source.write_bytes(b"not a runtime input\n")
+        for staged in (False, True):
+            with self.subTest(staged=staged):
+                if staged:
+                    build.git(self.root, "add", "--", "unrelated.txt")
+                with self.assertRaisesRegex(ValueError, "Dirty shared"):
+                    build.source_identity(self.root, self.commit)
+                self.assertTrue(
+                    build.source_identity(self.root, self.commit, allow_dirty=True)[
+                        "dirty"
+                    ]
+                )
 
     def test_clean_line_endings_use_git_normalization(self):
         build.git(self.root, "config", "core.autocrlf", "true")

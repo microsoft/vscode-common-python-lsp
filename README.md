@@ -11,15 +11,15 @@ Shared Python and TypeScript libraries for VS Code Python tool extensions
 
 ```
 vscode-common-python-lsp/
-├── python/                         # Python package (bundled server-side)
-│   ├── vscode_common_python_lsp/   # Package source
+├── python/                         # Python source (bundled server-side)
+│   ├── vscode_common_python_lsp/   # Import package source
 │   │   └── __init__.py
 │   ├── tests/                      # Python tests (pytest)
-│   ├── pyproject.toml              # Package metadata & build config
+│   ├── pyproject.toml              # Local installation metadata & build config
 │   └── requirements-dev.txt        # Dev/test dependencies
 │
-├── typescript/                     # TypeScript package (VS Code client-side)
-│   ├── src/                        # Package source
+├── typescript/                     # TypeScript source (VS Code client-side)
+│   ├── src/                        # Public entry point and implementation
 │   │   └── index.ts
 │   ├── tests/                      # TypeScript tests (mocha)
 │   ├── package.json
@@ -31,7 +31,7 @@ vscode-common-python-lsp/
 └── README.md
 ```
 
-## Python Package
+## Python Source
 
 The `vscode_common_python_lsp` Python package provides server-side utilities shared
 across all five extensions: path resolution, context managers, tool execution runners,
@@ -45,9 +45,9 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
-## TypeScript Package
+## TypeScript Source
 
-The `vscode-common-python-lsp` TypeScript package provides VS Code client-side
+The TypeScript source provides VS Code client-side
 utilities: extension activation, server lifecycle, settings management, Python
 interpreter resolution, and logging.
 
@@ -55,7 +55,7 @@ interpreter resolution, and logging.
 
 ```bash
 cd typescript
-npm install
+npm ci
 npm run lint
 npm run build
 npm test
@@ -65,70 +65,6 @@ Linting uses ESLint 10 with the flat configuration in `typescript/eslint.config.
 Use the Node.js version pinned in `.nvmrc` for development.
 
 ## Consuming in Extensions
-
-### Shared localization automation
-
-The composite action at `.github/actions/localization` and the standard-library
-Python CLI at `scripts/localization.py` share localization automation across the
-Python extensions. This tooling does not require adopting either runtime library.
-Pin the action and Azure tooling checkout to the same reviewed commit.
-
-Each extension's English-only GitHub workflow calls:
-
-```yaml
-permissions:
-  contents: read
-
-jobs:
-  localization:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: microsoft/vscode-common-python-lsp/.github/actions/localization@<reviewed-commit-sha>
-        with:
-          app-id: ${{ vars.PYTHON_LOCALIZATION_APP_ID }}
-          private-key: ${{ secrets.PYTHON_LOCALIZATION_PRIVATE_KEY }}
-          submodules: recursive
-          source-paths: '["src", "external/vscode-common-python-lsp/typescript/src"]'
-```
-
-Keep trigger paths and concurrency in the caller workflow. Omit the submodule
-input and use the default `["src"]` for standalone runtime extensions. Extensions
-without a `package.json` `l10n` declaration export and import manifest strings
-only, even if their source contains runtime localization calls.
-
-The action bundles checkout, Node/Python setup, extraction with pinned
-`@vscode/l10n-dev@0.0.35`, app authentication, and English submission. It loads the
-helper from its own action revision. Configure the app ID variable and private-key
-secret in each caller (or grant organization-level access); the app needs Contents
-write access only to `microsoft/vscode-python-extensions-loc`. The default npm feed
-is `https://packagefeedproxy.microsoft.io/npm/`. Inputs never appear in generated
-shell commands: source paths and branch values are passed through environment
-variables.
-
-English goes to `src/en/<publisher>.<name>/<publisher>.<name>-new.xlf` on the
-existing `dev` branch. Unchanged XLF is a successful no-op. Submissions never
-force-push; concurrent updates retry rejected pushes with a bounded rebase.
-
-Pylance-Eng stable/pre-release templates orchestrate **pull-only** imports using
-the same CLI, with source, tools, and translations in separate workspace folders:
-
-```text
-python <tools>/scripts/localization.py --operation import \
-  --extension-root <extension> --translations-root <drop>/out \
-  --output-directory <new-staging-directory>
-```
-
-The importer derives identity/runtime metadata from the extension manifest,
-requires all 14 configured locales, and validates every table before copying.
-Untranslated strings and wholly untranslated tables are allowed: users see the
-English text until translated handbacks arrive. Translation state does not gate
-release packaging. Missing, empty, malformed, or incomplete handbacks still fail
-explicitly, including missing runtime tables when runtime localization is declared.
-
-Generated root `package.nls.<locale>.json` and declared runtime locale files should
-be ignored by Git but included by VSCE. Keep English `package.nls.json` tracked.
-Run dependency-free regression tests with
-`python -m unittest discover -s scripts -p "*_test.py"`.
 
 ### Shared runtime libraries
 
@@ -144,18 +80,61 @@ git submodule update --init --recursive
 Clone a consuming extension with `--recurse-submodules`, or run the update
 command above after cloning.
 
-Reference the TypeScript package from the submodule in `package.json`:
+#### TypeScript: build, type-check, then bundle
 
-```json
-{
-    "dependencies": {
-        "@vscode/common-python-lsp": "file:external/vscode-common-python-lsp/typescript"
-    }
-}
+The extension does not declare a shared-runtime npm dependency or alias. From
+the extension root, install its own locked development tools and the checkout's
+locked dependencies, then build the shared JavaScript and declarations **before**
+type-checking or bundling the extension:
+
+```powershell
+npm ci
+npm --prefix .\external\vscode-common-python-lsp\typescript ci
+npm --prefix .\external\vscode-common-python-lsp\typescript run build
 ```
 
-Install the Python package directly from the same submodule commit when
-building the extension bundle. For example, in `noxfile.py`:
+In the extension's `src/extension.ts`, import exported symbols from the built
+public entry point (not individual implementation files or a bare package name):
+
+```typescript
+import { createToolContext } from '../external/vscode-common-python-lsp/typescript/dist';
+```
+
+Use the extension's existing TypeScript configuration and development type
+dependencies, including `@types/vscode` and `@types/node`, to type-check its
+`src/` files. The shared declarations resolve their dependencies from the
+checkout's `typescript/node_modules`; the extension's `rootDir` can remain
+`src`. For example, with TypeScript already installed by the extension:
+
+```powershell
+npx --no-install tsc --noEmit
+```
+
+Bundle the source-relative entry and its JavaScript dependency closure into the
+extension. For example, an extension already using esbuild can run this from
+the extension root after the steps above:
+
+```powershell
+npx --no-install esbuild .\src\extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=.\dist\extension.js
+```
+
+VS Code supplies `vscode`, and esbuild leaves Node built-ins external. Do not
+externalize the shared entry or its npm dependencies: they must resolve from
+the checkout and be included in the bundle. Merely running `tsc` does not bundle
+them; shipping only the extension's emitted JavaScript would leave a relative
+runtime dependency on the checkout. Other bundlers must preserve the same
+resolution and packaging behavior. Rebuild both the shared entry and extension
+bundle whenever the pinned checkout changes.
+
+When migrating an existing consumer, remove its former shared-runtime
+dependency/alias, update its imports and regenerate its lockfile without that
+dependency. Review the consumer's own build and packaging rules; changing this
+repository's metadata alone does not migrate an extension.
+
+#### Python: install from the same checkout
+
+Install the Python source directly from the same submodule commit when building
+the extension bundle. For example, in `noxfile.py`:
 
 ```python
 import pathlib
@@ -182,8 +161,19 @@ def install_bundled_libs(session: nox.Session) -> None:
     )
 ```
 
-The package manifests support building from the submodule. This repository no
-longer publishes packages to npm or PyPI.
+The `--no-deps` example preserves the consumer's runtime dependency policy: the
+extension must also bundle the dependencies declared in `python/pyproject.toml`
+using its own reviewed requirements/locks. Keep the installed distribution
+metadata alongside `vscode_common_python_lsp`; the default server uses its
+version for diagnostics, or `v0.0.0-dev` if that metadata is absent. Python
+imports continue to use `vscode_common_python_lsp`.
+
+Both manifests use `vscode-python-tool-internal` solely as internal
+local build/install metadata. npm remains private, and Python metadata is marked
+`Private :: Do Not Upload`. Local-path pip installation and local wheel builds
+remain supported. Neither identity is a registry-facing consumption API: do not
+add a bare dependency or registry install for it. This repository publishes
+neither npm nor PyPI packages.
 
 ### Verified source builds
 
@@ -234,10 +224,10 @@ repository edits. Release/adoption checks should require clean source.
 Copy/install artifacts only after verification, and verify again before
 packaging if the source or staging files could have changed.
 
-These outputs do not migrate consumer lockfiles. When the shared manifest
-changes, consumers using `file:` installs must review their locked dependency
-graph; installing the Python wheel with `--no-deps` also requires the consumer
-to supply its full runtime dependency closure. Source/artifact verification
+Adopting these outputs in consumer build and packaging pipelines remains a
+separate change. Keep the extension's own locked build/runtime dependencies
+reviewed: installing the Python wheel with `--no-deps` still requires the
+consumer to supply its runtime dependency closure. Source/artifact verification
 does not by itself prove consumer dependency compatibility.
 
 ### Dependabot updates
@@ -261,6 +251,22 @@ advanced. GitHub releases continue to provide versioned milestones and release
 notes, but they do not trigger or gate the submodule updates.
 
 ### Optional configuration
+
+For an additive activation entry point with explicit resource ownership, see
+the [activation facade example](typescript/README.md#opt-in-activation-facade).
+`activateToolExtension(context, { serverInfo, toolConfig })` returns a small
+runtime handle; initialization remains deferred, not client-ready. Await
+`runtime.deactivate()` for facade cleanup and existing client-stop behavior.
+Optional [launch hooks](typescript/README.md#optional-launch-hooks) support
+per-server inherited-environment patches and pre-start notification registration
+with client-owned cleanup, without overriding `runServer` or changing settings.
+It preserves caller-owned subscriptions, but does not drain every legacy
+in-flight restart or isolate the module-global logger/status. Existing manual
+composition remains supported.
+
+For an opt-in typed settings contract without changing runtime behavior, see
+the [typed tool definition example](typescript/README.md#typed-tool-definitions).
+Existing `ToolConfig` callers do not need to migrate.
 
 Extensions whose servers run tools using the interpreter in each resolved
 settings entry can opt in to per-project environments:

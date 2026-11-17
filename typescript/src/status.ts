@@ -5,6 +5,7 @@ import { LanguageStatusItem, Disposable, l10n, LanguageStatusSeverity } from 'vs
 import { Command } from 'vscode-languageclient';
 import { createLanguageStatusItem } from './vscodeapi';
 import { getDocumentSelector } from './utilities';
+import { traceError } from './logging';
 
 let _status: LanguageStatusItem | undefined;
 export function registerLanguageStatusItem(id: string, name: string, command: string): Disposable {
@@ -12,9 +13,21 @@ export function registerLanguageStatusItem(id: string, name: string, command: st
 
     const status = createLanguageStatusItem(id, getDocumentSelector());
     _status = status;
-    status.name = name;
-    status.text = name;
-    status.command = Command.create(l10n.t('Open logs'), command);
+    try {
+        status.name = name;
+        status.text = name;
+        status.command = Command.create(l10n.t('Open logs'), command);
+    } catch (error) {
+        if (_status === status) {
+            _status = undefined;
+        }
+        try {
+            status.dispose();
+        } catch (cleanupError) {
+            traceError('Language status cleanup failed', cleanupError);
+        }
+        throw error;
+    }
 
     return {
         dispose: () => {
