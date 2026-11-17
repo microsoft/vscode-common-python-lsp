@@ -19,7 +19,7 @@ from pygls import uris
 from pygls.lsp.server import LanguageServer
 from pygls.workspace import TextDocument
 
-from . import _settings, jsonrpc
+from . import _routing, _settings, jsonrpc
 from .context import substitute_attr
 from .paths import normalize_path
 from .runner import RunResult, run_module, run_path
@@ -122,91 +122,24 @@ class ToolServer:
 
     def update_workspace_settings(self, settings: list[dict[str, Any]] | None) -> None:
         """Populate :attr:`workspace_settings` from the client payload."""
-        if not settings:
-            key = normalize_path(
-                os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
-            )
-            self.workspace_settings[key] = _settings.get_fallback_settings(
-                key, uris.from_fs_path(key), self.get_global_defaults()
-            )
-            return
-
-        for setting in settings:
-            workspace_path = uris.to_fs_path(setting["workspace"])
-            # Virtual workspace roots, such as "pico:", have no local
-            # filesystem path, so they cannot be registered here.
-            if workspace_path is None:
-                continue
-
-            key = normalize_path(
-                workspace_path,
-                resolve_symlinks=self.config.resolve_symlinks,
-            )
-            self.workspace_settings[key] = _settings.get_workspace_settings(
-                key, self.get_global_defaults(), setting
-            )
+        _routing.update_workspace_settings(
+            self, settings, normalize_path=normalize_path, uris=uris
+        )
 
     def get_settings_by_path(self, file_path: pathlib.Path) -> dict[str, Any]:
         """Return workspace settings for the given file path."""
-        if not self.workspace_settings:
-            cwd = normalize_path(
-                os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
-            )
-            return _settings.get_fallback_settings(
-                cwd, uris.from_fs_path(cwd), self.get_global_defaults()
-            )
-
-        workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
-
-        while file_path != file_path.parent:
-            str_file_path = normalize_path(
-                str(file_path), resolve_symlinks=self.config.resolve_symlinks
-            )
-            if str_file_path in workspaces:
-                return self.workspace_settings[str_file_path]
-            file_path = file_path.parent
-
-        return list(self.workspace_settings.values())[0]
+        return _routing.get_settings_by_path(
+            self, file_path, normalize_path=normalize_path, uris=uris
+        )
 
     def get_document_key(self, document: TextDocument) -> str | None:
         """Return the workspace key for the given document, or ``None``."""
-        if self.workspace_settings:
-            document_workspace = pathlib.Path(document.path)
-            workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
-
-            while document_workspace != document_workspace.parent:
-                norm_path = normalize_path(
-                    str(document_workspace),
-                    resolve_symlinks=self.config.resolve_symlinks,
-                )
-                if norm_path in workspaces:
-                    return norm_path
-                document_workspace = document_workspace.parent
-
-        return None
+        return _routing.get_document_key(self, document, normalize_path=normalize_path)
 
     def get_settings_by_document(self, document: TextDocument | None) -> dict[str, Any]:
         """Return workspace settings for the given document."""
-        if document is None or document.path is None:
-            if not self.workspace_settings:
-                cwd = normalize_path(
-                    os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
-                )
-                return _settings.get_fallback_settings(
-                    cwd, uris.from_fs_path(cwd), self.get_global_defaults()
-                )
-            return list(self.workspace_settings.values())[0]
-
-        key = self.get_document_key(document)
-        if key is not None:
-            return self.workspace_settings[key]
-
-        key = normalize_path(
-            str(pathlib.Path(document.path).parent),
-            resolve_symlinks=self.config.resolve_symlinks,
-        )
-        return _settings.get_fallback_settings(
-            key, uris.from_fs_path(key), self.get_global_defaults()
+        return _routing.get_settings_by_document(
+            self, document, normalize_path=normalize_path, uris=uris
         )
 
     # -----------------------------------------------------------------

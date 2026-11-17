@@ -33,9 +33,11 @@ installation, VS Code host or Node build. Repeated settings application is
 covered separately in-process, not by reinitializing a live LSP session.
 
 `ToolServer` remains the public settings facade and owns the writable global and
-workspace dictionaries, in-place updates, path normalization and routing.
-Private `_settings` helpers only construct fresh, shallow settings dictionaries
-from the current values; they retain nested value aliases and cache no state.
+workspace dictionaries. Private `_settings` helpers construct fresh, shallow
+settings dictionaries while retaining nested value aliases. Private `_routing`
+helpers consult the facade on each call for in-place updates and workspace/document
+selection, preserving path normalization and the distinct lookup fallbacks.
+Neither private module caches settings or owns persistent state.
 
 ## Adoption and milestones
 

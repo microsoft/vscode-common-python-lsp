@@ -224,6 +224,14 @@ class TestUpdateWorkspaceSettings:
         assert settings["workspace"] == "file:///local-workspace"
         assert settings["workspaceFS"]
 
+    def test_only_virtual_workspaces_do_not_add_a_cwd_fallback(self):
+        ts = _make_server()
+        workspaces = ts.workspace_settings
+        ts.update_workspace_settings([{"workspace": "pico:"}])
+
+        assert ts.workspace_settings is workspaces
+        assert workspaces == {}
+
 
 class TestGetSettingsByPath:
     def test_matches_closest_workspace(self):
@@ -961,6 +969,79 @@ class TestLifecycle:
 
 
 class TestSettingsContract:
+    def test_routing_uses_replaced_and_mutated_settings_maps(self, tmp_path):
+        ts = _make_server()
+        root = tmp_path / "workspace"
+        project = root / "project"
+        document = TextDocument((project / "demo.py").as_uri())
+        file_path = pathlib.Path(document.path)
+        ts.update_workspace_settings([{"workspace": root.as_uri()}])
+        original = next(iter(ts.workspace_settings.values()))
+        assert ts.get_settings_by_document(document) is original
+        assert ts.get_settings_by_path(file_path) is original
+
+        root_key = str(pathlib.Path(uris.to_fs_path(root.as_uri())))
+        project_key = str(pathlib.Path(uris.to_fs_path(project.as_uri())))
+        root_settings = {"workspaceFS": root_key}
+        project_settings = {"workspaceFS": project_key}
+        workspaces = {root_key: root_settings, project_key: project_settings}
+        globals_ = {"args": ["--replacement"]}
+        ts.workspace_settings = workspaces
+        ts.global_settings = globals_
+
+        assert ts.get_document_key(document) == project_key
+        assert ts.get_settings_by_document(document) is project_settings
+        assert ts.get_settings_by_path(file_path) is project_settings
+
+        del workspaces[project_key]
+        assert ts.get_document_key(document) == root_key
+        assert ts.get_settings_by_document(document) is root_settings
+        assert ts.get_settings_by_path(file_path) is root_settings
+
+        workspaces.clear()
+        assert ts.get_document_key(document) is None
+        assert ts.get_settings_by_path(file_path)["args"] is globals_["args"]
+        globals_["args"] = ["--mutated"]
+        assert ts.get_settings_by_document(document)["args"] is globals_["args"]
+        assert ts.workspace_settings is workspaces
+        assert workspaces == {}
+
+    def test_document_routing_preserves_facade_method_overrides(self, tmp_path):
+        ts = _make_server()
+        document = TextDocument((tmp_path / "demo.py").as_uri())
+        settings = {"custom": True}
+        ts.workspace_settings = {"custom-key": settings}
+        ts.get_document_key = MagicMock(return_value="custom-key")
+
+        assert ts.get_settings_by_document(document) is settings
+        ts.get_document_key.assert_called_once_with(document)
+
+        args = ["--custom-default"]
+        ts.get_global_defaults = MagicMock(return_value={"args": args})
+        ts.get_document_key.return_value = None
+        fallback = ts.get_settings_by_document(document)
+        assert fallback["args"] is args
+        ts.get_global_defaults.assert_called_once_with()
+        assert ts.workspace_settings == {"custom-key": settings}
+
+    @pytest.mark.parametrize("relative", [False, True], ids=["anchor", "rootless"])
+    def test_routing_does_not_match_the_terminal_parent(self, tmp_path, relative):
+        ts = _make_server()
+        terminal = pathlib.Path(".") if relative else pathlib.Path(tmp_path.anchor)
+        file_path = terminal / "src" / "demo.py"
+        document = _make_document(str(file_path))
+        first = {"workspaceFS": "first-workspace"}
+        ts.workspace_settings = {
+            "first-workspace": first,
+            str(terminal): {"workspaceFS": str(terminal)},
+        }
+
+        assert ts.get_document_key(document) is None
+        assert ts.get_settings_by_path(file_path) is first
+        fallback = ts.get_settings_by_document(document)
+        assert fallback["workspaceFS"] == str(file_path.parent)
+        assert fallback is not first
+
     def test_shared_producer_payload_and_staged_cwd(self, tmp_path):
         root = tmp_path / "workspace café"
         root.mkdir()
