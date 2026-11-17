@@ -18,6 +18,10 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 2. Make your changes and ensure they pass the existing tests and linting.
 3. Submit a pull request with a clear description of the changes.
 
+Use the [supported architecture and adoption guide](docs/supported-apis.md) when
+choosing extension-owned policy, shared public APIs or private implementation
+boundaries. Recommended facade adoption does not deprecate manual composition.
+
 ### Settings boundary tests
 
 The JSON corpus in `python/tests/fixtures/settings/` characterizes the existing
