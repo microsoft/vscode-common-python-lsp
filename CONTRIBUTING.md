@@ -66,9 +66,9 @@ package-version changes or publication and does not trigger or gate consumer
 submodule updates.
 
 Consumers are responsible for building both runtimes from their intended pinned
-revision. See [verified source builds](README.md#verified-source-builds)
-for the paired build/verification command. Adopting these checks in consumer
-pipelines remains a follow-up, not a package-version release requirement.
+revision. See [building from a pinned submodule](README.md#building-from-a-pinned-submodule)
+for the build and packaging contract. Consumer pipeline enforcement and
+compatibility testing remain extension-owned.
 
 ## Reporting Issues
 

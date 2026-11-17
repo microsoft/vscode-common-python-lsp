@@ -175,60 +175,18 @@ remain supported. Neither identity is a registry-facing consumption API: do not
 add a bare dependency or registry install for it. This repository publishes
 neither npm nor PyPI packages.
 
-### Verified source builds
+### Building from a pinned submodule
 
 `npm run build` in `typescript` cleans `dist` before compiling, including outputs
-for removed sources. A consumer's old `postinstall` existence check is **not**
-source validation: explicitly rebuild after changing a submodule pin.
+for removed sources. Run it before type-checking or packaging the extension;
+an existing `dist/index.js` is not a freshness check.
 
-For paired artifacts, use the standard-library build CLI with Node/npm, Git,
-Python 3.10+, and `pip install setuptools wheel` available in an isolated build
-environment. From this repository (PowerShell example):
-
-```powershell
-$pin = git rev-parse HEAD
-python scripts\source_build.py build --expected-commit $pin --output test-submodules\build
-python scripts\source_build.py verify --expected-commit $pin --output test-submodules\build
-```
-
-In a consumer, invoke the script from its shared submodule and pass
-`--source-root` pointing to that exact shared checkout, **not** the extension
-root. The expected commit must be the full reviewed shared SHA, not the
-consumer's SHA. Child-directory/ancestor Git resolution is rejected.
-
-The destination must not exist; builds never reuse a prior `dist`, wheel,
-`node_modules` or setuptools output. Choose a new ignored `test-submodules`
-subdirectory for each build (or explicitly remove only a known old staging
-directory yourself). The CLI snapshots the shared runtime inputs, runs `npm ci`
-and the existing TS build there, and builds a Python wheel without dependencies
-or build isolation using the recorded local setuptools/wheel versions. Outputs
-are `typescript/package.json`, `typescript/dist`, `wheels`, and `provenance.json`.
-Toolchain/backend versions can affect output; this is deterministic source
-selection and verified contents, **not** a cross-platform, byte-identical-wheel
-or supply-chain attestation promise.
-
-The manifest records the shared checkout path/HEAD, whether it is dirty, and
-content hashes of Git-visible runtime sources, manifests, lockfile, and compiler
-configuration, plus hashes of every emitted artifact file. Verification checks
-the selected source again, including additions/removals, and rejects missing,
-extra or changed artifact files. Both runtimes are bound to one input fingerprint; a
-manifest's commit label alone is insufficient. Neither package versions nor
-runtime LSP payloads are changed.
-
-Dirty development builds require `--allow-dirty` on **both** commands. Their
-identity is `commit + dirty + inputFingerprint`, never a clean commit claim.
-Selected inputs are checked against HEAD even when Git index flags hide edits
-or removals; Git's line-ending normalization is respected.
-The fingerprint covers the listed build inputs, not arbitrary unrelated
-repository edits. Release/adoption checks should require clean source.
-Copy/install artifacts only after verification, and verify again before
-packaging if the source or staging files could have changed.
-
-Adopting these outputs in consumer build and packaging pipelines remains a
-separate change. Keep the extension's own locked build/runtime dependencies
-reviewed: installing the Python wheel with `--no-deps` still requires the
-consumer to supply its runtime dependency closure. Source/artifact verification
-does not by itself prove consumer dependency compatibility.
+For release CI, start from a fresh checkout with submodules initialized at their
+recorded gitlinks. Check that the shared submodule matches the expected commit
+and has no source changes. Build TypeScript and install Python from that same
+checkout using the commands above, then package those outputs rather than
+reusing artifacts from another pin. Consumer pipeline enforcement, dependency
+locks, and compatibility tests remain the extension's responsibility.
 
 ### Dependabot updates
 
