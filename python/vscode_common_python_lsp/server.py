@@ -19,7 +19,7 @@ from pygls import uris
 from pygls.lsp.server import LanguageServer
 from pygls.workspace import TextDocument
 
-from . import jsonrpc
+from . import _settings, jsonrpc
 from .context import substitute_attr
 from .paths import normalize_path
 from .runner import RunResult, run_module, run_path
@@ -118,21 +118,7 @@ class ToolServer:
 
     def get_global_defaults(self) -> dict[str, Any]:
         """Return merged base + tool-specific default settings."""
-        base: dict[str, Any] = {
-            "path": self.global_settings.get("path", []),
-            "interpreter": self.global_settings.get("interpreter", [sys.executable]),
-            "args": self.global_settings.get("args", []),
-            "importStrategy": self.global_settings.get("importStrategy", "useBundled"),
-            "showNotifications": self.global_settings.get(
-                "showNotifications", self.config.default_notification_level
-            ),
-        }
-        for key, default in self.config.default_settings.items():
-            base[key] = self.global_settings.get(key, default)
-        # Hardcoded settings always use the configured value, ignoring
-        # whatever the client sent in GLOBAL_SETTINGS.
-        base.update(self.config.hardcoded_settings)
-        return base
+        return _settings.get_global_defaults(self.config, self.global_settings)
 
     def update_workspace_settings(self, settings: list[dict[str, Any]] | None) -> None:
         """Populate :attr:`workspace_settings` from the client payload."""
@@ -140,12 +126,9 @@ class ToolServer:
             key = normalize_path(
                 os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
             )
-            self.workspace_settings[key] = {
-                "cwd": key,
-                "workspaceFS": key,
-                "workspace": uris.from_fs_path(key),
-                **self.get_global_defaults(),
-            }
+            self.workspace_settings[key] = _settings.get_fallback_settings(
+                key, uris.from_fs_path(key), self.get_global_defaults()
+            )
             return
 
         for setting in settings:
@@ -159,11 +142,9 @@ class ToolServer:
                 workspace_path,
                 resolve_symlinks=self.config.resolve_symlinks,
             )
-            self.workspace_settings[key] = {
-                **self.get_global_defaults(),
-                **setting,
-                "workspaceFS": key,
-            }
+            self.workspace_settings[key] = _settings.get_workspace_settings(
+                key, self.get_global_defaults(), setting
+            )
 
     def get_settings_by_path(self, file_path: pathlib.Path) -> dict[str, Any]:
         """Return workspace settings for the given file path."""
@@ -171,12 +152,9 @@ class ToolServer:
             cwd = normalize_path(
                 os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
             )
-            return {
-                "cwd": cwd,
-                "workspaceFS": cwd,
-                "workspace": uris.from_fs_path(cwd),
-                **self.get_global_defaults(),
-            }
+            return _settings.get_fallback_settings(
+                cwd, uris.from_fs_path(cwd), self.get_global_defaults()
+            )
 
         workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
 
@@ -214,12 +192,9 @@ class ToolServer:
                 cwd = normalize_path(
                     os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
                 )
-                return {
-                    "cwd": cwd,
-                    "workspaceFS": cwd,
-                    "workspace": uris.from_fs_path(cwd),
-                    **self.get_global_defaults(),
-                }
+                return _settings.get_fallback_settings(
+                    cwd, uris.from_fs_path(cwd), self.get_global_defaults()
+                )
             return list(self.workspace_settings.values())[0]
 
         key = self.get_document_key(document)
@@ -230,12 +205,9 @@ class ToolServer:
             str(pathlib.Path(document.path).parent),
             resolve_symlinks=self.config.resolve_symlinks,
         )
-        return {
-            "cwd": key,
-            "workspaceFS": key,
-            "workspace": uris.from_fs_path(key),
-            **self.get_global_defaults(),
-        }
+        return _settings.get_fallback_settings(
+            key, uris.from_fs_path(key), self.get_global_defaults()
+        )
 
     # -----------------------------------------------------------------
     # CWD resolution
