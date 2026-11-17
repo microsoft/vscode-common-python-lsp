@@ -1152,6 +1152,132 @@ class TestSettingsContract:
                 )
             )
 
+    def test_replaced_settings_maps_are_used_after_initial_application(self, tmp_path):
+        ts = _make_server()
+        params = lsp.InitializeParams(
+            capabilities=lsp.ClientCapabilities(),
+            process_id=None,
+            initialization_options={
+                "globalSettings": {"args": ["--original"]},
+                "settings": [{"workspace": tmp_path.as_uri()}],
+            },
+        )
+        ts.apply_settings(params)
+        old_globals = ts.global_settings
+        old_workspaces = ts.workspace_settings
+        old_entry = next(iter(old_workspaces.values()))
+
+        args = ["--replacement"]
+        globals_ = {"args": args, "unknownGlobal": {"keep": True}}
+        retained = {"workspaceFS": "retained"}
+        workspaces = {"retained": retained}
+        ts.global_settings = globals_
+        ts.workspace_settings = workspaces
+        params.initialization_options = {
+            "globalSettings": {"path": []},
+            "settings": [{"workspace": tmp_path.as_uri()}],
+        }
+        ts.apply_settings(params)
+
+        key = str(pathlib.Path(uris.to_fs_path(tmp_path.as_uri())))
+        assert ts.global_settings is globals_
+        assert ts.workspace_settings is workspaces
+        assert globals_["path"] == []
+        assert ts.get_global_defaults()["args"] is args
+        assert workspaces[key]["args"] is args
+        assert workspaces["retained"] is retained
+        assert old_globals == {"args": ["--original"]}
+        assert old_workspaces == {key: old_entry}
+        assert old_entry["args"] == ["--original"]
+
+        args.append("--mutated")
+        ts.global_settings["path"] = ["replacement-tool"]
+        ts.update_workspace_settings([{"workspace": tmp_path.as_uri()}])
+        assert workspaces[key]["args"] is args
+        assert workspaces[key]["path"] is globals_["path"]
+
+    def test_settings_values_keep_shallow_aliases_and_live_config(self, tmp_path):
+        severity = {"E": "Error"}
+        ignored = ["configured/**"]
+        config = ToolServerConfig(
+            tool_module="testtool",
+            tool_display="Test Tool",
+            default_settings={"severity": severity},
+            hardcoded_settings={"ignorePatterns": ignored},
+        )
+        ts = _make_server(config)
+        ts.global_settings["ignorePatterns"] = ["ignored-global/**"]
+        first_defaults = ts.get_global_defaults()
+        defaults = ts.get_global_defaults()
+        assert defaults is not first_defaults
+        assert defaults["args"] is not first_defaults["args"]
+        assert defaults["severity"] is severity
+        assert defaults["ignorePatterns"] is ignored
+
+        supplied_severity = {"W": "Hint"}
+        settings = [
+            {"workspace": tmp_path.as_uri()},
+            {
+                "workspace": (tmp_path / "nested").as_uri(),
+                "severity": supplied_severity,
+            },
+        ]
+        ts.update_workspace_settings(settings)
+        inherited, explicit = ts.workspace_settings.values()
+        assert inherited["severity"] is severity
+        assert explicit["severity"] is supplied_severity
+        assert explicit is not settings[1]
+        assert inherited["ignorePatterns"] is explicit["ignorePatterns"] is ignored
+        inherited["severity"]["E"] = "Warning"
+        assert ts.get_global_defaults()["severity"] == {"E": "Warning"}
+
+        config.default_settings = {"severity": {}}
+        config.hardcoded_settings = {"ignorePatterns": []}
+        ts.update_workspace_settings(settings[:1])
+        refreshed = next(iter(ts.workspace_settings.values()))
+        assert refreshed["severity"] is config.default_settings["severity"]
+        assert (
+            refreshed["ignorePatterns"] is config.hardcoded_settings["ignorePatterns"]
+        )
+        assert explicit["severity"] is supplied_severity
+
+    @pytest.mark.parametrize("lookup", ["populate", "path", "none", "outside"])
+    def test_fallback_context_is_overlaid_by_configured_defaults(
+        self, tmp_path, lookup
+    ):
+        contextual_defaults = {
+            "cwd": "",
+            "workspaceFS": "configured-path",
+            "workspace": None,
+        }
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings=contextual_defaults,
+            )
+        )
+        if lookup == "populate":
+            ts.update_workspace_settings(None)
+            settings = next(iter(ts.workspace_settings.values()))
+        elif lookup == "path":
+            settings = ts.get_settings_by_path(tmp_path / "demo.py")
+        elif lookup == "none":
+            settings = ts.get_settings_by_document(None)
+        else:
+            settings = ts.get_settings_by_document(
+                TextDocument((tmp_path / "demo.py").as_uri())
+            )
+
+        assert {
+            key: settings[key] for key in contextual_defaults
+        } == contextual_defaults
+        ts.update_workspace_settings([{"workspace": tmp_path.as_uri()}])
+        key = str(pathlib.Path(uris.to_fs_path(tmp_path.as_uri())))
+        assert ts.workspace_settings[key]["workspaceFS"] == key
+        assert ts.workspace_settings[key]["workspace"] == tmp_path.as_uri()
+        assert ts.workspace_settings[key]["cwd"] == ""
+
     def test_repeated_application_retains_aliases_and_routes_real_uris(self, tmp_path):
         ts = _make_server()
         workspaces = ts.workspace_settings

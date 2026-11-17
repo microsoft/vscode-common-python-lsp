@@ -32,6 +32,11 @@ stdio and checks initialize/initialized/settings/shutdown/exit. It needs no tool
 installation, VS Code host or Node build. Repeated settings application is
 covered separately in-process, not by reinitializing a live LSP session.
 
+`ToolServer` remains the public settings facade and owns the writable global and
+workspace dictionaries, in-place updates, path normalization and routing.
+Private `_settings` helpers only construct fresh, shallow settings dictionaries
+from the current values; they retain nested value aliases and cache no state.
+
 ## Adoption and milestones
 
 Extensions consume this repository at a pinned Git commit and build both the
