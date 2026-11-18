@@ -66,6 +66,10 @@ Use the Node.js version pinned in `.nvmrc` for development.
 
 ## Consuming in Extensions
 
+See [supported architecture and adoption APIs](docs/supported-apis.md) for the
+typed definition → activation facade → lifecycle hooks path, Python `ToolServer`
+usage, ownership and configuration boundaries, and supported manual composition.
+
 ### Shared runtime libraries
 
 Consume this repository as a git submodule so the Python and TypeScript

@@ -9,3 +9,6 @@ import namespace remains `vscode_common_python_lsp`.
 
 See the [main README](../README.md#consuming-in-extensions) for local-path
 installation and bundling instructions.
+
+See the [supported API guide](../docs/supported-apis.md#python-adoption-keep-toolserver-as-the-facade)
+for `ToolServer` setup, handler ownership and the private settings/routing boundary.
