@@ -175,6 +175,19 @@ remain supported. Neither identity is a registry-facing consumption API: do not
 add a bare dependency or registry install for it. This repository publishes
 neither npm nor PyPI packages.
 
+### Building from a pinned submodule
+
+`npm run build` in `typescript` cleans `dist` before compiling, including outputs
+for removed sources. Run it before type-checking or packaging the extension;
+an existing `dist/index.js` is not a freshness check.
+
+For release CI, start from a fresh checkout with submodules initialized at their
+recorded gitlinks. Check that the shared submodule matches the expected commit
+and has no source changes. Build TypeScript and install Python from that same
+checkout using the commands above, then package those outputs rather than
+reusing artifacts from another pin. Consumer pipeline enforcement, dependency
+locks, and compatibility tests remain the extension's responsibility.
+
 ### Dependabot updates
 
 The consuming extensions configure Dependabot's `gitsubmodule` ecosystem to
