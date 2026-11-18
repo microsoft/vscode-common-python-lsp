@@ -11,15 +11,15 @@ Shared Python and TypeScript libraries for VS Code Python tool extensions
 
 ```
 vscode-common-python-lsp/
-├── python/                         # Python package (bundled server-side)
-│   ├── vscode_common_python_lsp/   # Package source
+├── python/                         # Python source (bundled server-side)
+│   ├── vscode_common_python_lsp/   # Import package source
 │   │   └── __init__.py
 │   ├── tests/                      # Python tests (pytest)
-│   ├── pyproject.toml              # Package metadata & build config
+│   ├── pyproject.toml              # Local installation metadata & build config
 │   └── requirements-dev.txt        # Dev/test dependencies
 │
-├── typescript/                     # TypeScript package (VS Code client-side)
-│   ├── src/                        # Package source
+├── typescript/                     # TypeScript source (VS Code client-side)
+│   ├── src/                        # Public entry point and implementation
 │   │   └── index.ts
 │   ├── tests/                      # TypeScript tests (mocha)
 │   ├── package.json
@@ -31,7 +31,7 @@ vscode-common-python-lsp/
 └── README.md
 ```
 
-## Python Package
+## Python Source
 
 The `vscode_common_python_lsp` Python package provides server-side utilities shared
 across all five extensions: path resolution, context managers, tool execution runners,
@@ -45,9 +45,9 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
-## TypeScript Package
+## TypeScript Source
 
-The `vscode-common-python-lsp` TypeScript package provides VS Code client-side
+The TypeScript source provides VS Code client-side
 utilities: extension activation, server lifecycle, settings management, Python
 interpreter resolution, and logging.
 
@@ -55,22 +55,198 @@ interpreter resolution, and logging.
 
 ```bash
 cd typescript
-npm install
+npm ci
+npm run lint
 npm run build
 npm test
 ```
 
+Linting uses ESLint 10 with the flat configuration in `typescript/eslint.config.mjs`.
+Use the Node.js version pinned in `.nvmrc` for development.
+
 ## Consuming in Extensions
 
-**Git submodule (current):**
+See [supported architecture and adoption APIs](docs/supported-apis.md) for the
+typed definition → activation facade → lifecycle hooks path, Python `ToolServer`
+usage, ownership and configuration boundaries, and supported manual composition.
+
+### Shared runtime libraries
+
+Consume this repository as a git submodule so the Python and TypeScript
+libraries are pinned to the same commit. The VS Code Python tool extensions
+place the checkout under `external/`:
+
 ```bash
-git submodule add https://github.com/microsoft/vscode-common-python-lsp.git submodules/vscode-common-python-lsp
+git submodule add https://github.com/microsoft/vscode-common-python-lsp.git external/vscode-common-python-lsp
+git submodule update --init --recursive
 ```
 
-**Python side** — install into `bundled/libs/` via noxfile.
-**TypeScript side** — `file:` dependency in `package.json`.
+Clone a consuming extension with `--recurse-submodules`, or run the update
+command above after cloning.
+
+#### TypeScript: build, type-check, then bundle
+
+The extension does not declare a shared-runtime npm dependency or alias. From
+the extension root, install its own locked development tools and the checkout's
+locked dependencies, then build the shared JavaScript and declarations **before**
+type-checking or bundling the extension:
+
+```powershell
+npm ci
+npm --prefix .\external\vscode-common-python-lsp\typescript ci
+npm --prefix .\external\vscode-common-python-lsp\typescript run build
+```
+
+In the extension's `src/extension.ts`, import exported symbols from the built
+public entry point (not individual implementation files or a bare package name):
+
+```typescript
+import { createToolContext } from '../external/vscode-common-python-lsp/typescript/dist';
+```
+
+Use the extension's existing TypeScript configuration and development type
+dependencies, including `@types/vscode` and `@types/node`, to type-check its
+`src/` files. The shared declarations resolve their dependencies from the
+checkout's `typescript/node_modules`; the extension's `rootDir` can remain
+`src`. For example, with TypeScript already installed by the extension:
+
+```powershell
+npx --no-install tsc --noEmit
+```
+
+Bundle the source-relative entry and its JavaScript dependency closure into the
+extension. For example, an extension already using esbuild can run this from
+the extension root after the steps above:
+
+```powershell
+npx --no-install esbuild .\src\extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=.\dist\extension.js
+```
+
+VS Code supplies `vscode`, and esbuild leaves Node built-ins external. Do not
+externalize the shared entry or its npm dependencies: they must resolve from
+the checkout and be included in the bundle. Merely running `tsc` does not bundle
+them; shipping only the extension's emitted JavaScript would leave a relative
+runtime dependency on the checkout. Other bundlers must preserve the same
+resolution and packaging behavior. Rebuild both the shared entry and extension
+bundle whenever the pinned checkout changes.
+
+When migrating an existing consumer, remove its former shared-runtime
+dependency/alias, update its imports and regenerate its lockfile without that
+dependency. Review the consumer's own build and packaging rules; changing this
+repository's metadata alone does not migrate an extension.
+
+#### Python: install from the same checkout
+
+Install the Python source directly from the same submodule commit when building
+the extension bundle. For example, in `noxfile.py`:
+
+```python
+import pathlib
+
+import nox
+
+
+@nox.session(python="3.10")
+def install_bundled_libs(session: nox.Session) -> None:
+    shared_python_lib = pathlib.Path("external/vscode-common-python-lsp/python")
+    if not shared_python_lib.exists():
+        session.error(
+            f"Shared package submodule missing at {shared_python_lib}. "
+            "Run 'git submodule update --init --recursive' before building."
+        )
+
+    session.install(
+        "-t",
+        "./bundled/libs",
+        "--no-cache-dir",
+        "--no-deps",
+        "--upgrade",
+        str(shared_python_lib),
+    )
+```
+
+The `--no-deps` example preserves the consumer's runtime dependency policy: the
+extension must also bundle the dependencies declared in `python/pyproject.toml`
+using its own reviewed requirements/locks. Keep the installed distribution
+metadata alongside `vscode_common_python_lsp`; the default server uses its
+version for diagnostics, or `v0.0.0-dev` if that metadata is absent. Python
+imports continue to use `vscode_common_python_lsp`.
+
+Both manifests use `vscode-python-tool-internal` solely as internal
+local build/install metadata. npm remains private, and Python metadata is marked
+`Private :: Do Not Upload`. Local-path pip installation and local wheel builds
+remain supported. Neither identity is a registry-facing consumption API: do not
+add a bare dependency or registry install for it. This repository publishes
+neither npm nor PyPI packages.
+
+### Building from a pinned submodule
+
+`npm run build` in `typescript` cleans `dist` before compiling, including outputs
+for removed sources. Run it before type-checking or packaging the extension;
+an existing `dist/index.js` is not a freshness check.
+
+For release CI, start from a fresh checkout with submodules initialized at their
+recorded gitlinks. Check that the shared submodule matches the expected commit
+and has no source changes. Build TypeScript and install Python from that same
+checkout using the commands above, then package those outputs rather than
+reusing artifacts from another pin. Consumer pipeline enforcement, dependency
+locks, and compatibility tests remain the extension's responsibility.
+
+### Dependabot updates
+
+The consuming extensions configure Dependabot's `gitsubmodule` ecosystem to
+check daily for newer commits:
+
+```yaml
+updates:
+  - package-ecosystem: 'gitsubmodule'
+    directory: '/'
+    allow:
+      - dependency-name: 'external/vscode-common-python-lsp'
+    schedule:
+      interval: 'daily'
+```
+
+This is a scheduled check, not a workflow triggered by each push. Dependabot
+updates the pinned submodule commit when the tracked upstream branch has
+advanced. GitHub releases continue to provide versioned milestones and release
+notes, but they do not trigger or gate the submodule updates.
 
 ### Optional configuration
+
+For an additive activation entry point with explicit resource ownership, see
+the [activation facade example](typescript/README.md#opt-in-activation-facade).
+`activateToolExtension(context, { serverInfo, toolConfig })` returns a small
+runtime handle; initialization remains deferred, not client-ready. Await
+`runtime.deactivate()` for facade cleanup and existing client-stop behavior.
+Optional [launch hooks](typescript/README.md#optional-launch-hooks) support
+per-server inherited-environment patches and pre-start notification registration
+with client-owned cleanup, without overriding `runServer` or changing settings.
+It preserves caller-owned subscriptions, but does not drain every legacy
+in-flight restart or isolate the module-global logger/status. Existing manual
+composition remains supported.
+
+For an opt-in typed settings contract without changing runtime behavior, see
+the [typed tool definition example](typescript/README.md#typed-tool-definitions).
+Existing `ToolConfig` callers do not need to migrate.
+
+Extensions whose servers run tools using the interpreter in each resolved
+settings entry can opt in to per-project environments:
+
+```ts
+const toolConfig: ToolConfig = {
+    // ...
+    supportsPerProjectEnvironments: true,
+};
+```
+
+The extension must also contribute a window-scoped
+`<toolId>.usePerProjectEnvironments` boolean setting. When both are enabled,
+the singleton language server receives settings for the projects reported by
+the Python Environments extension and uses each project's selected interpreter.
+Explicit `<toolId>.interpreter` settings continue to take precedence. The
+setting defaults to `false`, so existing workspace-folder behavior is
+unchanged.
 
 To restart the language server whenever packages are installed or removed,
 an extension sets `refreshExtensionOnPackagesChange: true` on the `ToolConfig` it

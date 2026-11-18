@@ -38,3 +38,6 @@ coverage/
 htmlcov/
 .coverage
 coverage*.xml
+
+# Isolated source-build validation staging
+/test-submodules/

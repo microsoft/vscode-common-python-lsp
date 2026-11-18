@@ -4,6 +4,7 @@
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { State } from 'vscode-languageclient';
 import {
@@ -15,6 +16,8 @@ import {
     ToolExtensionContext,
 } from '../src/activation';
 import * as configWatcher from '../src/configWatcher';
+import * as envFileModule from '../src/envFile';
+import * as loggingModule from '../src/logging';
 import * as settingsModule from '../src/settings';
 import * as serverModule from '../src/server';
 import * as statusModule from '../src/status';
@@ -26,6 +29,16 @@ import * as vscodeapi from '../src/vscodeapi';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
 
 function makeToolConfig(overrides?: Partial<ToolConfig>): ToolConfig {
     return {
@@ -59,6 +72,7 @@ function makeMockProvider(sandbox: sinon.SinonSandbox): PythonEnvironmentsProvid
         getDebuggerPath: sandbox.stub().resolves(undefined),
         initializePython: sandbox.stub().resolves(),
         subscribeToPackageChanges: sandbox.stub().resolves(undefined),
+        getPythonProjects: sandbox.stub().resolves([]),
         onDidChangeInterpreter: sinon.stub().returns({ dispose: sinon.stub() }),
     } as unknown as PythonEnvironmentsProvider;
 }
@@ -115,6 +129,110 @@ suite('createToolContext', () => {
         assert.isTrue((serverModule.restartServer as sinon.SinonStub).calledOnce);
     });
 
+    test('uses a project interpreter to bootstrap per-project mode', async () => {
+        const root = {
+            uri: vscode.Uri.file(path.dirname(process.cwd())),
+            name: 'workspace',
+            index: 0,
+        };
+        const project = {
+            uri: vscode.Uri.file(process.cwd()),
+            name: 'project',
+            index: 0,
+        };
+        (utilities.getProjectRoot as sinon.SinonStub).resolves(root);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root]);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+        const provider = makeMockProvider(sandbox);
+        (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
+        const extensionSettings = [
+            {
+                cwd: '/workspace',
+                workspace: root.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: [],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            },
+            {
+                cwd: '/workspace',
+                workspace: project.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: ['/project/python'],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            },
+        ];
+        sandbox.stub(settingsModule, 'getExtensionSettings').resolves(extensionSettings);
+
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.runServer();
+
+        const restartOptions = (serverModule.restartServer as sinon.SinonStub).firstCall.args[0];
+        assert.strictEqual(restartOptions.settings, extensionSettings[1]);
+        assert.strictEqual(restartOptions.extensionSettings, extensionSettings);
+        assert.isTrue((settingsModule.getWorkspaceSettings as sinon.SinonStub).notCalled);
+    });
+
+    test('includes file-backed Python projects in per-project settings', async () => {
+        const root = {
+            uri: vscode.Uri.file(path.dirname(__filename)),
+            name: 'workspace',
+            index: 0,
+        };
+        const project = {
+            uri: vscode.Uri.file(__filename),
+            name: 'script',
+            index: 0,
+        };
+        (utilities.getProjectRoot as sinon.SinonStub).resolves(root);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root]);
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+        const provider = makeMockProvider(sandbox);
+        (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
+        sandbox.stub(settingsModule, 'getExtensionSettings').callsFake(async (_serverId, _toolConfig, _resolve, roots) => {
+            assert.isDefined(roots);
+            return roots!.map((workspace: vscode.WorkspaceFolder) => ({
+                cwd: root.uri.fsPath,
+                workspace: workspace.uri.toString(),
+                args: [],
+                path: [],
+                interpreter: ['/project/python'],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            }));
+        });
+
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.runServer();
+
+        const restartOptions = (serverModule.restartServer as sinon.SinonStub).firstCall.args[0];
+        assert.deepEqual(
+            restartOptions.extensionSettings.map((settings: { workspace: string }) => settings.workspace),
+            [root.uri.toString(), project.uri.toString()],
+        );
+    });
+
     test('runServer reports missing interpreter when none configured', async () => {
         (settingsModule.getWorkspaceSettings as sinon.SinonStub).resolves({
             cwd: '/workspace',
@@ -140,9 +258,12 @@ suite('createToolContext', () => {
     test('runServer stops stale client when interpreter is cleared', async () => {
         const stopStub = sandbox.stub().resolves();
         const mockClient = { stop: stopStub } as unknown as import('vscode-languageclient/node').LanguageClient;
+        const clientSetup = { dispose: sandbox.stub() };
 
         // First run succeeds — sets up a client
-        (serverModule.restartServer as sinon.SinonStub).resolves({ client: mockClient, disposables: [] });
+        (serverModule.restartServer as sinon.SinonStub).resolves({
+            client: mockClient, disposables: [clientSetup], clientSetup,
+        });
         const ctx = createToolContext(makeOptions());
         await ctx.runServer();
         assert.strictEqual(ctx.lsClient, mockClient);
@@ -161,52 +282,122 @@ suite('createToolContext', () => {
         await ctx.runServer();
         assert.isTrue(stopStub.calledOnce, 'should stop the stale client');
         assert.isUndefined(ctx.lsClient, 'client should be cleared');
-    });
-
-    test('dispose during in-flight restart prevents client assignment', async () => {
-        let resolveRestart: ((value: unknown) => void) | undefined;
-        (serverModule.restartServer as sinon.SinonStub).returns(
-            new Promise((resolve) => {
-                resolveRestart = resolve;
-            }),
-        );
-
-        const ctx = createToolContext(makeOptions());
-        const runPromise = ctx.runServer();
-
-        // Dispose while restartServer is in-flight
+        sinon.assert.calledOnce(clientSetup.dispose);
         ctx.dispose();
-
-        // Now resolve the restart — should NOT assign client
-        const mockClient = { stop: sandbox.stub().resolves(), dispose: sandbox.stub() };
-        resolveRestart!({ client: mockClient, disposables: [] });
-        await runPromise;
-
-        assert.isUndefined(ctx.lsClient, 'should not assign client after dispose');
+        sinon.assert.calledOnce(clientSetup.dispose);
     });
 
-    test('runServer debounces rapid calls', async () => {
+    test('dispose during in-flight restart cleans up late results and cancels queued retry', async () => {
         const clock = sandbox.useFakeTimers();
-        const restartServerStub = serverModule.restartServer as sinon.SinonStub;
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        restartStub.callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const stop = sandbox.stub().resolves();
+        const dispose = sandbox.stub();
+        const listener = { dispose: sandbox.stub() };
+        const result = {
+            client: { stop, dispose } as unknown as LanguageClient,
+            disposables: [listener],
+        };
         const ctx = createToolContext(makeOptions({ toolConfig: makeToolConfig({ restartDelay: 50 }) }));
+        const running = ctx.runServer();
 
-        // First call triggers. isRestarting is set synchronously.
-        const p1 = ctx.runServer();
-        // Second call while first is in progress — hits isRestarting, schedules timer.
-        const p2 = ctx.runServer();
+        try {
+            await entered.promise;
+            await ctx.runServer();
+            assert.strictEqual(clock.countTimers(), 1, 'overlap should queue a retry');
 
-        // p2 resolves immediately (debounced path returns early).
-        await p2;
+            ctx.dispose();
+            assert.strictEqual(clock.countTimers(), 0, 'dispose should cancel the retry timer');
+            finished.resolve(result);
+            await running;
 
-        // Complete the first call (flushes all internal awaits).
-        await p1;
-        assert.isTrue(restartServerStub.calledOnce, 'first call should trigger restartServer');
+            assert.isUndefined(ctx.lsClient, 'should not assign the late client');
+            sinon.assert.calledOnce(stop);
+            sinon.assert.calledOnce(dispose);
+            sinon.assert.calledOnce(listener.dispose);
 
-        // Tick past the debounce delay — the scheduled timer should fire.
-        await clock.tickAsync(50);
-        assert.isTrue(restartServerStub.calledTwice, 'debounced call should trigger restartServer after delay');
+            await ctx.runServer();
+            await clock.tickAsync(100);
+            sinon.assert.calledOnce(restartStub);
+            assert.isUndefined(ctx.lsClient, 'calls and timers must not resurrect the context');
+        } finally {
+            ctx.dispose();
+            finished.resolve(result);
+            await running;
+        }
+    });
 
-        clock.restore();
+    test('overlapping runServer calls acknowledge scheduling and reset a single trailing retry', async () => {
+        const clock = sandbox.useFakeTimers();
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        const firstClient = new LanguageClient('first', 'First', { command: 'python' }, {});
+        const secondClient = new LanguageClient('second', 'Second', { command: 'python' }, {});
+        const firstResult = { client: firstClient, disposables: [] };
+        restartStub.onFirstCall().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        restartStub.onSecondCall().resolves({ client: secondClient, disposables: [] });
+        const ctx = createToolContext(makeOptions({ toolConfig: makeToolConfig({ restartDelay: 50 }) }));
+        let firstSettled = false;
+        const first = ctx.runServer().then(() => {
+            firstSettled = true;
+        });
+
+        try {
+            await entered.promise;
+            await ctx.runServer();
+            assert.isFalse(firstSettled, 'overlap resolves without waiting for the active restart');
+            assert.isUndefined(ctx.lsClient);
+            sinon.assert.calledOnce(restartStub);
+
+            await clock.tickAsync(30);
+            await ctx.runServer();
+            assert.isFalse(firstSettled);
+            assert.strictEqual(clock.countTimers(), 1, 'overlaps should replace, not accumulate, timers');
+
+            await clock.tickAsync(20);
+            sinon.assert.calledOnce(restartStub);
+            await ctx.runServer();
+            assert.strictEqual(clock.countTimers(), 1);
+            await clock.tickAsync(30);
+            sinon.assert.calledOnce(restartStub);
+            await clock.tickAsync(19);
+            sinon.assert.calledOnce(restartStub);
+            assert.isFalse(firstSettled, 'the active restart is still held at the reset trailing edge');
+
+            await clock.tickAsync(1);
+            sinon.assert.calledOnce(restartStub);
+            assert.strictEqual(clock.countTimers(), 1, 'a retry during an active restart should be rescheduled');
+            assert.isFalse(firstSettled);
+
+            finished.resolve(firstResult);
+            await first;
+            assert.strictEqual(ctx.lsClient, firstClient);
+
+            await clock.tickAsync(49);
+            sinon.assert.calledOnce(restartStub);
+            await clock.tickAsync(1);
+            sinon.assert.calledTwice(restartStub);
+            assert.strictEqual(restartStub.secondCall.args[1], firstClient);
+            assert.strictEqual(ctx.lsClient, secondClient);
+
+            await clock.tickAsync(100);
+            sinon.assert.calledTwice(restartStub);
+        } finally {
+            ctx.dispose();
+            finished.resolve(firstResult);
+            await first;
+            firstClient.dispose();
+            secondClient.dispose();
+        }
     });
 
     test('initialize starts server when interpreter is already set', async () => {
@@ -217,6 +408,90 @@ suite('createToolContext', () => {
             (serverModule.restartServer as sinon.SinonStub).calledOnce,
             'should start server immediately',
         );
+    });
+
+    test('initializes project events even when the interpreter is pinned', async () => {
+        (utilities.getProjectRoot as sinon.SinonStub).resolves({
+            uri: vscode.Uri.file('/workspace'),
+            name: 'workspace',
+            index: 0,
+        });
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
+        assert.isFalse((provider.initializePython as sinon.SinonStub).firstCall.args[2]);
+        assert.isTrue((serverModule.restartServer as sinon.SinonStub).calledOnce);
+    });
+
+    test('does not initialize project events when per-project mode is disabled', async () => {
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isFalse((provider.initializePython as sinon.SinonStub).called);
+        assert.isTrue((serverModule.restartServer as sinon.SinonStub).calledOnce);
+    });
+
+    test('initializes project events when per-project mode is enabled later', async () => {
+        let enabled = false;
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? enabled : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        const ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+        await ctx.initialize([]);
+        assert.isFalse((provider.initializePython as sinon.SinonStub).called);
+
+        enabled = true;
+        await ctx.runServer();
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
+        assert.isFalse((provider.initializePython as sinon.SinonStub).firstCall.args[2]);
+    });
+
+    test('does not initialize Python recursively when the initial refresh triggers a restart', async () => {
+        (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? true : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const provider = makeMockProvider(sandbox);
+        let ctx: ToolExtensionContext;
+        (provider.initializePython as sinon.SinonStub).callsFake(async () => ctx.runServer());
+        ctx = createToolContext(
+            makeOptions({
+                toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+                pythonProvider: provider,
+            }),
+        );
+
+        await ctx.initialize([]);
+
+        assert.isTrue((provider.initializePython as sinon.SinonStub).calledOnce);
     });
 
     test('initialize defers to Python extension when no interpreter set', async () => {
@@ -235,52 +510,93 @@ suite('createToolContext', () => {
         );
     });
 
-    test('subscribes to package changes and restarts the server when refreshExtensionOnPackagesChange is enabled', async () => {
+    test('subscribes to package changes and debounces bursts at the reset trailing edge', async () => {
+        const clock = sandbox.useFakeTimers();
         (utilities.getInterpreterFromSetting as sinon.SinonStub).returns(undefined);
         const provider = makeMockProvider(sandbox);
 
-        // Capture the handler the activation logic registers so we can fire it.
         let capturedHandler: (() => void) | undefined;
-        const disposeStub = sinon.stub();
+        const disposeStub = sandbox.stub();
         (provider.subscribeToPackageChanges as sinon.SinonStub).callsFake((handler: () => void) => {
             capturedHandler = handler;
             return Promise.resolve({ dispose: disposeStub });
         });
-
-        // Resolve a deferred when restartServer is reached instead of counting
-        // macrotasks — decouples the test from runServer's internal await chain.
-        let signalRestart: () => void = () => undefined;
-        const restarted = new Promise<void>((resolve) => {
-            signalRestart = resolve;
-        });
-        (serverModule.restartServer as sinon.SinonStub).callsFake(() => {
-            signalRestart();
+        const entered = deferred<void>();
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        restartStub.callsFake(() => {
+            entered.resolve();
             return Promise.resolve({ client: undefined, disposables: [] });
         });
-
         const subscriptions: vscode.Disposable[] = [];
         const ctx = createToolContext(
             makeOptions({
                 pythonProvider: provider,
-                // restartDelay: 0 keeps the trailing-edge debounce on the next tick.
-                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 0 }),
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 50 }),
             }),
         );
-        await ctx.initialize(subscriptions);
+        const runSpy = sandbox.spy(ctx, 'runServer');
 
-        assert.isTrue(
-            (provider.subscribeToPackageChanges as sinon.SinonStub).calledOnce,
-            'should subscribe to package changes',
-        );
-        assert.isFunction(capturedHandler, 'should register a package-change handler');
-        assert.lengthOf(subscriptions, 1, 'should register the subscription disposable');
+        try {
+            await ctx.initialize(subscriptions);
+            sinon.assert.calledOnce(provider.subscribeToPackageChanges as sinon.SinonStub);
+            assert.isFunction(capturedHandler);
+            assert.lengthOf(subscriptions, 1, 'subscription belongs to the extension');
 
-        capturedHandler?.();
-        await restarted;
-        assert.isTrue(
-            (serverModule.restartServer as sinon.SinonStub).called,
-            'package-change handler should restart the server',
+            capturedHandler!();
+            await clock.tickAsync(30);
+            capturedHandler!();
+            await clock.tickAsync(20);
+            sinon.assert.notCalled(restartStub);
+            await clock.tickAsync(29);
+            sinon.assert.notCalled(restartStub);
+
+            await clock.tickAsync(1);
+            await entered.promise;
+            await runSpy.firstCall.returnValue;
+            sinon.assert.calledOnce(restartStub);
+
+            await clock.tickAsync(100);
+            sinon.assert.calledOnce(restartStub);
+        } finally {
+            ctx.dispose();
+            subscriptions.forEach((subscription) => subscription.dispose());
+            if (runSpy.called) {
+                await runSpy.firstCall.returnValue;
+            }
+        }
+    });
+
+    test('dispose cancels pending package refresh and ignores later package events', async () => {
+        const clock = sandbox.useFakeTimers();
+        const provider = makeMockProvider(sandbox);
+        const restartStub = serverModule.restartServer as sinon.SinonStub;
+        const ctx = createToolContext(
+            makeOptions({
+                pythonProvider: provider,
+                toolConfig: makeToolConfig({ refreshExtensionOnPackagesChange: true, restartDelay: 50 }),
+            }),
         );
+
+        try {
+            await ctx.initialize([]);
+            const handler = (provider.subscribeToPackageChanges as sinon.SinonStub)
+                .firstCall.args[0] as () => void;
+            sinon.assert.calledOnce(restartStub);
+
+            handler();
+            await clock.tickAsync(25);
+            assert.strictEqual(clock.countTimers(), 1);
+            ctx.dispose();
+            assert.strictEqual(clock.countTimers(), 0, 'dispose should cancel package debounce');
+
+            await clock.tickAsync(100);
+            handler();
+            assert.strictEqual(clock.countTimers(), 0, 'late package events must not schedule work');
+            await clock.tickAsync(100);
+            sinon.assert.calledOnce(restartStub);
+        } finally {
+            ctx.dispose();
+        }
     });
 
     test('subscribes to package changes even when the interpreter is pinned via setting', async () => {
@@ -406,6 +722,29 @@ suite('registerCommonSubscriptions', () => {
             (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).calledOnce,
         );
     });
+
+    test('tracks the per-project setting for opted-in tools', async () => {
+        let configurationHandler:
+            | ((event: vscode.ConfigurationChangeEvent) => Promise<void>)
+            | undefined;
+        (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).callsFake(
+            (handler: (event: vscode.ConfigurationChangeEvent) => Promise<void>) => {
+                configurationHandler = handler;
+                return { dispose: sinon.stub() };
+            },
+        );
+        const options = makeRegisterOptions({
+            toolConfig: makeToolConfig({ supportsPerProjectEnvironments: true }),
+        });
+        registerCommonSubscriptions(context, options);
+
+        await configurationHandler?.({
+            affectsConfiguration: (setting: string) =>
+                setting === 'flake8.usePerProjectEnvironments',
+        } as vscode.ConfigurationChangeEvent);
+
+        assert.isTrue((options.toolContext.runServer as sinon.SinonStub).calledOnce);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -413,8 +752,13 @@ suite('registerCommonSubscriptions', () => {
 // ---------------------------------------------------------------------------
 
 suite('deactivateServer', () => {
-    test('stops the client and disposes context', async () => {
-        const stop = sinon.stub().resolves();
+    test('disposes context before awaiting client stop', async () => {
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const stop = sinon.stub().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
         const dispose = sinon.stub();
         const client = { stop } as unknown as LanguageClient;
         const ctx: ToolExtensionContext = {
@@ -423,9 +767,24 @@ suite('deactivateServer', () => {
             initialize: sinon.stub().resolves(),
             dispose,
         };
-        await deactivateServer(ctx);
-        assert.isTrue(stop.calledOnce);
-        assert.isTrue(dispose.calledOnce);
+        let deactivated = false;
+        const pending = deactivateServer(ctx).then(() => {
+            deactivated = true;
+        });
+        try {
+            await entered.promise;
+            sinon.assert.calledOnce(stop);
+            sinon.assert.calledOnce(dispose);
+            sinon.assert.callOrder(dispose, stop);
+            assert.isFalse(deactivated, 'deactivation must wait for the already-assigned client to stop');
+
+            finished.resolve();
+            await pending;
+            assert.isTrue(deactivated);
+        } finally {
+            finished.resolve();
+            await pending;
+        }
     });
 
     test('handles undefined context', async () => {
@@ -545,6 +904,50 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         return mock as unknown as LanguageClient;
     }
 
+    function stubServerDependencies(): void {
+        sandbox.stub(envFileModule, 'getEnvFileVars').resolves({});
+        sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns({
+            uri: vscode.Uri.parse('file:///workspace'),
+            name: 'workspace',
+            index: 0,
+        });
+        sandbox.stub(settingsModule, 'getExtensionSettings').resolves([]);
+        sandbox.stub(settingsModule, 'getGlobalSettings').resolves({
+            cwd: '/workspace',
+            workspace: 'file:///workspace',
+            args: [],
+            path: [],
+            interpreter: ['/usr/bin/python3'],
+            importStrategy: 'useBundled',
+            showNotifications: 'off',
+        });
+        sandbox.stub(statusModule, 'updateStatus');
+    }
+
+    function holdClientStop(client: MockClient) {
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const originalStop = client.stop;
+        const stop = sandbox.stub(client, 'stop').callsFake(async () => {
+            entered.resolve();
+            await finished.promise;
+            await originalStop.call(client);
+        });
+        return { entered, finished, stop };
+    }
+
+    function holdClientStart() {
+        const entered = deferred<MockClient>();
+        const finished = deferred<void>();
+        const originalStart = LanguageClient.prototype.start;
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            entered.resolve(this as unknown as MockClient);
+            await finished.promise;
+            await originalStart.call(this);
+        });
+        return { entered, finished };
+    }
+
     // Test 1: provider registered once at createToolContext, disposed on State.Running
     test('registers placeholder once at activation and disposes it on State.Running', async () => {
         const mockClient = makeMockClient(State.Stopped);
@@ -646,40 +1049,398 @@ suite('createToolContext – NullFormatter lifecycle', () => {
         assert.isTrue(providerDispose.calledOnce, 'placeholder disposed on ctx.dispose()');
     });
 
-    // Test 7: extension-driven restart — second runServer() is called while
-    // the first client is still Running.  The guard at the top of runServer
-    // skips re-registration to avoid the transient duplicate-formatter issue.
-    // The placeholder is re-registered only after restartServer returns the
-    // new (not-yet-Running) client.
-    test('re-registers placeholder on extension-driven restart (second runServer call)', async () => {
-        const firstClient = makeMockClient(State.Stopped);
-        const secondClient = makeMockClient(State.Stopped);
-        const restartStub = sandbox.stub(serverModule, 'restartServer');
-        restartStub.onFirstCall().resolves({ client: asLC(firstClient), disposables: [] });
-        restartStub.onSecondCall().resolves({ client: asLC(secondClient), disposables: [] });
-
+    test('does not restore a formatter placeholder when an in-flight restart rejects after disposal', async () => {
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const error = new Error('Debugger path lookup failed');
+        const traceError = sandbox.spy(loggingModule, 'traceError');
+        const restartStub = sandbox.stub(serverModule, 'restartServer').callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const liveProviders = new Set<vscode.Disposable>();
+        registerFormattingProviderStub.callsFake(() => {
+            const provider = {
+                dispose: sandbox.stub().callsFake(() => {
+                    liveProviders.delete(provider);
+                }),
+            };
+            liveProviders.add(provider);
+            return provider;
+        });
         const ctx = createToolContext(makeFormatterOptions());
-        assert.strictEqual(registerFormattingProviderStub.callCount, 1, 'registered at activation');
+        const running = ctx.runServer();
 
-        // First run — transition to Running disposes placeholder
-        await ctx.runServer();
-        firstClient.simulateStateChange(State.Running);
-        assert.strictEqual(providerDispose.callCount, 1, 'placeholder disposed after first Running');
+        try {
+            await entered.promise;
+            sinon.assert.calledOnce(restartStub);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            assert.strictEqual(liveProviders.size, 1, 'the activation placeholder is live');
 
-        // Second runServer() — simulates config/interpreter-driven restart.
-        // firstClient is still Running, so the guard at the top of runServer
-        // skips register (avoiding transient duplicate).  After restartServer
-        // returns the new client (Stopped), the placeholder is re-registered.
-        await ctx.runServer();
-        assert.strictEqual(
-            registerFormattingProviderStub.callCount, 2,
-            'placeholder re-registered after restartServer returns non-Running client',
-        );
+            ctx.dispose();
+            sinon.assert.calledOnce(registerFormattingProviderStub.firstCall.returnValue.dispose);
+            assert.strictEqual(liveProviders.size, 0, 'dispose removes the existing placeholder');
 
-        // Transition second client to Running — placeholder disposed again
-        secondClient.simulateStateChange(State.Running);
-        assert.strictEqual(providerDispose.callCount, 2, 'placeholder disposed after second Running');
+            finished.reject(error);
+            await running;
+
+            sinon.assert.calledWithExactly(traceError, `Server restart failed: ${error}`);
+            assert.deepEqual(
+                { registrations: registerFormattingProviderStub.callCount, liveProviders: liveProviders.size },
+                { registrations: 1, liveProviders: 0 },
+                'a rejected restart must not resurrect the disposed formatter context',
+            );
+        } finally {
+            ctx.dispose();
+            finished.reject(error);
+            await running;
+        }
     });
+
+    test('restores formatter fallback when an in-flight restart rejects on a live context', async () => {
+        const mockClient = makeMockClient(State.Running);
+        const entered = deferred<void>();
+        const finished = deferred<serverModule.RestartServerResult>();
+        const error = new Error('Debugger path lookup failed');
+        const traceError = sandbox.spy(loggingModule, 'traceError');
+        const restartStub = sandbox.stub(serverModule, 'restartServer');
+        restartStub.onFirstCall().resolves({ client: asLC(mockClient), disposables: [] });
+        restartStub.onSecondCall().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const ctx = createToolContext(makeFormatterOptions());
+        let running: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            sinon.assert.calledOnce(providerDispose);
+
+            running = ctx.runServer();
+            await entered.promise;
+            mockClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+
+            finished.reject(error);
+            await running;
+
+            sinon.assert.calledWithExactly(traceError, `Server restart failed: ${error}`);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+        } finally {
+            ctx.dispose();
+            finished.reject(error);
+            await running;
+            mockClient.dispose();
+        }
+    });
+
+    test('does not restore a formatter placeholder when a missing-interpreter stop finishes after disposal', async () => {
+        const mockClient = makeMockClient(State.Running);
+        sandbox.stub(serverModule, 'restartServer').resolves({ client: asLC(mockClient), disposables: [] });
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const stop = sandbox.stub(mockClient, 'stop').callsFake(async () => {
+            entered.resolve();
+            await finished.promise;
+            mockClient.simulateStateChange(State.Stopped);
+        });
+        const ctx = createToolContext(makeFormatterOptions());
+        let running: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            sinon.assert.calledOnce(providerDispose);
+            (settingsModule.getWorkspaceSettings as sinon.SinonStub).resolves({
+                cwd: '/workspace',
+                workspace: 'file:///workspace',
+                args: [],
+                path: [],
+                interpreter: [],
+                importStrategy: 'useBundled',
+                showNotifications: 'off',
+            });
+
+            running = ctx.runServer();
+            await entered.promise;
+            sinon.assert.calledOnce(stop);
+            ctx.dispose();
+            finished.resolve();
+            await running;
+
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+        } finally {
+            ctx.dispose();
+            finished.resolve();
+            await running;
+            mockClient.dispose();
+        }
+    });
+
+    test('does not restore a formatter placeholder when per-project initialization finishes after disposal', async () => {
+        let enabled = false;
+        sandbox.stub(vscodeapi, 'getConfiguration').returns({
+            get: (key: string, defaultValue?: unknown) =>
+                key === 'usePerProjectEnvironments' ? enabled : defaultValue,
+        } as unknown as vscode.WorkspaceConfiguration);
+        const restartStub = sandbox.stub(serverModule, 'restartServer').resolves({ client: undefined, disposables: [] });
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const options = makeFormatterOptions();
+        options.toolConfig = { ...options.toolConfig, supportsPerProjectEnvironments: true };
+        (options.pythonProvider.initializePython as sinon.SinonStub).callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
+        const ctx = createToolContext(options);
+        let running: Promise<void> | undefined;
+
+        try {
+            await ctx.initialize([]);
+            enabled = true;
+            running = ctx.runServer();
+            await entered.promise;
+            ctx.dispose();
+            sinon.assert.calledOnce(providerDispose);
+
+            finished.resolve();
+            await running;
+
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+            sinon.assert.calledOnce(restartStub);
+        } finally {
+            ctx.dispose();
+            finished.resolve();
+            await running;
+        }
+    });
+
+    test('restores formatter fallback after old stop until replacement completes and ignores stale client events', async () => {
+        stubServerDependencies();
+        const ctx = createToolContext(makeFormatterOptions());
+        let stopping: ReturnType<typeof holdClientStop> | undefined;
+        let starting: ReturnType<typeof holdClientStart> | undefined;
+        let firstClient: MockClient | undefined;
+        let secondClient: MockClient | undefined;
+        let replacing: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            firstClient = ctx.lsClient as unknown as MockClient;
+            assert.strictEqual(firstClient.state, State.Running);
+            sinon.assert.calledOnce(providerDispose);
+
+            stopping = holdClientStop(firstClient);
+            starting = holdClientStart();
+
+            replacing = ctx.runServer();
+            await stopping.entered.promise;
+            assert.strictEqual(firstClient.state, State.Running);
+            assert.strictEqual(ctx.lsClient, asLC(firstClient));
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            // Languageclient can emit public Stopped before disposing its
+            // providers; that event alone is not the safe post-stop boundary.
+            firstClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+
+            stopping.finished.resolve();
+            secondClient = await starting.entered.promise;
+            assert.strictEqual(firstClient.state, State.Stopped);
+            assert.strictEqual(ctx.lsClient, asLC(firstClient));
+            // Deliberately change the S3 characterization: the fallback must
+            // now cover stopped-old/pending-new, not wait for restart completion.
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            const statusCalls = (statusModule.updateStatus as sinon.SinonStub).callCount;
+            firstClient.simulateStateChange(State.Running);
+            firstClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+            assert.strictEqual((statusModule.updateStatus as sinon.SinonStub).callCount, statusCalls);
+
+            starting.finished.resolve();
+            await replacing;
+            assert.strictEqual(ctx.lsClient, asLC(secondClient));
+            assert.strictEqual(secondClient.state, State.Running);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledTwice(providerDispose);
+
+            secondClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledThrice(registerFormattingProviderStub);
+            firstClient.simulateStateChange(State.Running);
+            sinon.assert.calledTwice(providerDispose);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledThrice(providerDispose);
+            firstClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledThrice(registerFormattingProviderStub);
+
+            ctx.dispose();
+            firstClient.simulateStateChange(State.Starting);
+            secondClient.simulateStateChange(State.Stopped);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledThrice(registerFormattingProviderStub);
+            sinon.assert.calledThrice(providerDispose);
+        } finally {
+            ctx.dispose();
+            stopping?.finished.resolve();
+            starting?.finished.resolve();
+            await replacing;
+            firstClient?.dispose();
+            secondClient?.dispose();
+        }
+    });
+
+    test('retains formatter fallback when old stop rejects after stopping and replacement start fails', async () => {
+        stubServerDependencies();
+        const ctx = createToolContext(makeFormatterOptions());
+        let starting: ReturnType<typeof holdClientStart> | undefined;
+        let firstClient: MockClient | undefined;
+        let secondClient: MockClient | undefined;
+        let replacing: Promise<void> | undefined;
+        const error = new Error('replacement start failed');
+
+        try {
+            await ctx.runServer();
+            firstClient = ctx.lsClient as unknown as MockClient;
+            const originalStop = firstClient.stop;
+            sandbox.stub(firstClient, 'stop').callsFake(async () => {
+                await originalStop.call(firstClient);
+                throw new Error('old stop timed out');
+            });
+            starting = holdClientStart();
+
+            replacing = ctx.runServer();
+            secondClient = await starting.entered.promise;
+            const dispose = sandbox.spy(secondClient, 'dispose');
+            assert.strictEqual(firstClient.state, State.Stopped);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            starting.finished.reject(error);
+            await replacing;
+            assert.isUndefined(ctx.lsClient);
+            sinon.assert.calledOnce(dispose);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            const statusCalls = (statusModule.updateStatus as sinon.SinonStub).callCount;
+            firstClient.simulateStateChange(State.Running);
+            secondClient.simulateStateChange(State.Running);
+            sinon.assert.calledOnce(providerDispose);
+            assert.strictEqual((statusModule.updateStatus as sinon.SinonStub).callCount, statusCalls);
+
+            ctx.dispose();
+            firstClient.simulateStateChange(State.Stopped);
+            secondClient.simulateStateChange(State.Stopped);
+            sinon.assert.calledTwice(registerFormattingProviderStub);
+            sinon.assert.calledTwice(providerDispose);
+        } finally {
+            ctx.dispose();
+            starting?.finished.reject(error);
+            await replacing;
+            firstClient?.dispose();
+            secondClient?.dispose();
+        }
+    });
+
+    test('does not restore formatter fallback when old stop rejects with a still-Running client', async () => {
+        stubServerDependencies();
+        const ctx = createToolContext(makeFormatterOptions());
+        let starting: ReturnType<typeof holdClientStart> | undefined;
+        let firstClient: MockClient | undefined;
+        let secondClient: MockClient | undefined;
+        let replacing: Promise<void> | undefined;
+
+        try {
+            await ctx.runServer();
+            firstClient = ctx.lsClient as unknown as MockClient;
+            sandbox.stub(firstClient, 'stop').rejects(new Error('old client still running'));
+            starting = holdClientStart();
+
+            replacing = ctx.runServer();
+            secondClient = await starting.entered.promise;
+            assert.strictEqual(firstClient.state, State.Running);
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+
+            starting.finished.resolve();
+            await replacing;
+            assert.strictEqual(ctx.lsClient, asLC(secondClient), 'stop failure must not block replacement startup');
+            sinon.assert.calledOnce(registerFormattingProviderStub);
+            sinon.assert.calledOnce(providerDispose);
+        } finally {
+            ctx.dispose();
+            starting?.finished.resolve();
+            await replacing;
+            firstClient?.dispose();
+            secondClient?.dispose();
+        }
+    });
+
+    for (const disposeDuring of ['old stop', 'replacement start']) {
+        test(`disposal during ${disposeDuring} prevents fallback resurrection and cleans up the late replacement`, async () => {
+            stubServerDependencies();
+            const ctx = createToolContext(makeFormatterOptions());
+            let stopping: ReturnType<typeof holdClientStop> | undefined;
+            let starting: ReturnType<typeof holdClientStart> | undefined;
+            let firstClient: MockClient | undefined;
+            let secondClient: MockClient | undefined;
+            let replacing: Promise<void> | undefined;
+
+            try {
+                await ctx.runServer();
+                firstClient = ctx.lsClient as unknown as MockClient;
+                stopping = holdClientStop(firstClient);
+                starting = holdClientStart();
+
+                replacing = ctx.runServer();
+                await stopping.entered.promise;
+                sinon.assert.calledOnce(registerFormattingProviderStub);
+                if (disposeDuring === 'old stop') {
+                    ctx.dispose();
+                }
+
+                stopping.finished.resolve();
+                secondClient = await starting.entered.promise;
+                const stop = sandbox.spy(secondClient, 'stop');
+                const dispose = sandbox.spy(secondClient, 'dispose');
+                if (disposeDuring === 'replacement start') {
+                    sinon.assert.calledTwice(registerFormattingProviderStub);
+                    ctx.dispose();
+                }
+                const registrations = registerFormattingProviderStub.callCount;
+                assert.strictEqual(providerDispose.callCount, registrations, 'all placeholders are disposed');
+
+                starting.finished.resolve();
+                await replacing;
+                assert.notStrictEqual(ctx.lsClient, asLC(secondClient), 'late replacement must not be assigned');
+                sinon.assert.calledOnce(stop);
+                sinon.assert.calledOnce(dispose);
+
+                const statusCalls = (statusModule.updateStatus as sinon.SinonStub).callCount;
+                firstClient.simulateStateChange(State.Running);
+                firstClient.simulateStateChange(State.Stopped);
+                secondClient.simulateStateChange(State.Starting);
+                secondClient.simulateStateChange(State.Running);
+                secondClient.simulateStateChange(State.Stopped);
+                assert.strictEqual(registerFormattingProviderStub.callCount, registrations);
+                assert.strictEqual(providerDispose.callCount, registrations);
+                assert.strictEqual((statusModule.updateStatus as sinon.SinonStub).callCount, statusCalls);
+            } finally {
+                ctx.dispose();
+                stopping?.finished.resolve();
+                starting?.finished.resolve();
+                await replacing;
+                firstClient?.dispose();
+                secondClient?.dispose();
+            }
+        });
+    }
 
     // Test 8: restartServer returns no client — placeholder stays registered
     test('keeps placeholder registered when restartServer returns no client', async () => {
