@@ -47,6 +47,7 @@ suite('activateToolExtension', () => {
     let configuredInterpreter: string[] | undefined;
     let api: {
         getEnvironment: sinon.SinonStub;
+        resolveEnvironment: sinon.SinonStub;
         onDidChangeEnvironment: sinon.SinonStub;
         onDidChangePythonProjects: sinon.SinonStub;
         onDidChangePackages: sinon.SinonStub;
@@ -147,6 +148,7 @@ suite('activateToolExtension', () => {
                     run: { executable: path.join(process.cwd(), 'managed-python') },
                 },
             }),
+            resolveEnvironment: sandbox.stub().resolves(undefined),
             onDidChangeEnvironment: sandbox.stub().callsFake(() => resource('python.environment')),
             onDidChangePythonProjects: sandbox.stub().callsFake(() => resource('python.projects')),
             onDidChangePackages: sandbox.stub().callsFake(() => resource('python.packages')),
