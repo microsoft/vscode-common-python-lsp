@@ -562,9 +562,13 @@ export function registerCommonSubscriptions(
     // Configuration change
     context.subscriptions.push(
         onDidChangeConfiguration(async (e: vscode.ConfigurationChangeEvent) => {
-            const trackedSettings = toolConfig.supportsPerProjectEnvironments
-                ? [...toolConfig.trackedSettings, USE_PER_PROJECT_ENVIRONMENTS]
-                : toolConfig.trackedSettings;
+            const trackedSettings = [...toolConfig.trackedSettings];
+            if (toolConfig.supportsPerProjectEnvironments) {
+                trackedSettings.push(USE_PER_PROJECT_ENVIRONMENTS);
+            }
+            if (toolConfig.workspaceEnablementSetting) {
+                trackedSettings.push(toolConfig.workspaceEnablementSetting);
+            }
             if (checkIfConfigurationChanged(e, serverId, trackedSettings)) {
                 await safeRunServer(toolContext, 'config change');
             }

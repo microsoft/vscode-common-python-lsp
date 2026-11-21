@@ -5,14 +5,14 @@ import { assert } from 'chai';
 import { readFileSync } from 'fs';
 import * as path from 'path';
 import * as sinon from 'sinon';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { Uri, WorkspaceFolder } from 'vscode';
 import { ToolDefinition } from '../src';
 import {
     checkIfConfigurationChanged,
     expandTilde,
-    getExtraPaths,
     getExtensionSettings,
+    getExtraPaths,
     getGlobalSettings,
     getWorkspaceSettings,
     logLegacySettings,
@@ -100,6 +100,15 @@ suite('settings — workspace & global resolution', () => {
             toolDefaults: ToolDefinition<FixtureSettings>['settingsDefaults'];
             configuration: { workspace: Record<string, unknown>; global: Record<string, unknown> };
             initializationOptions: IInitOptions;
+            workspaceEnablement: {
+                settingKey: string;
+                toolDefaults: ToolConfig['settingsDefaults'];
+                configuration: {
+                    workspaces: { workspace: string; values: Record<string, unknown> }[];
+                    global: Record<string, unknown>;
+                };
+                initializationOptions: IInitOptions;
+            };
         };
         getConfigurationStub.returns({
             get: (key: string, fallback?: unknown) =>
@@ -125,6 +134,47 @@ suite('settings — workspace & global resolution', () => {
         };
         assert.deepEqual(typed, actual);
         assert.deepEqual(await getWorkspaceSettings('flake8', root, typedToolConfig), actual.settings[0]);
+
+        const enablement = fixture.workspaceEnablement;
+        const roots = enablement.configuration.workspaces.map((entry, index) => {
+            const folder = makeWorkspace(`root-${index}`, fileURLToPath(entry.workspace), index);
+            sinon.stub(folder.uri, 'toString').returns(entry.workspace);
+            return folder;
+        });
+        (vscodeapi.getWorkspaceFolder as sinon.SinonStub).callsFake((uri: Uri) =>
+            roots.find((folder) => folder.uri.toString() === uri.toString()),
+        );
+        getConfigurationStub.callsFake((_namespace: string, scope?: WorkspaceFolder) => {
+            const values = enablement.configuration.workspaces.find(
+                (entry) => entry.workspace === scope?.uri?.toString(),
+            )?.values;
+            return {
+                get: (key: string, fallback?: unknown) => values?.[key] ?? fallback,
+                inspect: (key: string) => ({ globalValue: enablement.configuration.global[key] }),
+            };
+        });
+        const optedIn: ToolDefinition<{ enabled: boolean }> = {
+            ...toolConfig,
+            settingsDefaults: { enabled: false },
+            workspaceEnablementSetting: enablement.settingKey,
+        };
+        const optedInPayload: IInitOptions = {
+            settings: await getExtensionSettings('flake8', optedIn, undefined, roots),
+            globalSettings: await getGlobalSettings('flake8', optedIn),
+        };
+        assert.deepEqual(optedInPayload, enablement.initializationOptions);
+
+        const legacy = { ...optedIn, workspaceEnablementSetting: undefined };
+        const legacyPayload: IInitOptions = {
+            settings: await getExtensionSettings('flake8', legacy, undefined, roots),
+            globalSettings: await getGlobalSettings('flake8', legacy),
+        };
+        assert.deepEqual(
+            legacyPayload,
+            JSON.parse(JSON.stringify(optedInPayload), (key: string, value: unknown) =>
+                key === '_toolEnabled' ? undefined : value,
+            ),
+        );
     });
 
     test('typed definitions preserve defaults and project only declared custom keys', async () => {
@@ -505,6 +555,71 @@ suite('settings — workspace & global resolution', () => {
                     { legacyKey: 'linting.flake8Args', newKey: 'args', isArray: true },
                 ]),
             );
+        });
+    });
+
+    suite('opt-in per-folder participation', () => {
+        const wsA = makeWorkspace('folder-a', '/home/user/projects/a', 0);
+        const wsB = makeWorkspace('folder-b', '/home/user/projects/b', 1);
+
+        test('legacy enabled:false retains every root without adding shared policy', async () => {
+            getWorkspaceFoldersStub.returns([wsA, wsB]);
+            getConfigurationStub.returns({
+                get: (key: string, fallback?: unknown) => key === 'enabled' ? false : fallback,
+            });
+            const resolveInterpreter = sinon.stub().resolves({ path: ['/tool/python'] });
+            const result = await getExtensionSettings('flake8', makeToolConfig(), resolveInterpreter);
+            assert.lengthOf(result, 2);
+            assert.equal(resolveInterpreter.callCount, 2);
+            for (const settings of result) {
+                assert.isFalse(settings.enabled);
+                assert.notProperty(settings, '_toolEnabled');
+            }
+        });
+
+        for (const settingKey of ['enabled', 'enable', 'runTools']) {
+            test(`retains all disabled folders with the configured ${settingKey} key`, async () => {
+                getWorkspaceFoldersStub.returns([wsA, wsB]);
+                getConfigurationStub.returns({
+                    get: (key: string, def?: unknown) => key === settingKey ? false : def,
+                });
+                const result = await getExtensionSettings('flake8', makeToolConfig({
+                    workspaceEnablementSetting: settingKey,
+                }));
+                assert.deepEqual(result.map((settings) => settings.workspace), [
+                    wsA.uri.toString(), wsB.uri.toString(),
+                ]);
+                assert.isTrue(result.every((settings) => settings._toolEnabled === false));
+            });
+        }
+
+        test('absent opt-in setting is enabled without replacing consumer defaults', async () => {
+            getConfigurationStub.returns({
+                get: (_key: string, def?: unknown) => def,
+                inspect: () => ({ workspaceValue: false }),
+            });
+            const toolConfig = makeToolConfig({
+                settingsDefaults: { enabled: false },
+                workspaceEnablementSetting: 'runTools',
+            });
+            const workspace = await getWorkspaceSettings('flake8', wsA, toolConfig);
+            const global = await getGlobalSettings('flake8', toolConfig);
+            for (const settings of [workspace, global]) {
+                assert.isTrue(settings._toolEnabled);
+                assert.isFalse(settings.enabled);
+            }
+        });
+
+        test('global opt-out uses user scope, not an enabled workspace value', async () => {
+            getConfigurationStub.returns({
+                get: (_key: string, def?: unknown) => def,
+                inspect: (key: string) => key === 'runTools'
+                    ? { globalValue: false, workspaceValue: true } : undefined,
+            });
+            const result = await getGlobalSettings('flake8', makeToolConfig({
+                workspaceEnablementSetting: 'runTools',
+            }));
+            assert.isFalse(result._toolEnabled);
         });
     });
 });

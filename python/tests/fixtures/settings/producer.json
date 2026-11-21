@@ -50,5 +50,52 @@
       "severity": { "E": "Warning" },
       "extensionOption": { "enabled": true, "label": "global" }
     }
+  },
+  "workspaceEnablement": {
+  "settingKey": "runTools",
+  "toolDefaults": { "enabled": false },
+  "configuration": {
+    "workspaces": [
+      { "workspace": "__ROOT_URI__", "values": { "interpreter": ["__PYTHON__"] } },
+      { "workspace": "__ROOT_URI__-other", "values": { "interpreter": ["__PYTHON__"], "runTools": false } },
+      { "workspace": "__ROOT_URI__/disabled", "values": { "interpreter": ["__PYTHON__"], "runTools": false } },
+      { "workspace": "__ROOT_URI__/disabled/enabled", "values": { "interpreter": ["__PYTHON__"], "runTools": true } }
+    ],
+    "global": { "interpreter": ["__PYTHON__"], "runTools": true }
+  },
+  "initializationOptions": {
+    "settings": [
+      {
+        "cwd": "__ROOT_FS__", "workspace": "__ROOT_URI__",
+        "args": [], "path": [], "interpreter": ["__PYTHON__"],
+        "importStrategy": "useBundled", "showNotifications": "off",
+        "enabled": false, "_toolEnabled": true
+      },
+      {
+        "cwd": "__ROOT_FS__-other", "workspace": "__ROOT_URI__-other",
+        "args": [], "path": [], "interpreter": ["__PYTHON__"],
+        "importStrategy": "useBundled", "showNotifications": "off",
+        "enabled": false, "_toolEnabled": false
+      },
+      {
+        "cwd": "__ROOT_FS____SEP__disabled", "workspace": "__ROOT_URI__/disabled",
+        "args": [], "path": [], "interpreter": ["__PYTHON__"],
+        "importStrategy": "useBundled", "showNotifications": "off",
+        "enabled": false, "_toolEnabled": false
+      },
+      {
+        "cwd": "__ROOT_FS____SEP__disabled__SEP__enabled", "workspace": "__ROOT_URI__/disabled/enabled",
+        "args": [], "path": [], "interpreter": ["__PYTHON__"],
+        "importStrategy": "useBundled", "showNotifications": "off",
+        "enabled": false, "_toolEnabled": true
+        }
+    ],
+    "globalSettings": {
+      "cwd": "__CWD_FS__", "workspace": "__CWD_FS__",
+      "args": [], "path": [], "interpreter": ["__PYTHON__"],
+      "importStrategy": "fromEnvironment", "showNotifications": "off",
+      "enabled": false, "_toolEnabled": true
+    }
+  }
   }
 }

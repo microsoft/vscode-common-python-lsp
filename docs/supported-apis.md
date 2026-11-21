@@ -134,6 +134,7 @@ register tool requests or choose how to run the tool. Add those handlers on
 |-----------------------|---------|
 | `apply_settings(params)`, `get_global_defaults()`, `update_workspace_settings(settings)` | Apply the initialization payload and build/select configured settings |
 | `get_settings_by_path(file_path)`, `get_document_key(document)`, `get_settings_by_document(document)` | Route filesystem paths and documents to current workspace settings |
+| `is_document_enabled(document)` | Opt-in participation decision using retained workspace state; handlers must check it before tool work |
 | `get_cwd(settings, document=None, *, document_path=None)` | Finish per-document CWD substitution, optionally using a notebook's file path |
 | `execute_tool(*, argv, mode, settings, ...)` | Dispatch caller-built arguments to `"path"`, `"rpc"` or `"module"` execution and return `RunResult` |
 | `log_startup_info(settings=None)`, `log_to_output`, `log_error`, `log_warning`, `log_always` | Shared output and notification behavior |
@@ -161,6 +162,72 @@ Python's `ToolServerConfig.default_settings` extends global defaults;
 `hardcoded_settings` overrides those global defaults even when the client sends
 the same global keys. Workspace settings are then shallowly overlaid, not deeply
 merged.
+
+### Opt-in per-folder participation
+
+The TypeScript lifecycle already uses one language client/server for the window.
+Per-folder enablement does not start extra servers or omit disabled folders.
+Opt in through the existing `ToolConfig` or `ToolDefinition<TSettings>`:
+
+```typescript
+const optedIn = {
+    ...toolConfig, // The extension's existing ToolConfig or ToolDefinition.
+    workspaceEnablementSetting: 'runTools',
+};
+activateToolExtension(context, { serverInfo, toolConfig: optedIn });
+```
+
+Contribute a resource-scoped boolean `<toolId>.runTools` setting in the extension's
+manifest, normally with default `true`. The key is relative to the namespace;
+`'enabled'`, `'enable'` and other consumer keys are supported. It need not be added
+to `settingsDefaults` or `trackedSettings` just for this contract.
+`getWorkspaceSettings`, `getExtensionSettings` and `getGlobalSettings` serialize
+the decision as the reserved optional `_toolEnabled` boolean, defaulting to
+enabled when absent. Only literal boolean `false` disables participation;
+other wire values (including `0`, `"false"` or `null`) remain enabled.
+Global resolution uses user/default scope, not a folder's
+value. Common subscriptions automatically track the configured key and restart
+the singleton with refreshed settings. Manual lifecycle callers must track that
+key and refresh their own initialization payload.
+
+All supplied roots, enabled or disabled, retain their identities and settings.
+This includes nested workspace folders and, in per-project mode, nested Python
+projects. Do not filter the settings list: an omitted disabled root can be
+mistaken for an unknown document and inherit enabled fallback settings.
+
+Python consumers opt in by checking the public facade in their handlers:
+
+```python
+document = tool.server.workspace.get_text_document(params.text_document.uri)
+if not tool.is_document_enabled(document):
+    return []  # Formatting example; use the handler's appropriate no-work result.
+# Existing tool execution and result handling follow.
+```
+
+The participation contract is `is_document_enabled`, which uses
+`get_settings_by_document`: the most-specific matching
+filesystem root supplies its flag; a document outside the known roots uses
+global defaults. Opted-in document matching includes filesystem roots and
+Windows path casing, without changing legacy routing when no flag is supplied.
+Only absolute document paths can match terminal filesystem roots; a relative
+path's terminal `.` is not resolved into a CWD workspace match.
+An absent/pathless document uses the existing first-workspace
+fallback, or CWD/global defaults when there are no roots. For notebook requests,
+use the existing synthetic document with the **notebook's actual filesystem
+path**, not a raw cell URI as a filesystem path. Virtual roots without local
+filesystem paths are not matched by this routing contract.
+
+`get_settings_by_path` is **not enablement-aware**. Its unchanged legacy lookup
+can fall back to the first workspace even for an outside resource; do not infer
+participation from that result. Use the document-based participation contract.
+
+Without the TypeScript opt-in, no shared flag is added and the helper returns
+`True`. Consumer-owned fields such as Pylint's `enabled`, existing hooks and
+manual execution remain unchanged. The helper does not gate `execute_tool`,
+register handlers, or clear existing diagnostics. Consumers must check it on
+every relevant tool-work path and retain their own diagnostic cleanup and policy.
+This supplies participation mechanics related to issue #49, not automatic
+enablement adoption in any extension.
 
 `ToolServer` owns the writable `global_settings` and `workspace_settings`
 dictionaries. Existing aliases and in-place updates remain valid.

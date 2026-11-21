@@ -90,14 +90,32 @@ def get_document_key(
     if facade.workspace_settings:
         document_workspace = pathlib.Path(document.path)
         workspaces = {s["workspaceFS"] for s in facade.workspace_settings.values()}
+        opted_in = any("_toolEnabled" in s for s in facade.workspace_settings.values())
+        workspace_keys = None
+        if opted_in:
+            workspace_keys = {
+                pathlib.Path(s["workspaceFS"]): s["workspaceFS"]
+                for s in facade.workspace_settings.values()
+            }
+        # A relative path's terminal "." must not resolve to a CWD workspace.
+        include_filesystem_root = opted_in and document_workspace.is_absolute()
 
-        while document_workspace != document_workspace.parent:
+        while (
+            include_filesystem_root or document_workspace != document_workspace.parent
+        ):
             norm_path = normalize_path(
                 str(document_workspace),
                 resolve_symlinks=facade.config.resolve_symlinks,
             )
-            if norm_path in workspaces:
-                return norm_path
+            key = (
+                workspace_keys.get(pathlib.Path(norm_path))
+                if workspace_keys is not None
+                else norm_path
+            )
+            if key in workspaces:
+                return key
+            if document_workspace == document_workspace.parent:
+                break
             document_workspace = document_workspace.parent
 
     return None

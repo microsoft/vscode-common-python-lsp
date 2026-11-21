@@ -15,6 +15,7 @@ import threading
 import time
 from typing import Any
 
+import pytest
 from pygls import uris
 
 import vscode_common_python_lsp.server as server_module
@@ -194,3 +195,86 @@ def test_real_stdio_settings_and_lifecycle(tmp_path):
     )
     assert "fixture shutdown complete" in client.stderr
     assert "fixture exit complete" in client.stderr
+
+
+@pytest.mark.parametrize("opted_in", [True, False])
+def test_real_stdio_participation_contract(tmp_path, opted_in):
+    root = tmp_path / "workspace café"
+    root.mkdir()
+    options = load_settings_fixture("producer", root)["workspaceEnablement"][
+        "initializationOptions"
+    ]
+    if not opted_in:
+        for setting in [*options["settings"], options["globalSettings"]]:
+            del setting["_toolEnabled"]
+    client = _LspProcess(tmp_path)
+    try:
+        client.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": None,
+                    "rootUri": root.as_uri(),
+                    "capabilities": {},
+                    "initializationOptions": options,
+                },
+            }
+        )
+        assert client.response(1)["capabilities"]["documentFormattingProvider"]
+        client.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        expected_executed = []
+        resources = [
+            (setting["workspace"] + "/demo.py", setting.get("_toolEnabled", True))
+            for setting in options["settings"]
+        ]
+        resources.append(((tmp_path / "outside" / "demo.py").as_uri(), True))
+        resources.append(((root / "disabled" / "demo.ipynb").as_uri(), not opted_in))
+        for request_id, (uri, enabled) in enumerate(resources, 2):
+            client.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "python",
+                            "version": 1,
+                            "text": "print('hello')",
+                        }
+                    },
+                }
+            )
+            client.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/formatting",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "options": {"tabSize": 4, "insertSpaces": True},
+                    },
+                }
+            )
+            edits = client.response(request_id)
+            if enabled:
+                assert edits[0]["newText"] == "participated"
+                expected_executed.append(uri)
+            else:
+                assert edits == []
+
+        client.send(
+            {"jsonrpc": "2.0", "id": 20, "method": "test/settings", "params": {}}
+        )
+        inspection = client.response(20)
+        assert len(inspection["settings"]) == 4
+        assert inspection["executedDocuments"] == expected_executed
+        client.send({"jsonrpc": "2.0", "id": 21, "method": "shutdown", "params": None})
+        assert client.response(21) is None
+        client.send({"jsonrpc": "2.0", "method": "exit", "params": None})
+        assert client.process.wait(timeout=TIMEOUT) == 0
+    finally:
+        client.close()
+        print(client.stderr, file=sys.stderr)
+    client.assert_protocol_complete()

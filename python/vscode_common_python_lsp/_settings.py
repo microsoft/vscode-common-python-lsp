@@ -24,6 +24,8 @@ def get_global_defaults(
             "showNotifications", config.default_notification_level
         ),
     }
+    if "_toolEnabled" in global_settings:
+        base["_toolEnabled"] = global_settings["_toolEnabled"]
     for key, default in config.default_settings.items():
         base[key] = global_settings.get(key, default)
     # Hardcoded settings ignore whatever the client sent in GLOBAL_SETTINGS.
