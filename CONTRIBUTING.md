@@ -18,55 +18,63 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 2. Make your changes and ensure they pass the existing tests and linting.
 3. Submit a pull request with a clear description of the changes.
 
-## Versioning
+Use the [supported architecture and adoption guide](docs/supported-apis.md) when
+choosing extension-owned policy, shared public APIs or private implementation
+boundaries. Recommended facade adoption does not deprecate manual composition.
 
-This project adheres to [Semantic Versioning (SemVer)](https://semver.org/).
-In short:
+### Settings boundary tests
 
-- **MAJOR** (`X.0.0`) – incompatible API changes.
-- **MINOR** (`0.X.0`) – new functionality that is backwards-compatible.
-- **PATCH** (`0.0.X`) – backwards-compatible bug fixes.
+The JSON corpus in `python/tests/fixtures/settings/` characterizes the existing
+initialization-options contract. Fixture metadata is separate from
+`initializationOptions`; `__ROOT_URI__`, `__ROOT_FS__`, `__CWD_FS__`, `__PYTHON__`
+and `__SEP__` are test-only substitutions, not supported settings variables.
+Python and TypeScript tests independently consume `producer.json`, including
+host-resolved CWD variables that Python finishes resolving per document and an
+opt-in enablement payload retaining mixed and nested roots.
 
-We cut a new **patch release every week** if there are any unreleased fixes on
-`main`. If no fixes have landed since the last release, the weekly release is
-skipped. All released versions are listed on the
-[GitHub Releases](https://github.com/microsoft/vscode-common-python-lsp/releases) page.
+`python/tests/test_server_stdio.py` starts a test-only ToolServer over real LSP
+stdio and checks initialize/initialized/settings/shutdown/exit plus a test-only
+formatting handler that consults the participation API. It needs no tool
+installation, VS Code host or Node build. Repeated settings application is
+covered separately in-process, not by reinitializing a live LSP session.
 
-Both the TypeScript and Python packages share a single version number defined in
-the `VERSION` file at the repository root. When bumping the version:
+`ToolServer` remains the public settings facade and owns the writable global and
+workspace dictionaries. Private `_settings` helpers construct fresh, shallow
+settings dictionaries while retaining nested value aliases. Private `_routing`
+helpers consult the facade on each call for in-place updates and workspace/document
+selection, preserving path normalization and the distinct lookup fallbacks.
+Neither private module caches settings or owns persistent state.
 
-```bash
-# Set the version and propagate to package.json + pyproject.toml
-python -m scripts.version.sync 0.2.0
-```
+## Adoption and milestones
 
-To verify all manifests are in sync (also runs automatically in CI):
+Extensions consume this repository at a pinned Git commit and build both the
+TypeScript and Python runtimes from that revision. The pinned source revision,
+not the version strings in the package manifests, is the compatibility identity.
 
-```bash
-python -m scripts.version.validate
-```
+The private npm manifest and Python distribution metadata use the internal
+build identity `vscode-python-tool-internal` and retain fixed version
+values needed for local builds and installation. This identity is not a consumer
+import API. Ordinary source changes do not require changing or synchronizing
+those values. The default Python server reports that internal distribution's
+installed version for diagnostics (or `v0.0.0-dev` when its metadata is absent),
+but that value is not a source provenance guarantee. Neither runtime is
+published to a package registry.
 
-A PR will fail the **Version Check** workflow if the version in `VERSION`,
-`typescript/package.json`, or `python/pyproject.toml` don't match.
+Record consumer-visible changes and upgrade instructions in pull request
+descriptions. For breaking changes, add focused migration documentation.
+There is no separate changelog to maintain; historical entries remain in Git
+history.
 
-### Automated weekly patch bump
+Maintainers may optionally tag a reviewed commit and create a
+[GitHub Release](https://github.com/microsoft/vscode-common-python-lsp/releases)
+with release notes as a human-readable milestone. A milestone does not require
+package-version changes or publication and does not trigger or gate consumer
+submodule updates.
 
-A GitHub Actions workflow (`.github/workflows/auto-patch-bump.yml`) runs every
-Monday at 00:00 UTC. If there are unreleased commits on `main` since the last
-GitHub Release, the workflow automatically opens a PR that increments the patch
-version and syncs all manifests. If a previous bump PR is still open and `main`
-has advanced beyond it (new commits landed since the PR was created), the stale
-PR is closed and replaced with a fresh one. If the existing PR still covers the
-current state of `main`, no action is taken. Maintainers review and merge the
-bump PR to trigger the release.
-
-### Release process
-
-1. Bump the version: `python -m scripts.version.sync X.Y.Z`
-2. Update `CHANGELOG.md` with the new version and release notes.
-3. Commit, push, and merge the PR.
-4. Create a **GitHub Release** targeting `main` with tag `vX.Y.Z`.
-5. Azure Pipelines automatically publishes both packages to the ADO feed.
+Consumers are responsible for building both runtimes from their intended pinned
+revision. See [building from a pinned submodule](README.md#building-from-a-pinned-submodule)
+for the build and packaging contract. Consumer pipeline enforcement and
+compatibility testing remain extension-owned.
 
 ## Reporting Issues
 

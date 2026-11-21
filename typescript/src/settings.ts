@@ -14,7 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ConfigurationChangeEvent, Uri, WorkspaceConfiguration, WorkspaceFolder } from 'vscode';
 import { traceLog, traceWarn } from './logging';
-import { IBaseSettings, ToolConfig } from './types';
+import { IBaseSettings, ToolConfig, ToolSettings } from './types';
 import { getConfiguration, getWorkspaceFolder, getWorkspaceFolders } from './vscodeapi';
 
 // Re-export for convenience — callers that used these from the old
@@ -165,6 +165,12 @@ function getInterpreterSettingValue(namespace: string, workspace?: WorkspaceFold
  * When `workspace` is a Python project nested inside a VS Code workspace,
  * variable substitution still uses the containing VS Code workspace folder.
  */
+export function getWorkspaceSettings<TConfig extends ToolConfig>(
+    namespace: string,
+    workspace: WorkspaceFolder,
+    toolConfig: TConfig,
+    resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
+): Promise<ToolSettings<TConfig['settingsDefaults']>>;
 export async function getWorkspaceSettings(
     namespace: string,
     workspace: WorkspaceFolder,
@@ -227,12 +233,21 @@ export async function getWorkspaceSettings(
         settings.cwd = expandTilde(settings.cwd);
     }
 
+    if (toolConfig.workspaceEnablementSetting) {
+        settings._toolEnabled = config.get<boolean>(toolConfig.workspaceEnablementSetting, true) !== false;
+    }
+
     return settings;
 }
 
 /**
  * Resolve global (user-level) settings.
  */
+export function getGlobalSettings<TConfig extends ToolConfig>(
+    namespace: string,
+    toolConfig: TConfig,
+    resolveInterpreter?: () => Promise<{ path?: string[] }>,
+): Promise<ToolSettings<TConfig['settingsDefaults']>>;
 export async function getGlobalSettings(
     namespace: string,
     toolConfig: ToolConfig,
@@ -270,83 +285,34 @@ export async function getGlobalSettings(
         settings[key] = getGlobalValue(config, key, defaultValue);
     }
 
+    if (toolConfig.workspaceEnablementSetting) {
+        settings._toolEnabled = getGlobalValue<boolean>(config, toolConfig.workspaceEnablementSetting, true) !== false;
+    }
+
     return settings;
 }
 
 /**
- * Setting key used to enable/disable a tool per workspace folder.
- *
- * Tool extensions conventionally expose an `<namespace>.enabled` boolean
- * (see {@link ToolConfig.settingsDefaults}). Override via the `settingKey`
- * argument of {@link isToolEnabledForWorkspace} when a tool uses a different
- * key (e.g. `enable`).
- */
-const DEFAULT_ENABLE_SETTING_KEY = 'enabled';
-
-/**
- * Determine whether the tool is enabled for a specific workspace folder.
- *
- * In a multi-root workspace a single language server is shared across all
- * folders (see {@link getProjectRoot} / {@link getExtensionSettings}). This
- * helper lets extensions honour a per-folder opt-out — e.g. `pylint.enabled:
- * false` in one folder — so the shared server can skip work for that folder
- * instead of spawning a redundant process per folder.
- *
- * Reads the `<namespace>.<settingKey>` boolean setting scoped to the folder
- * and defaults to enabled (`true`) when unset, so behaviour is unchanged for
- * tools that don't define the setting.
- *
- * @param namespace - Extension configuration namespace (e.g. `"pylint"`).
- * @param workspace - The workspace folder to check (omit for global scope).
- * @param settingKey - The boolean setting key (defaults to `"enabled"`).
- */
-export function isToolEnabledForWorkspace(
-    namespace: string,
-    workspace?: WorkspaceFolder,
-    settingKey: string = DEFAULT_ENABLE_SETTING_KEY,
-): boolean {
-    const config = getConfiguration(namespace, workspace?.uri);
-    return config.get<boolean>(settingKey, true) !== false;
-}
-
-/**
- * Return the subset of workspace folders for which the tool is enabled.
- *
- * Useful for extensions that want to register per-folder providers or skip
- * disabled folders when deciding whether to start the shared server.
- *
- * @param namespace - Extension configuration namespace (e.g. `"pylint"`).
- * @param settingKey - The boolean setting key (defaults to `"enabled"`).
- */
-export function getEnabledWorkspaceFolders(
-    namespace: string,
-    settingKey: string = DEFAULT_ENABLE_SETTING_KEY,
-): WorkspaceFolder[] {
-    return getWorkspaceFolders().filter((w) => isToolEnabledForWorkspace(namespace, w, settingKey));
-}
-
-/**
  * Resolve settings for the supplied roots, or all workspace folders by
- * default.
+ * default. Disabled roots remain represented so document routing cannot
+ * mistake them for resources outside the workspace.
  *
- * Folders where the tool is disabled (`<namespace>.enabled: false`) are
- * omitted, so the shared (singleton) language server never receives — and
- * therefore never lints — folders the user has opted out of. This avoids
- * redundant diagnostics in multi-root workspaces.
  * Consumers may supply Python project roots to enable per-project
  * interpreter resolution while retaining a singleton language server.
  */
+export function getExtensionSettings<TConfig extends ToolConfig>(
+    namespace: string,
+    toolConfig: TConfig,
+    resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
+    workspaces?: readonly WorkspaceFolder[],
+): Promise<ToolSettings<TConfig['settingsDefaults']>[]>;
 export function getExtensionSettings(
     namespace: string,
     toolConfig: ToolConfig,
     resolveInterpreter?: (resource?: Uri) => Promise<{ path?: string[] }>,
     workspaces: readonly WorkspaceFolder[] = getWorkspaceFolders(),
 ): Promise<IBaseSettings[]> {
-    return Promise.all(
-        workspaces.filter((w) => isToolEnabledForWorkspace(namespace, w)).map((w) =>
-            getWorkspaceSettings(namespace, w, toolConfig, resolveInterpreter),
-        ),
-    );
+    return Promise.all(workspaces.map((w) => getWorkspaceSettings(namespace, w, toolConfig, resolveInterpreter)));
 }
 
 // ---------------------------------------------------------------------------

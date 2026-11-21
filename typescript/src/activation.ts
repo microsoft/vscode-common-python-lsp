@@ -19,7 +19,7 @@ import { createConfigFileWatchers } from './configWatcher';
 import { traceError, traceLog, traceVerbose } from './logging';
 import { NullFormatter } from './nullFormatter';
 import { PythonEnvironmentsProvider } from './python';
-import { restartServer, RestartServerOptions } from './server';
+import { restartServer, RestartServerOptions, ToolLifecycleHooks } from './server';
 import { checkIfConfigurationChanged, getExtensionSettings, getWorkspaceSettings } from './settings';
 import { registerLanguageStatusItem, updateStatus } from './status';
 import { IBaseSettings, IServerInfo, ToolConfig } from './types';
@@ -123,10 +123,12 @@ export interface ToolExtensionContext {
     initialize(subscriptions: vscode.Disposable[]): Promise<void>;
 
     /**
-     * Dispose all internal resources (timers, state listeners).
+     * Dispose all internal resources (timers, state listeners, formatter placeholder).
      *
      * Call from the extension's `deactivate()` to prevent orphaned
      * server processes from debounce timers firing after shutdown.
+     * In-flight restarts cannot restore the formatter placeholder, but
+     * disposal does not wait for them to finish.
      */
     dispose(): void;
 }
@@ -137,6 +139,7 @@ export interface CreateToolContextOptions {
     outputChannel: vscode.LogOutputChannel;
     toolConfig: ToolConfig;
     pythonProvider: PythonEnvironmentsProvider;
+    hooks?: ToolLifecycleHooks;
 }
 
 /**
@@ -161,6 +164,13 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
     let pythonInitialized = false;
     let extensionSubscriptions: vscode.Disposable[] | undefined;
     let serverDisposables: vscode.Disposable[] = [];
+    let clientSetup: vscode.Disposable | undefined;
+    const hookShutdown = options.hooks ? new AbortController() : undefined;
+
+    function disposeClientSetup(): void {
+        clientSetup?.dispose();
+        clientSetup = undefined;
+    }
 
     const nullFormatter = toolConfig.isFormatter ? new NullFormatter() : undefined;
     nullFormatter?.register();
@@ -174,6 +184,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             if (usePerProjectEnvironments(toolConfig) && extensionSubscriptions && !pythonInitialized) {
                 await initializePython(extensionSubscriptions, false);
+                if (disposed) {
+                    return;
+                }
             }
             if (isRestarting) {
                 if (restartTimer) {
@@ -184,21 +197,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
             }
             isRestarting = true;
             try {
-                // Re-register the placeholder at the start of each restart
-                // cycle when there is no healthy running client.  This covers
-                // two gaps the per-state listener misses:
-                //  1. Extension-driven restarts (config/interpreter change):
-                //     runServer() disposes the old state listener *before*
-                //     restartServer() stops the previous client, so
-                //     Stopped/Starting transitions fire into a dead listener.
-                //  2. Failure paths: if restartServer() throws or returns
-                //     client: undefined the state-listener block is skipped
-                //     entirely.
-                // The guard avoids re-introducing the duplicate-formatter
-                // symptom: if the old client is still Running (serving
-                // formatting requests), re-registering the placeholder would
-                // make the extension appear twice in the formatter picker
-                // until restartServer() stops the old client.
+                // Restore fallback immediately only without a healthy client.
+                // A Running old client still owns its formatting provider;
+                // the post-stop notification below covers replacement startup
+                // without registering the placeholder alongside that provider.
                 if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
                     nullFormatter.register();
                 }
@@ -244,6 +246,7 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         }
                         ctx.lsClient = undefined;
                     }
+                    disposeClientSetup();
                     for (const d of serverDisposables) {
                         try {
                             d.dispose();
@@ -256,7 +259,9 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                     // Re-register the placeholder so the extension stays
                     // visible in the formatter picker while there is no
                     // interpreter (and therefore no running LSP formatter).
-                    nullFormatter?.register();
+                    if (!disposed) {
+                        nullFormatter?.register();
+                    }
 
                     updateStatus(
                         vscode.l10n.t('Please select a Python interpreter.'),
@@ -292,6 +297,14 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         toolConfig,
                         pythonProvider,
                         extensionSettings,
+                        hooks: options.hooks,
+                        signal: hookShutdown?.signal,
+                        onOldClientStopped: () => {
+                            disposeClientSetup();
+                            if (!disposed) {
+                                nullFormatter?.register();
+                            }
+                        },
                     };
                     const result = await restartServer(restartOptions, ctx.lsClient);
 
@@ -315,8 +328,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                         return;
                     }
 
+                    disposeClientSetup();
                     ctx.lsClient = result.client;
-                    serverDisposables = result.disposables;
+                    clientSetup = result.clientSetup;
+                    serverDisposables = result.disposables.filter((disposable) => disposable !== clientSetup);
 
                     if (nullFormatter && result.client) {
                         if (result.client.state === State.Running) {
@@ -350,10 +365,10 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
                 }
             } catch (ex) {
                 traceError(`Server restart failed: ${ex}`);
-                // Ensure placeholder stays visible after a failure — but only
-                // when there is no healthy running client (same guard as the
-                // top of runServer to avoid the duplicate-formatter symptom).
-                if (nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
+                // Ensure placeholder stays visible after a failure on a live
+                // context without a healthy running client (same state guard
+                // as the top of runServer to avoid duplicate formatters).
+                if (!disposed && nullFormatter && (!ctx.lsClient || ctx.lsClient.state !== State.Running)) {
                     nullFormatter.register();
                 }
             } finally {
@@ -403,6 +418,8 @@ export function createToolContext(options: CreateToolContextOptions): ToolExtens
 
         dispose(): void {
             disposed = true;
+            hookShutdown?.abort();
+            disposeClientSetup();
             if (restartTimer) {
                 clearTimeout(restartTimer);
                 restartTimer = undefined;
@@ -495,7 +512,7 @@ export interface RegisterSubscriptionsOptions {
  * this call.
  */
 export function registerCommonSubscriptions(
-    context: vscode.ExtensionContext,
+    context: Pick<vscode.ExtensionContext, 'subscriptions'>,
     options: RegisterSubscriptionsOptions,
 ): void {
     const { serverInfo, outputChannel, toolConfig, toolContext, pythonProvider } = options;
@@ -516,6 +533,8 @@ export function registerCommonSubscriptions(
         outputChannel.onDidChangeLogLevel(async (e) => {
             await changeLogLevel(e, vscode.env.logLevel);
         }),
+    );
+    context.subscriptions.push(
         vscode.env.onDidChangeLogLevel(async (e) => {
             await changeLogLevel(outputChannel.logLevel, e);
         }),
@@ -533,6 +552,8 @@ export function registerCommonSubscriptions(
         registerCommand(`${serverId}.showLogs`, async () => {
             outputChannel.show();
         }),
+    );
+    context.subscriptions.push(
         registerCommand(`${serverId}.restart`, async () => {
             await safeRunServer(toolContext, 'restart command');
         }),
@@ -541,9 +562,13 @@ export function registerCommonSubscriptions(
     // Configuration change
     context.subscriptions.push(
         onDidChangeConfiguration(async (e: vscode.ConfigurationChangeEvent) => {
-            const trackedSettings = toolConfig.supportsPerProjectEnvironments
-                ? [...toolConfig.trackedSettings, USE_PER_PROJECT_ENVIRONMENTS]
-                : toolConfig.trackedSettings;
+            const trackedSettings = [...toolConfig.trackedSettings];
+            if (toolConfig.supportsPerProjectEnvironments) {
+                trackedSettings.push(USE_PER_PROJECT_ENVIRONMENTS);
+            }
+            if (toolConfig.workspaceEnablementSetting) {
+                trackedSettings.push(toolConfig.workspaceEnablementSetting);
+            }
             if (checkIfConfigurationChanged(e, serverId, trackedSettings)) {
                 await safeRunServer(toolContext, 'config change');
             }

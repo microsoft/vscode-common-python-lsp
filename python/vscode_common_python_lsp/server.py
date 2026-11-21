@@ -19,7 +19,7 @@ from pygls import uris
 from pygls.lsp.server import LanguageServer
 from pygls.workspace import TextDocument
 
-from . import jsonrpc
+from . import _routing, _settings, jsonrpc
 from .context import substitute_attr
 from .paths import normalize_path
 from .runner import RunResult, run_module, run_path
@@ -102,7 +102,7 @@ class ToolServer:
         self.global_settings: dict[str, Any] = {}
         if server is None:
             try:
-                _pkg_version = importlib.metadata.version("vscode-common-python-lsp")
+                _pkg_version = importlib.metadata.version("vscode-python-tool-internal")
             except importlib.metadata.PackageNotFoundError:
                 _pkg_version = "0.0.0-dev"
             server = LanguageServer(
@@ -118,124 +118,49 @@ class ToolServer:
 
     def get_global_defaults(self) -> dict[str, Any]:
         """Return merged base + tool-specific default settings."""
-        base: dict[str, Any] = {
-            "path": self.global_settings.get("path", []),
-            "interpreter": self.global_settings.get("interpreter", [sys.executable]),
-            "args": self.global_settings.get("args", []),
-            "importStrategy": self.global_settings.get("importStrategy", "useBundled"),
-            "showNotifications": self.global_settings.get(
-                "showNotifications", self.config.default_notification_level
-            ),
-        }
-        for key, default in self.config.default_settings.items():
-            base[key] = self.global_settings.get(key, default)
-        # Hardcoded settings always use the configured value, ignoring
-        # whatever the client sent in GLOBAL_SETTINGS.
-        base.update(self.config.hardcoded_settings)
-        return base
+        return _settings.get_global_defaults(self.config, self.global_settings)
 
     def update_workspace_settings(self, settings: list[dict[str, Any]] | None) -> None:
         """Populate :attr:`workspace_settings` from the client payload."""
-        if not settings:
-            key = normalize_path(
-                os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
-            )
-            self.workspace_settings[key] = {
-                "cwd": key,
-                "workspaceFS": key,
-                "workspace": uris.from_fs_path(key),
-                **self.get_global_defaults(),
-            }
-            return
-
-        for setting in settings:
-            workspace_path = uris.to_fs_path(setting["workspace"])
-            # Virtual workspace roots, such as "pico:", have no local
-            # filesystem path, so they cannot be registered here.
-            if workspace_path is None:
-                continue
-
-            key = normalize_path(
-                workspace_path,
-                resolve_symlinks=self.config.resolve_symlinks,
-            )
-            self.workspace_settings[key] = {
-                **self.get_global_defaults(),
-                **setting,
-                "workspaceFS": key,
-            }
+        _routing.update_workspace_settings(
+            self, settings, normalize_path=normalize_path, uris=uris
+        )
 
     def get_settings_by_path(self, file_path: pathlib.Path) -> dict[str, Any]:
         """Return workspace settings for the given file path."""
-        if not self.workspace_settings:
-            cwd = normalize_path(
-                os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
-            )
-            return {
-                "cwd": cwd,
-                "workspaceFS": cwd,
-                "workspace": uris.from_fs_path(cwd),
-                **self.get_global_defaults(),
-            }
-
-        workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
-
-        while file_path != file_path.parent:
-            str_file_path = normalize_path(
-                str(file_path), resolve_symlinks=self.config.resolve_symlinks
-            )
-            if str_file_path in workspaces:
-                return self.workspace_settings[str_file_path]
-            file_path = file_path.parent
-
-        return list(self.workspace_settings.values())[0]
+        return _routing.get_settings_by_path(
+            self, file_path, normalize_path=normalize_path, uris=uris
+        )
 
     def get_document_key(self, document: TextDocument) -> str | None:
         """Return the workspace key for the given document, or ``None``."""
-        if self.workspace_settings:
-            document_workspace = pathlib.Path(document.path)
-            workspaces = {s["workspaceFS"] for s in self.workspace_settings.values()}
-
-            while document_workspace != document_workspace.parent:
-                norm_path = normalize_path(
-                    str(document_workspace),
-                    resolve_symlinks=self.config.resolve_symlinks,
-                )
-                if norm_path in workspaces:
-                    return norm_path
-                document_workspace = document_workspace.parent
-
-        return None
+        return _routing.get_document_key(self, document, normalize_path=normalize_path)
 
     def get_settings_by_document(self, document: TextDocument | None) -> dict[str, Any]:
         """Return workspace settings for the given document."""
-        if document is None or document.path is None:
-            if not self.workspace_settings:
-                cwd = normalize_path(
-                    os.getcwd(), resolve_symlinks=self.config.resolve_symlinks
-                )
-                return {
-                    "cwd": cwd,
-                    "workspaceFS": cwd,
-                    "workspace": uris.from_fs_path(cwd),
-                    **self.get_global_defaults(),
-                }
-            return list(self.workspace_settings.values())[0]
-
-        key = self.get_document_key(document)
-        if key is not None:
-            return self.workspace_settings[key]
-
-        key = normalize_path(
-            str(pathlib.Path(document.path).parent),
-            resolve_symlinks=self.config.resolve_symlinks,
+        return _routing.get_settings_by_document(
+            self, document, normalize_path=normalize_path, uris=uris
         )
-        return {
-            "cwd": key,
-            "workspaceFS": key,
-            "workspace": uris.from_fs_path(key),
-            **self.get_global_defaults(),
-        }
+
+    def is_document_enabled(self, document: TextDocument | None) -> bool:
+        """Return the routed document's opt-in participation decision.
+
+        TypeScript's ``workspaceEnablementSetting`` supplies ``_toolEnabled``
+        without omitting disabled roots or replacing consumer-owned ``enabled``.
+        Only literal ``False`` disables; missing or other values mean enabled.
+        Outside-workspace documents use global defaults; absent/pathless
+        documents retain the first-workspace fallback.
+        For notebooks, pass the synthetic document with the notebook's file path.
+
+        Handlers must call this before tool work. Execution helpers and existing
+        consumer policies are not automatically gated.
+        Participation uses ``get_settings_by_document``, not the legacy
+        ``get_settings_by_path`` lookup and its first-workspace fallback.
+        """
+        return (
+            self.get_settings_by_document(document).get("_toolEnabled", True)
+            is not False
+        )
 
     # -----------------------------------------------------------------
     # CWD resolution

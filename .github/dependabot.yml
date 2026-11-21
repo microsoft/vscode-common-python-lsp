@@ -8,14 +8,19 @@ updates:
     schedule:
       interval: 'weekly'
     groups:
-      npm-minor-patch:
+      all-npm:
         patterns:
           - '*'
-        update-types:
-          - 'minor'
-          - 'patch'
+        exclude-patterns:
+          - 'typescript'
     open-pull-requests-limit: 10
+    cooldown:
+      # Delay updates beyond the highest-risk window after a release.
+      default-days: 14
     ignore:
+      - dependency-name: 'typescript'
+        update-types:
+          - 'version-update:semver-major'
       - dependency-name: '@types/vscode'
       - dependency-name: '@types/node'
       - dependency-name: 'vscode-languageclient'
@@ -28,29 +33,26 @@ updates:
     schedule:
       interval: 'weekly'
     open-pull-requests-limit: 10
+    cooldown:
+      # Delay updates beyond the highest-risk window after a release.
+      default-days: 14
     groups:
-      pip-minor-patch:
+      all-pip:
         patterns:
           - '*'
-        update-types:
-          - 'minor'
-          - 'patch'
 
   - package-ecosystem: 'github-actions'
     labels:
       - 'dependencies'
       - 'debt'
-      - 'no-changelog'
     directory: '/'
     schedule:
       interval: 'weekly'
     open-pull-requests-limit: 10
     groups:
-      github-actions-minor-patch:
+      all-actions:
         patterns:
           - '*'
-        update-types:
-          - 'minor'
-          - 'patch'
     cooldown:
-      default-days: 7
+      # Delay updates beyond the highest-risk window after a release.
+      default-days: 14

@@ -2,21 +2,41 @@
 // Licensed under the MIT License.
 
 import { assert } from 'chai';
+import { execFileSync } from 'child_process';
 import * as sinon from 'sinon';
+import * as path from 'path';
 import { LanguageStatusSeverity, LogOutputChannel, Uri, LogLevel, WorkspaceFolder } from 'vscode';
+import { State } from 'vscode-languageclient';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { getServerCwd, createServer, restartServer, CreateServerOptions, RestartServerOptions, RestartServerResult } from '../src/server';
+import {
+    getServerCwd,
+    createServer,
+    restartServer,
+    CreateServerOptions,
+    RestartServerOptions,
+    RestartServerResult,
+    ServerLaunchContext,
+    ClientSetupContext,
+} from '../src/server';
 import * as envFileModule from '../src/envFile';
 import * as status from '../src/status';
 import * as utilities from '../src/utilities';
 import * as vscodeapi from '../src/vscodeapi';
 import * as settingsModule from '../src/settings';
-import { IBaseSettings, ToolConfig } from '../src/types';
+import { IBaseSettings, IInitOptions, ToolConfig } from '../src/types';
 import { PythonEnvironmentsProvider } from '../src/python';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return { promise, resolve };
+}
 
 function makeSettings(overrides?: Partial<IBaseSettings>): IBaseSettings {
     return {
@@ -177,6 +197,18 @@ suite('createServer', () => {
         };
     }
 
+    function serverEnvironment(client: LanguageClient): NodeJS.ProcessEnv {
+        return (client as unknown as {
+            serverOptions: { options: { env: NodeJS.ProcessEnv } };
+        }).serverOptions.options.env;
+    }
+
+    function launchedEnvironment(client: LanguageClient): NodeJS.ProcessEnv {
+        return JSON.parse(execFileSync(process.execPath, [
+            '-e', 'process.stdout.write(JSON.stringify(process.env))',
+        ], { env: serverEnvironment(client), encoding: 'utf8' })) as NodeJS.ProcessEnv;
+    }
+
     test('returns a LanguageClient instance', async () => {
         const client = await createServer(makeCreateOptions());
         assert.instanceOf(client, LanguageClient);
@@ -248,6 +280,153 @@ suite('createServer', () => {
         assert.include(env.PYTHONPATH, '/envfile/path');
     });
 
+    /* eslint-disable @typescript-eslint/naming-convention -- Environment keys retain their actual spelling. */
+    test('patches inherited environment per launch without mutating the host or settings', async () => {
+        const host = { ...process.env, S7_REMOVE: 'inherited', S7_EMPTY: 'inherited', S7_KEEP: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const settings = makeSettings({ custom: false });
+        const originalSettings = structuredClone(settings);
+        let value = 'first';
+        const getLaunchEnvironment = sandbox.spy((context: ServerLaunchContext) => {
+            assert.strictEqual(context.settings, settings);
+            return { S7_VALUE: value, S7_REMOVE: undefined, S7_EMPTY: '' };
+        });
+        const options = makeCreateOptions({ settings, hooks: { getLaunchEnvironment } });
+        const first = await createServer(options);
+        value = 'second';
+        const second = await createServer(options);
+        const environment = (client: LanguageClient) =>
+            (client as unknown as { serverOptions: { options: { env: NodeJS.ProcessEnv } } }).serverOptions.options.env;
+
+        assert.strictEqual(environment(first).S7_VALUE, 'first');
+        assert.strictEqual(environment(second).S7_VALUE, 'second');
+        assert.notProperty(launchedEnvironment(first), 'S7_REMOVE');
+        assert.strictEqual(environment(first).S7_EMPTY, '');
+        assert.strictEqual(environment(first).S7_KEEP, 'inherited');
+        assert.strictEqual(process.env, host);
+        assert.strictEqual(host.S7_REMOVE, 'inherited');
+        assert.strictEqual(host.S7_EMPTY, 'inherited');
+        assert.notProperty(host, 'S7_VALUE');
+        assert.deepEqual(settings, originalSettings);
+        sinon.assert.calledTwice(getLaunchEnvironment);
+        sinon.assert.calledWithExactly(getLaunchEnvironment, { settings, serverId: 'flake8', serverName: 'Flake8' });
+    });
+
+    test('replaces every inherited Windows casing without adding a competing alias', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        const host = { ...process.env, Path: 'first', PATH: 'second', S7_MiXeD: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ path: 'replacement', S7_MIXED: '' }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.Path, 'replacement');
+        assert.strictEqual(environment.PATH, 'replacement');
+        assert.notProperty(environment, 'path');
+        assert.strictEqual(environment.S7_MiXeD, '');
+        assert.notProperty(environment, 'S7_MIXED');
+        const launched = launchedEnvironment(client);
+        const paths = Object.entries(launched).filter(([key]) => key.toLowerCase() === 'path');
+        assert.isNotEmpty(paths);
+        paths.forEach(([, value]) => assert.strictEqual(value, 'replacement'));
+        assert.strictEqual(host.Path, 'first');
+        assert.strictEqual(host.PATH, 'second');
+        assert.strictEqual(host.S7_MiXeD, 'inherited');
+    });
+
+    test('removes every inherited Windows casing from the executable child', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        const host = { ...process.env, Path: 'first', PATH: 'second', S7_MiXeD: 'inherited' };
+        sandbox.stub(process, 'env').value(host);
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ path: undefined, S7_MIXED: undefined }) },
+        }));
+
+        const environment = serverEnvironment(client);
+        assert.property(environment, 'Path');
+        assert.isUndefined(environment.Path);
+        assert.property(environment, 'PATH');
+        assert.isUndefined(environment.PATH);
+        assert.property(environment, 'S7_MiXeD');
+        assert.isUndefined(environment.S7_MiXeD);
+        const launchedKeys = Object.keys(launchedEnvironment(client));
+        assert.notInclude(launchedKeys.map((key) => key.toLowerCase()), 's7_mixed');
+        assert.strictEqual(host.Path, 'first');
+        assert.strictEqual(host.PATH, 'second');
+        assert.strictEqual(host.S7_MiXeD, 'inherited');
+    });
+
+    test('lets later layers reintroduce removed Windows aliases', async () => {
+        sandbox.stub(process, 'platform').value('win32');
+        sandbox.stub(process, 'env').value({ ...process.env, S7_MiXeD: 'inherited', S7_Static: 'inherited' });
+        (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({ s7_mixed: 'env-file' });
+        const client = await createServer(makeCreateOptions({
+            toolConfig: makeToolConfig({ extraEnvVars: { s7_static: 'static' } }),
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: undefined, S7_STATIC: undefined }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.S7_MiXeD, 'env-file');
+        assert.strictEqual(environment.s7_mixed, 'env-file');
+        assert.strictEqual(environment.S7_Static, 'static');
+        const launchedEnvironmentVariables = Object.entries(launchedEnvironment(client));
+        const launched = launchedEnvironmentVariables
+            .filter(([key]) => key.toLowerCase() === 's7_mixed');
+        assert.lengthOf(launched, 1);
+        assert.strictEqual(launched[0][1], 'env-file');
+        const launchedStatic = launchedEnvironmentVariables.filter(([key]) => key.toLowerCase() === 's7_static');
+        assert.lengthOf(launchedStatic, 1);
+        assert.strictEqual(launchedStatic[0][1], 'static');
+    });
+
+    test('keeps hook environment keys case-sensitive outside Windows', async () => {
+        sandbox.stub(process, 'platform').value('linux');
+        sandbox.stub(process, 'env').value({ S7_MiXeD: 'inherited', S7_KEEP: 'inherited' });
+        const client = await createServer(makeCreateOptions({
+            hooks: { getLaunchEnvironment: () => ({ S7_MIXED: 'replacement', s7_keep: undefined }) },
+        }));
+        const environment = serverEnvironment(client);
+
+        assert.strictEqual(environment.S7_MiXeD, 'inherited');
+        assert.strictEqual(environment.S7_MIXED, 'replacement');
+        assert.strictEqual(environment.S7_KEEP, 'inherited');
+        assert.isUndefined(environment.s7_keep);
+    });
+
+    test('keeps env-file, built-in and static precedence over the launch patch', async () => {
+        sandbox.stub(process, 'env').value({ S7_REMOVED_THEN_LOADED: 'inherited' });
+        (envFileModule.getEnvFileVars as sinon.SinonStub).resolves({
+            S7_REMOVED_THEN_LOADED: 'env-file',
+            S7_STATIC: 'env-file',
+            PYTHONPATH: 'env-file-path',
+        });
+        const client = await createServer(makeCreateOptions({
+            settings: makeSettings({ extraPaths: ['extra-path'] }),
+            toolConfig: makeToolConfig({ extraEnvVars: { S7_STATIC: 'static', PYTHONUTF8: 'static' } }),
+            hooks: {
+                getLaunchEnvironment: () => ({
+                    S7_REMOVED_THEN_LOADED: undefined,
+                    S7_STATIC: 'hook',
+                    LS_IMPORT_STRATEGY: 'hook',
+                    LS_SHOW_NOTIFICATION: 'hook',
+                    PYTHONUTF8: 'hook',
+                    PYTHONPATH: 'hook-path',
+                }),
+            },
+        }));
+        const environment = (client as unknown as {
+            serverOptions: { options: { env: NodeJS.ProcessEnv } };
+        }).serverOptions.options.env;
+        assert.strictEqual(environment.S7_REMOVED_THEN_LOADED, 'env-file');
+        assert.strictEqual(environment.S7_STATIC, 'static');
+        assert.strictEqual(environment.LS_IMPORT_STRATEGY, 'useBundled');
+        assert.strictEqual(environment.LS_SHOW_NOTIFICATION, 'off');
+        assert.strictEqual(environment.PYTHONUTF8, 'static');
+        assert.strictEqual(environment.PYTHONPATH, ['hook-path', 'env-file-path', 'extra-path'].join(path.delimiter));
+    });
+    /* eslint-enable @typescript-eslint/naming-convention */
+
     test('throws when interpreter array is empty', async () => {
         const options = makeCreateOptions({
             settings: makeSettings({ interpreter: [] }),
@@ -307,6 +486,11 @@ suite('restartServer', () => {
         };
     }
 
+    function disposeResult(result?: RestartServerResult): void {
+        result?.disposables.forEach((disposable) => disposable.dispose());
+        result?.client?.dispose();
+    }
+
     test('returns a result with client and disposables', async () => {
         const result = await restartServer(makeRestartOptions());
         assert.isDefined(result.client);
@@ -314,12 +498,36 @@ suite('restartServer', () => {
         assert.isAbove(result.disposables.length, 0);
     });
 
-    test('stops old client before creating new one', async () => {
-        const oldStop = sandbox.stub().resolves();
+    test('awaits old client stop before creating and starting the replacement', async () => {
+        const entered = deferred<void>();
+        const finished = deferred<void>();
+        const oldStop = sandbox.stub().callsFake(() => {
+            entered.resolve();
+            return finished.promise;
+        });
         const oldClient = { stop: oldStop } as unknown as LanguageClient;
+        const startSpy = sandbox.spy(LanguageClient.prototype, 'start');
+        const options = makeRestartOptions();
+        const restarting = restartServer(options, oldClient);
+        let result: RestartServerResult | undefined;
 
-        await restartServer(makeRestartOptions(), oldClient);
-        assert.isTrue(oldStop.calledOnce, 'old client stop() should be called');
+        try {
+            await entered.promise;
+            sinon.assert.calledOnce(oldStop);
+            sinon.assert.notCalled(envFileModule.getEnvFileVars as sinon.SinonStub);
+            sinon.assert.notCalled(startSpy);
+            sinon.assert.notCalled(updateStatusStub);
+
+            finished.resolve();
+            result = await restarting;
+            assert.isDefined(result.client);
+            sinon.assert.calledOnce(startSpy);
+            sinon.assert.callOrder(oldStop, envFileModule.getEnvFileVars as sinon.SinonStub, startSpy);
+        } finally {
+            finished.resolve();
+            result ??= await restarting;
+            disposeResult(result);
+        }
     });
 
     test('handles old client stop failure gracefully', async () => {
@@ -327,23 +535,290 @@ suite('restartServer', () => {
             stop: sandbox.stub().rejects(new Error('stop failed')),
         } as unknown as LanguageClient;
 
-        // Should not throw
+        const startSpy = sandbox.spy(LanguageClient.prototype, 'start');
         const result = await restartServer(makeRestartOptions(), oldClient);
-        assert.isDefined(result.client);
+        try {
+            assert.isDefined(result.client);
+            sinon.assert.calledOnce(startSpy);
+            assert.deepEqual(updateStatusStub.lastCall.args, [
+                undefined, LanguageStatusSeverity.Information, false,
+            ]);
+        } finally {
+            disposeResult(result);
+        }
     });
 
-    test('updates status to busy during restart', async () => {
-        await restartServer(makeRestartOptions());
-        assert.isTrue(
-            updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, true),
-            'updateStatus should be called with busy=true',
-        );
+    test('awaits start and trace before clearing busy and installing the state listener', async () => {
+        const startEntered = deferred<LanguageClient>();
+        const startFinished = deferred<void>();
+        const traceEntered = deferred<void>();
+        const traceFinished = deferred<void>();
+        const originalStart = LanguageClient.prototype.start;
+        const startStub = sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            startEntered.resolve(this);
+            await startFinished.promise;
+            await originalStart.call(this);
+        });
+        const traceStub = sandbox.stub(LanguageClient.prototype, 'setTrace').callsFake(() => {
+            traceEntered.resolve();
+            return traceFinished.promise;
+        });
+        const listenerSpy = sandbox.spy(LanguageClient.prototype, 'onDidChangeState');
+        const restarting = restartServer(makeRestartOptions());
+        let result: RestartServerResult | undefined;
+
+        try {
+            const client = await startEntered.promise;
+            sinon.assert.calledOnceWithExactly(updateStatusStub, undefined, LanguageStatusSeverity.Information, true);
+            sinon.assert.notCalled(traceStub);
+            sinon.assert.notCalled(listenerSpy);
+
+            startFinished.resolve();
+            await traceEntered.promise;
+            assert.strictEqual(client.state, State.Running, 'mock start changes state without emitting an event');
+            sinon.assert.calledOnceWithExactly(updateStatusStub, undefined, LanguageStatusSeverity.Information, true);
+            sinon.assert.notCalled(listenerSpy);
+
+            traceFinished.resolve();
+            result = await restarting;
+            assert.strictEqual(result.client, client);
+            assert.lengthOf(result.disposables, 1);
+            assert.strictEqual(updateStatusStub.callCount, 2, 'success must explicitly clear busy without a state event');
+            assert.deepEqual(updateStatusStub.lastCall.args, [undefined, LanguageStatusSeverity.Information, false]);
+            sinon.assert.calledOnce(listenerSpy);
+            sinon.assert.callOrder(startStub, traceStub, listenerSpy);
+            assert.isTrue(updateStatusStub.lastCall.calledBefore(listenerSpy.firstCall));
+
+            const mockClient = client as unknown as import('./_languageclient_mock').LanguageClient;
+            mockClient.simulateStateChange(State.Stopped);
+            assert.strictEqual(updateStatusStub.callCount, 2);
+            mockClient.simulateStateChange(State.Running);
+            assert.strictEqual(updateStatusStub.callCount, 3, 'returned listener should report future Running events');
+            assert.deepEqual(updateStatusStub.lastCall.args, [undefined, LanguageStatusSeverity.Information, false]);
+
+            result.disposables.forEach((disposable) => disposable.dispose());
+            mockClient.simulateStateChange(State.Stopped);
+            mockClient.simulateStateChange(State.Running);
+            assert.strictEqual(updateStatusStub.callCount, 3, 'disposed listener must no longer update status');
+        } finally {
+            startFinished.resolve();
+            traceFinished.resolve();
+            result ??= await restarting;
+            disposeResult(result);
+        }
     });
+
+    test('reports creation failure without starting a client or installing a listener', async () => {
+        const startSpy = sandbox.spy(LanguageClient.prototype, 'start');
+        const traceSpy = sandbox.spy(LanguageClient.prototype, 'setTrace');
+        const listenerSpy = sandbox.spy(LanguageClient.prototype, 'onDidChangeState');
+        (envFileModule.getEnvFileVars as sinon.SinonStub).rejects(new Error('env file failed'));
+        const result = await restartServer(makeRestartOptions());
+
+        try {
+            assert.isUndefined(result.client);
+            assert.isEmpty(result.disposables);
+            assert.strictEqual(updateStatusStub.callCount, 2);
+            assert.deepEqual(updateStatusStub.firstCall.args, [undefined, LanguageStatusSeverity.Information, true]);
+            assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+            assert.isFalse(updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, false));
+            sinon.assert.notCalled(startSpy);
+            sinon.assert.notCalled(traceSpy);
+            sinon.assert.notCalled(listenerSpy);
+        } finally {
+            disposeResult(result);
+        }
+    });
+
+    test('contains environment hook failure without starting a client', async () => {
+        const start = sandbox.spy(LanguageClient.prototype, 'start');
+        const result = await restartServer(makeRestartOptions({
+            hooks: { getLaunchEnvironment: () => { throw new Error('environment hook failed'); } },
+        }));
+        assert.isUndefined(result.client);
+        assert.isEmpty(result.disposables);
+        assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+        sinon.assert.notCalled(start);
+    });
+
+    test('registers handlers on the new client before start and returns their owned scope', async () => {
+        const received = sandbox.spy();
+        const originalStart = LanguageClient.prototype.start;
+        const start = sandbox.stub(LanguageClient.prototype, 'start').callsFake(async function (this: LanguageClient) {
+            (this as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 42);
+            await originalStart.call(this);
+        });
+        const configureClient = sandbox.spy((context: ClientSetupContext): undefined => {
+            assert.strictEqual(context.client.state, State.Stopped);
+            context.registerDisposable(context.client.onNotification('example/score', received));
+        });
+        const result = await restartServer(makeRestartOptions({ hooks: { configureClient } }));
+
+        try {
+            sinon.assert.calledOnce(configureClient);
+            assert.strictEqual(configureClient.firstCall.args[0].client, result.client);
+            sinon.assert.callOrder(configureClient, start, received);
+            sinon.assert.calledOnceWithExactly(received, 42);
+            assert.include(result.disposables, result.clientSetup);
+            result.disposables.forEach((disposable) => disposable.dispose());
+            (result.client as unknown as import('./_languageclient_mock').LanguageClient)
+                .simulateNotification('example/score', 100);
+            sinon.assert.calledOnce(received);
+        } finally {
+            disposeResult(result);
+        }
+    });
+
+    for (const phase of ['setup', 'start', 'setTrace'] as const) {
+        test(`releases partially registered resources on ${phase} failure despite cleanup errors`, async () => {
+            const first = { dispose: sandbox.stub().throws(new Error('cleanup failed')) };
+            const second = { dispose: sandbox.stub().rejects(new Error('async cleanup failed')) };
+            const start = phase === 'start'
+                ? sandbox.stub(LanguageClient.prototype, 'start').rejects(new Error('start failed'))
+                : sandbox.spy(LanguageClient.prototype, 'start');
+            if (phase === 'setTrace') {
+                sandbox.stub(LanguageClient.prototype, 'setTrace').rejects(new Error('trace failed'));
+            }
+            const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+            const result = await restartServer(makeRestartOptions({
+                hooks: {
+                    configureClient: ({ registerDisposable }) => {
+                        registerDisposable(first);
+                        registerDisposable(second);
+                        if (phase === 'setup') {
+                            throw new Error('setup failed');
+                        }
+                    },
+                },
+            }));
+
+            assert.isUndefined(result.client);
+            assert.isEmpty(result.disposables);
+            sinon.assert.calledOnce(first.dispose);
+            sinon.assert.calledOnce(second.dispose);
+            sinon.assert.calledOnce(dispose);
+            if (phase === 'setup') {
+                sinon.assert.notCalled(start);
+            }
+        });
+    }
+
+    test('does not configure or start a client when shutdown occurs during environment loading', async () => {
+        const loading = deferred<void>();
+        const loaded = deferred<Record<string, string>>();
+        (envFileModule.getEnvFileVars as sinon.SinonStub).callsFake(() => {
+            loading.resolve();
+            return loaded.promise;
+        });
+        const controller = new AbortController();
+        const configureClient = sandbox.spy(() => undefined);
+        const start = sandbox.spy(LanguageClient.prototype, 'start');
+        const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+        const restarting = restartServer(makeRestartOptions({
+            signal: controller.signal,
+            hooks: { configureClient },
+        }));
+        await loading.promise;
+        controller.abort();
+        loaded.resolve({});
+        const result = await restarting;
+        assert.isUndefined(result.client);
+        sinon.assert.notCalled(configureClient);
+        sinon.assert.notCalled(start);
+        sinon.assert.calledOnce(dispose);
+    });
+
+    test('closes in-flight setup immediately and stops a late-started client after shutdown', async () => {
+        const entered = deferred<void>();
+        const started = deferred<void>();
+        sandbox.stub(LanguageClient.prototype, 'start').callsFake(async () => {
+            entered.resolve();
+            await started.promise;
+        });
+        const controller = new AbortController();
+        const resource = { dispose: sandbox.stub() };
+        const lateResource = { dispose: sandbox.stub() };
+        let register!: ClientSetupContext['registerDisposable'];
+        const stop = sandbox.spy(LanguageClient.prototype, 'stop');
+        const dispose = sandbox.spy(LanguageClient.prototype, 'dispose');
+        const trace = sandbox.spy(LanguageClient.prototype, 'setTrace');
+        const restarting = restartServer(makeRestartOptions({
+            signal: controller.signal,
+            hooks: {
+                configureClient: ({ registerDisposable }) => {
+                    register = registerDisposable;
+                    registerDisposable(resource);
+                },
+            },
+        }));
+        await entered.promise;
+        controller.abort();
+        sinon.assert.calledOnce(resource.dispose);
+        register(lateResource);
+        sinon.assert.calledOnce(lateResource.dispose);
+        started.resolve();
+        const result = await restarting;
+        assert.isUndefined(result.client);
+        sinon.assert.calledOnce(stop);
+        sinon.assert.calledOnce(dispose);
+        sinon.assert.notCalled(trace);
+        sinon.assert.calledOnce(resource.dispose);
+    });
+
+    for (const phase of ['start', 'setTrace'] as const) {
+        test(`reports ${phase} rejection and disposes the client without installing a listener`, async () => {
+            const entered = deferred<LanguageClient>();
+            const finished = deferred<void>();
+            sandbox.stub(LanguageClient.prototype, phase).callsFake(async function (this: LanguageClient) {
+                entered.resolve(this);
+                await finished.promise;
+                throw new Error(`${phase} failed`);
+            });
+            const traceSpy = phase === 'start' ? sandbox.spy(LanguageClient.prototype, 'setTrace') : undefined;
+            const disposeSpy = sandbox.spy(LanguageClient.prototype, 'dispose');
+            const listenerSpy = sandbox.spy(LanguageClient.prototype, 'onDidChangeState');
+            const restarting = restartServer(makeRestartOptions());
+            let result: RestartServerResult | undefined;
+            let client: LanguageClient | undefined;
+
+            try {
+                client = await entered.promise;
+                sinon.assert.calledOnceWithExactly(updateStatusStub, undefined, LanguageStatusSeverity.Information, true);
+                sinon.assert.notCalled(disposeSpy);
+                sinon.assert.notCalled(listenerSpy);
+
+                finished.resolve();
+                result = await restarting;
+                assert.isUndefined(result.client);
+                assert.isEmpty(result.disposables);
+                assert.strictEqual(updateStatusStub.lastCall.args[1], LanguageStatusSeverity.Error);
+                assert.isFalse(updateStatusStub.calledWith(undefined, LanguageStatusSeverity.Information, false));
+                sinon.assert.calledOnce(disposeSpy);
+                sinon.assert.calledOn(disposeSpy, client);
+                sinon.assert.notCalled(listenerSpy);
+                if (traceSpy) {
+                    sinon.assert.notCalled(traceSpy);
+                }
+            } finally {
+                finished.resolve();
+                result ??= await restarting;
+                disposeResult(result);
+                client?.dispose();
+            }
+        });
+    }
 
     test('uses supplied extension settings without resolving them again', async () => {
         const extensionSettings = [
             makeSettings({ workspace: 'file:///workspace/project', interpreter: ['/project/python'] }),
         ];
+        const globalSettings = makeSettings({
+            workspace: process.cwd(),
+            importStrategy: 'fromEnvironment',
+            args: ['--global'],
+        });
+        (settingsModule.getGlobalSettings as sinon.SinonStub).resolves(globalSettings);
 
         const result = await restartServer(makeRestartOptions({ extensionSettings }));
 
@@ -352,8 +827,12 @@ suite('restartServer', () => {
             'pre-resolved settings should be reused',
         );
         const clientOptions = (result.client as unknown as {
-            clientOptions: { initializationOptions: { settings: IBaseSettings[] } };
+            clientOptions: { initializationOptions: IInitOptions };
         }).clientOptions;
         assert.strictEqual(clientOptions.initializationOptions.settings, extensionSettings);
+        assert.deepEqual(clientOptions.initializationOptions, {
+            settings: extensionSettings,
+            globalSettings,
+        });
     });
 });

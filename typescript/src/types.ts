@@ -11,8 +11,7 @@ export interface IServerInfo {
     module: string;
 }
 
-/** Base settings resolved per workspace by the settings module. */
-export interface IBaseSettings {
+interface ICommonSettings {
     cwd: string;
     workspace: string;
     args: string[];
@@ -21,6 +20,12 @@ export interface IBaseSettings {
     importStrategy: string;
     showNotifications: string;
     extraPaths?: string[];
+    /** Reserved shared wire state; absent unless workspace enablement is opted in. */
+    _toolEnabled?: boolean;
+}
+
+/** Base settings resolved per workspace by the settings module. */
+export interface IBaseSettings extends ICommonSettings {
     [key: string]: unknown;
 }
 
@@ -50,6 +55,18 @@ export interface ToolConfig {
     // Settings
     settingsDefaults: Record<string, unknown>;
     trackedSettings: string[];
+
+    /**
+     * Opt in to per-folder participation using this boolean configuration key
+     * (e.g. 'enabled', 'enable' or 'runTools'), relative to toolId.
+     * Resolvers retain every root and send its value as `_toolEnabled`, defaulting
+     * to true. Common subscriptions track the key automatically.
+     *
+     * Python handlers must call ToolServer.is_document_enabled before tool work;
+     * this does not gate execution or replace consumer-owned settings/hooks.
+     * Unset preserves the existing settings payload and execution behavior.
+     */
+    workspaceEnablementSetting?: string;
 
     // Environment
     extraEnvVars?: Record<string, string>;
@@ -110,6 +127,33 @@ export interface ToolConfig {
      */
     isFormatter?: boolean;
 }
+
+type CompatibleSettings<TSettings> = {
+    [K in keyof TSettings]: K extends keyof ICommonSettings ? ICommonSettings[K] : unknown;
+};
+
+/**
+ * Opt-in tool configuration with declared custom settings.
+ *
+ * Every required custom field needs a default because only keys in
+ * `settingsDefaults` are projected by the resolvers. Optional fields may
+ * be omitted and remain optional in resolved settings.
+ */
+export type ToolDefinition<TSettings extends object & CompatibleSettings<TSettings>> = Omit<
+    ToolConfig,
+    'settingsDefaults'
+> & {
+    // A mapped shape accepts ordinary interfaces while remaining compatible
+    // with ToolConfig's open settingsDefaults record.
+    settingsDefaults: { [K in keyof TSettings]: TSettings[K] };
+};
+
+/**
+ * Resolved custom settings with the common fields and an open, unknown-valued
+ * wire boundary. Common fields retain their existing types, even when a
+ * definition supplies narrower defaults.
+ */
+export type ToolSettings<TSettings extends object> = IBaseSettings & Omit<TSettings, keyof ICommonSettings>;
 
 /**
  * Canonical resolved Python environment — API-agnostic.
