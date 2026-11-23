@@ -22,6 +22,48 @@ Use the [supported architecture and adoption guide](docs/supported-apis.md) when
 choosing extension-owned policy, shared public APIs or private implementation
 boundaries. Recommended facade adoption does not deprecate manual composition.
 
+### Python compatibility coverage
+
+Both PR and push CI run `nox -s tests` on stable Python 3.10-3.15 on Ubuntu and
+Windows. Each session installs `./python[dev]` into a fresh environment and logs
+the resolved dependency versions with `pip list --format=freeze`. This tests
+the resolver-selected, mutually compatible runtime and development dependencies
+available for that interpreter at run time, not a locked or minimum-version
+combination. Runtime requirements are `pygls>=1.1.0`,
+`lsprotocol>=2023.0.0` and `packaging>=22.0`; transitive requirements also
+participate in resolution.
+
+The suite includes a real subprocess worker using shared `JsonRpc`,
+`run_message_loop` and `run_module`, with tool output, exception recovery and
+process cleanup checks. It does not depend on Pylint or another external tool.
+The target-install smoke builds a clean staged copy using
+`pip install --target ... --no-deps --no-cache-dir --no-build-isolation --upgrade`.
+The development extra supplies the build backend (`setuptools` and `wheel`);
+the nox environment supplies runtime dependencies. An isolated (`python -I`)
+subprocess verifies package and distribution metadata originate in the target
+and executes the installed runner. Staging keeps build artifacts out of the
+source package. `--no-build-isolation` avoids downloading build tools in this
+smoke; consumers may retain pip's normal isolated-build behavior.
+
+These runs do not establish compatibility with every minimum dependency
+combination, consumers' reviewed dependency locks/bundles, or consumer-provided
+optional `debugpy`. Those require separate consumer validation. In particular,
+shared-runtime coverage does not diagnose or fix downstream Pylint failures.
+Older local Python 3.15 alphas are not stable-3.15 evidence, and CI does not pin
+pytest to accommodate such alphas. Source-only, pinned-submodule consumption
+and the consumer-owned dependency policy remain unchanged.
+
+The dedicated `Check Python Versions` workflow invokes the SHA-pinned
+`microsoft/vscode-python-ci/actions/check-python-versions` action for both
+matrices. It runs on relevant PR workflow changes, weekly on Mondays at 12:00
+UTC, and on manual dispatch. The action compares declared versions with the
+newest Python 3 series that has a published release candidate; it does not run
+tests or establish stable-interpreter support itself. This rollout uses
+read-only, check-only mode: missing coverage is reported in the job summary,
+not treated as a failing check, and no issues are created. Upstream issue mode
+does not yet deduplicate issues. Release lookup or action/configuration errors
+still fail the job.
+
 ### Settings boundary tests
 
 The JSON corpus in `python/tests/fixtures/settings/` characterizes the existing

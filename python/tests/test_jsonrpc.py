@@ -3,12 +3,17 @@
 """Tests for vscode_common_python_lsp.jsonrpc."""
 
 import io
+import json
+import os
+import pathlib
+import sys
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vscode_common_python_lsp import jsonrpc
 from vscode_common_python_lsp.jsonrpc import (
     CONTENT_LENGTH,
     JsonRpc,
@@ -17,6 +22,61 @@ from vscode_common_python_lsp.jsonrpc import (
     StreamClosedException,
     run_over_json_rpc,
 )
+
+
+def test_real_worker_roundtrip_exception_recovery_and_cleanup(tmp_path):
+    """Execute a tool in a real worker, including recovery after a failed request."""
+    python_root = pathlib.Path(__file__).resolve().parents[1]
+    worker = pathlib.Path(__file__).parent / "fixtures" / "worker.py"
+    workspace = str(tmp_path)
+    cwd = tmp_path / "workspace café"
+    cwd.mkdir()
+
+    def run_tool(*args):
+        return run_over_json_rpc(
+            workspace,
+            [sys.executable],
+            "worker_tool",
+            ["worker_tool", *args],
+            True,
+            str(cwd),
+            str(worker),
+            source="héllo 日本語\n",
+            env={"PYTHONPATH": str(python_root)},
+            timeout=20,
+        )
+
+    process = None
+    try:
+        result = run_tool("--argument", "café")
+        process = jsonrpc._process_manager._processes[workspace]
+        payload = json.loads(result.stdout)
+        worker_pid = payload.pop("pid")
+        assert worker_pid != os.getpid()
+        assert payload == {
+            "executable": sys.executable,
+            "cwd": str(cwd),
+            "argv": ["worker_tool", "--argument", "café"],
+            "source": "héllo 日本語\n",
+        }
+        assert result.stderr == "worker tool stderr\n"
+        assert result.exception is None
+
+        failure = run_tool("--fail")
+        assert failure.stdout == ""
+        assert failure.stderr == ""
+        assert "RuntimeError: worker tool failure" in failure.exception
+
+        recovered = run_tool("--recovered")
+        assert json.loads(recovered.stdout)["pid"] == worker_pid
+        assert recovered.exception is None
+    finally:
+        jsonrpc._process_manager.stop_process(workspace)
+
+    assert process.poll() is not None
+    assert process.stdin.closed and process.stdout.closed
+    with pytest.raises(StreamClosedException):
+        jsonrpc._process_manager.get_json_rpc(workspace)
 
 
 class TestJsonRpcReadWrite(unittest.TestCase):
