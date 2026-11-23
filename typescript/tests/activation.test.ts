@@ -723,6 +723,12 @@ suite('registerCommonSubscriptions', () => {
         );
     });
 
+    test('does not watch workspace-folder changes without workspace enablement', () => {
+        const watchFolders = sandbox.stub(vscode.workspace, 'onDidChangeWorkspaceFolders');
+        registerCommonSubscriptions(context, makeRegisterOptions());
+        sinon.assert.notCalled(watchFolders);
+    });
+
     test('tracks the per-project setting for opted-in tools', async () => {
         let configurationHandler:
             | ((event: vscode.ConfigurationChangeEvent) => Promise<void>)
@@ -747,7 +753,7 @@ suite('registerCommonSubscriptions', () => {
     });
 
     for (const perProject of [false, true]) {
-        test(`custom enablement changes restart the singleton with every root (per-project: ${perProject})`, async () => {
+        test(`enablement and folder changes refresh singleton settings (per-project: ${perProject})`, async () => {
             const root = { uri: vscode.Uri.file(process.cwd()), name: 'root', index: 0 };
             const disabled = {
                 uri: vscode.Uri.file(path.join(process.cwd(), 'disabled')),
@@ -758,7 +764,7 @@ suite('registerCommonSubscriptions', () => {
             };
             let enabled = false;
             sandbox.stub(utilities, 'getProjectRoot').resolves(root);
-            sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root, disabled]);
+            const getWorkspaceFolders = sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root, disabled]);
             sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
             sandbox.stub(envFileModule, 'getEnvFileVars').resolves({});
             sandbox.stub(vscodeapi, 'getConfiguration').callsFake((_namespace, scope) => ({
@@ -777,6 +783,12 @@ suite('registerCommonSubscriptions', () => {
             (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).callsFake((handler) => {
                 configurationHandler = handler;
                 return { dispose: sinon.stub() };
+            });
+            let folderHandler!: (event: vscode.WorkspaceFoldersChangeEvent) => Promise<void>;
+            const folderSubscription = { dispose: sinon.stub() };
+            sandbox.stub(vscode.workspace, 'onDidChangeWorkspaceFolders').callsFake((handler) => {
+                folderHandler = handler;
+                return folderSubscription;
             });
             const provider = makeMockProvider(sandbox);
             (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
@@ -816,6 +828,21 @@ suite('registerCommonSubscriptions', () => {
                 assert.equal(firstClient.state, State.Stopped);
                 assert.equal(toolContext.lsClient!.state, State.Running);
                 assert.deepEqual(toolConfig.trackedSettings, ['args']);
+
+                assert.include(subscriptions, folderSubscription);
+                getWorkspaceFolders.returns([root]);
+                await folderHandler({ added: [], removed: [disabled] });
+                assert.deepEqual(
+                    snapshots().settings.map((settings) => settings.workspace),
+                    expectedRoots.filter((workspace) => workspace !== disabled.uri.toString()),
+                );
+
+                enabled = false;
+                getWorkspaceFolders.returns([root, disabled]);
+                await folderHandler({ added: [disabled], removed: [] });
+                const added = snapshots();
+                assert.deepEqual(added.settings.map((settings) => settings.workspace), expectedRoots);
+                assert.isFalse(added.settings[1]._toolEnabled);
             } finally {
                 await deactivateServer(toolContext);
                 subscriptions.forEach((subscription) => subscription.dispose());

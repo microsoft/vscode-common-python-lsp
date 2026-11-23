@@ -54,6 +54,7 @@ export const workspace = {
     }),
     workspaceFolders: undefined as WorkspaceFolder[] | undefined,
     onDidChangeConfiguration: noopEvent,
+    onDidChangeWorkspaceFolders: noopEvent,
     getWorkspaceFolder: () => undefined,
     createFileSystemWatcher: () => ({
         onDidChange: noopEvent,

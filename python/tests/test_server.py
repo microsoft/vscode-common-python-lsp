@@ -1516,6 +1516,35 @@ class TestDocumentParticipation:
             is True
         )
 
+    def test_opted_in_symlink_routes_to_disabled_nested_root(self, tmp_path):
+        root = tmp_path / "repo"
+        disabled = root / "disabled"
+        target = disabled / "sub"
+        target.mkdir(parents=True)
+        alias = root / "alias"
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+        except (NotImplementedError, OSError):
+            pytest.skip("Unable to create a directory symlink")
+
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                resolve_symlinks=True,
+            )
+        )
+        ts.update_workspace_settings(
+            [
+                {"workspace": root.as_uri(), "_toolEnabled": True},
+                {"workspace": disabled.as_uri(), "_toolEnabled": False},
+            ]
+        )
+        document = TextDocument((alias / "demo.py").as_uri())
+
+        assert ts.get_settings_by_document(document)["workspace"] == disabled.as_uri()
+        assert ts.is_document_enabled(document) is False
+
     def test_opted_in_filesystem_root_is_not_mistaken_for_global_fallback(
         self, tmp_path
     ):

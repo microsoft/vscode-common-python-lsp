@@ -99,13 +99,25 @@ def get_document_key(
             }
         # A relative path's terminal "." must not resolve to a CWD workspace.
         include_filesystem_root = opted_in and document_workspace.is_absolute()
+        if include_filesystem_root:
+            # Walk the normalized path's ancestors, including any symlink target.
+            document_workspace = pathlib.Path(
+                normalize_path(
+                    str(document_workspace),
+                    resolve_symlinks=facade.config.resolve_symlinks,
+                )
+            )
 
         while (
             include_filesystem_root or document_workspace != document_workspace.parent
         ):
-            norm_path = normalize_path(
-                str(document_workspace),
-                resolve_symlinks=facade.config.resolve_symlinks,
+            norm_path = (
+                str(document_workspace)
+                if include_filesystem_root
+                else normalize_path(
+                    str(document_workspace),
+                    resolve_symlinks=facade.config.resolve_symlinks,
+                )
             )
             key = (
                 workspace_keys.get(pathlib.Path(norm_path))

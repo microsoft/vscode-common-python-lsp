@@ -547,6 +547,14 @@ export function registerCommonSubscriptions(
         }),
     );
 
+    if (toolConfig.workspaceEnablementSetting) {
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeWorkspaceFolders(async () => {
+                await safeRunServer(toolContext, 'workspace folders change');
+            }),
+        );
+    }
+
     // Commands
     context.subscriptions.push(
         registerCommand(`${serverId}.showLogs`, async () => {
