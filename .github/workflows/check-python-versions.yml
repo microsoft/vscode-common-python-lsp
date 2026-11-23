@@ -1,0 +1,35 @@
+name: Check Python Versions
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/check-python-versions.yml'
+      - '.github/workflows/pr-check.yml'
+      - '.github/workflows/push-check.yml'
+  schedule:
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-python-versions-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Python Version Coverage
+    if: github.repository_owner == 'microsoft'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: microsoft/vscode-python-ci/actions/check-python-versions@066d9e604a509ec5cbc11141280cdfb48d7700b7
+        with:
+          files: |
+            - path: .github/workflows/pr-check.yml
+              key: python
+            - path: .github/workflows/push-check.yml
+              key: python
+          create-issue: 'false'

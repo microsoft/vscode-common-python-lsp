@@ -15,6 +15,7 @@ def install(session: nox.Session) -> None:
 def tests(session: nox.Session) -> None:
     """Run Python tests."""
     session.install("-e", "./python[dev]")
+    session.run("python", "-m", "pip", "list", "--format=freeze")
     session.run("pytest", "python/tests", "-v")
 
 
