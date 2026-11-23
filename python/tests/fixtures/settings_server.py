@@ -26,6 +26,7 @@ def main() -> None:
         )
     )
     initialized_received = False
+    executed_documents: list[str] = []
 
     @tool.server.feature(lsp.INITIALIZE)
     def initialize(params: lsp.InitializeParams) -> None:
@@ -45,7 +46,21 @@ def main() -> None:
             "globalSettings": tool.global_settings,
             "initialized": initialized_received,
             "serverModule": server_module.__file__,
+            "executedDocuments": executed_documents,
         }
+
+    @tool.server.feature(lsp.TEXT_DOCUMENT_FORMATTING)
+    def format_document(params: lsp.DocumentFormattingParams) -> list[lsp.TextEdit]:
+        document = tool.server.workspace.get_text_document(params.text_document.uri)
+        if not tool.is_document_enabled(document):
+            return []
+        executed_documents.append(document.uri)
+        return [
+            lsp.TextEdit(
+                range=lsp.Range(lsp.Position(0, 0), lsp.Position(0, 0)),
+                new_text="participated",
+            )
+        ]
 
     @tool.server.feature(lsp.SHUTDOWN)
     def shutdown(_params: Any) -> None:

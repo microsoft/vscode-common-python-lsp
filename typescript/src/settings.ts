@@ -233,6 +233,10 @@ export async function getWorkspaceSettings(
         settings.cwd = expandTilde(settings.cwd);
     }
 
+    if (toolConfig.workspaceEnablementSetting) {
+        settings._toolEnabled = config.get<boolean>(toolConfig.workspaceEnablementSetting, true) !== false;
+    }
+
     return settings;
 }
 
@@ -281,12 +285,19 @@ export async function getGlobalSettings(
         settings[key] = getGlobalValue(config, key, defaultValue);
     }
 
+    if (toolConfig.workspaceEnablementSetting) {
+        settings._toolEnabled = getGlobalValue<boolean>(config, toolConfig.workspaceEnablementSetting, true) !== false;
+    }
+
     return settings;
 }
 
 /**
  * Resolve settings for the supplied roots, or all workspace folders by
- * default. Consumers may supply Python project roots to enable per-project
+ * default. Disabled roots remain represented so document routing cannot
+ * mistake them for resources outside the workspace.
+ *
+ * Consumers may supply Python project roots to enable per-project
  * interpreter resolution while retaining a singleton language server.
  */
 export function getExtensionSettings<TConfig extends ToolConfig>(

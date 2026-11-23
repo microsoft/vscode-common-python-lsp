@@ -230,6 +230,12 @@ For an opt-in typed settings contract without changing runtime behavior, see
 the [typed tool definition example](typescript/README.md#typed-tool-definitions).
 Existing `ToolConfig` callers do not need to migrate.
 
+For per-folder participation in the existing singleton server, explicitly set
+`ToolConfig.workspaceEnablementSetting` and check Python's
+`ToolServer.is_document_enabled` in tool-work handlers. Disabled folders retain
+their settings entries; there is no automatic execution gate or consumer
+adoption. See the [opt-in contract](docs/supported-apis.md#opt-in-per-folder-participation).
+
 Extensions whose servers run tools using the interpreter in each resolved
 settings entry can opt in to per-project environments:
 

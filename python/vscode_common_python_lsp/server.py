@@ -142,6 +142,26 @@ class ToolServer:
             self, document, normalize_path=normalize_path, uris=uris
         )
 
+    def is_document_enabled(self, document: TextDocument | None) -> bool:
+        """Return the routed document's opt-in participation decision.
+
+        TypeScript's ``workspaceEnablementSetting`` supplies ``_toolEnabled``
+        without omitting disabled roots or replacing consumer-owned ``enabled``.
+        Only literal ``False`` disables; missing or other values mean enabled.
+        Outside-workspace documents use global defaults; absent/pathless
+        documents retain the first-workspace fallback.
+        For notebooks, pass the synthetic document with the notebook's file path.
+
+        Handlers must call this before tool work. Execution helpers and existing
+        consumer policies are not automatically gated.
+        Participation uses ``get_settings_by_document``, not the legacy
+        ``get_settings_by_path`` lookup and its first-workspace fallback.
+        """
+        return (
+            self.get_settings_by_document(document).get("_toolEnabled", True)
+            is not False
+        )
+
     # -----------------------------------------------------------------
     # CWD resolution
     # -----------------------------------------------------------------

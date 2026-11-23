@@ -21,7 +21,7 @@ import * as loggingModule from '../src/logging';
 import * as settingsModule from '../src/settings';
 import * as serverModule from '../src/server';
 import * as statusModule from '../src/status';
-import { IServerInfo, ToolConfig } from '../src/types';
+import { IInitOptions, IServerInfo, ToolConfig } from '../src/types';
 import { PythonEnvironmentsProvider } from '../src/python';
 import * as utilities from '../src/utilities';
 import * as vscodeapi from '../src/vscodeapi';
@@ -723,6 +723,12 @@ suite('registerCommonSubscriptions', () => {
         );
     });
 
+    test('does not watch workspace-folder changes without workspace enablement', () => {
+        const watchFolders = sandbox.stub(vscode.workspace, 'onDidChangeWorkspaceFolders');
+        registerCommonSubscriptions(context, makeRegisterOptions());
+        sinon.assert.notCalled(watchFolders);
+    });
+
     test('tracks the per-project setting for opted-in tools', async () => {
         let configurationHandler:
             | ((event: vscode.ConfigurationChangeEvent) => Promise<void>)
@@ -745,6 +751,104 @@ suite('registerCommonSubscriptions', () => {
 
         assert.isTrue((options.toolContext.runServer as sinon.SinonStub).calledOnce);
     });
+
+    for (const perProject of [false, true]) {
+        test(`enablement and folder changes refresh singleton settings (per-project: ${perProject})`, async () => {
+            const root = { uri: vscode.Uri.file(process.cwd()), name: 'root', index: 0 };
+            const disabled = {
+                uri: vscode.Uri.file(path.join(process.cwd(), 'disabled')),
+                name: 'disabled', index: 1,
+            };
+            const project = {
+                uri: vscode.Uri.file(path.dirname(__filename)), name: 'project', index: 0,
+            };
+            let enabled = false;
+            sandbox.stub(utilities, 'getProjectRoot').resolves(root);
+            const getWorkspaceFolders = sandbox.stub(vscodeapi, 'getWorkspaceFolders').returns([root, disabled]);
+            sandbox.stub(vscodeapi, 'getWorkspaceFolder').returns(root);
+            sandbox.stub(envFileModule, 'getEnvFileVars').resolves({});
+            sandbox.stub(vscodeapi, 'getConfiguration').callsFake((_namespace, scope) => ({
+                get: (key: string, fallback?: unknown) => {
+                    if (key === 'usePerProjectEnvironments') {
+                        return perProject;
+                    }
+                    if (key === 'runTools') {
+                        return (scope as vscode.WorkspaceFolder)?.uri === disabled.uri ? enabled : true;
+                    }
+                    return fallback;
+                },
+                inspect: () => undefined,
+            }) as unknown as vscode.WorkspaceConfiguration);
+            let configurationHandler!: (event: vscode.ConfigurationChangeEvent) => Promise<void>;
+            (vscodeapi.onDidChangeConfiguration as sinon.SinonStub).callsFake((handler) => {
+                configurationHandler = handler;
+                return { dispose: sinon.stub() };
+            });
+            let folderHandler!: (event: vscode.WorkspaceFoldersChangeEvent) => Promise<void>;
+            const folderSubscription = { dispose: sinon.stub() };
+            sandbox.stub(vscode.workspace, 'onDidChangeWorkspaceFolders').callsFake((handler) => {
+                folderHandler = handler;
+                return folderSubscription;
+            });
+            const provider = makeMockProvider(sandbox);
+            (provider.getPythonProjects as sinon.SinonStub).resolves([project]);
+            const toolConfig = makeToolConfig({
+                trackedSettings: ['args'],
+                workspaceEnablementSetting: 'runTools',
+                supportsPerProjectEnvironments: perProject,
+            });
+            const toolContext = createToolContext({
+                serverInfo: makeServerInfo(), outputChannel: makeMockOutputChannel(),
+                toolConfig, pythonProvider: provider,
+            });
+            registerCommonSubscriptions(context, makeRegisterOptions({ toolConfig, toolContext }));
+            const snapshots = () => {
+                const client = toolContext.lsClient as unknown as import('./_languageclient_mock').LanguageClient;
+                return (client.clientOptions as { initializationOptions: IInitOptions }).initializationOptions;
+            };
+            try {
+                await toolContext.runServer();
+                assert.isDefined(toolContext.lsClient);
+                const before = snapshots();
+                const firstClient = toolContext.lsClient!;
+                const expectedRoots = [root, disabled, ...(perProject ? [project] : [])]
+                    .map((folder) => folder.uri.toString());
+                assert.deepEqual(before.settings.map((settings) => settings.workspace), expectedRoots);
+                assert.isFalse(before.settings[1]._toolEnabled);
+                assert.isTrue(before.globalSettings._toolEnabled);
+
+                enabled = true;
+                await configurationHandler({
+                    affectsConfiguration: (key: string) => key === 'flake8.runTools',
+                });
+                const after = snapshots();
+                assert.deepEqual(after.settings.map((settings) => settings.workspace), expectedRoots);
+                assert.isTrue(after.settings[1]._toolEnabled);
+                assert.notStrictEqual(toolContext.lsClient, firstClient);
+                assert.equal(firstClient.state, State.Stopped);
+                assert.equal(toolContext.lsClient!.state, State.Running);
+                assert.deepEqual(toolConfig.trackedSettings, ['args']);
+
+                assert.include(subscriptions, folderSubscription);
+                getWorkspaceFolders.returns([root]);
+                await folderHandler({ added: [], removed: [disabled] });
+                assert.deepEqual(
+                    snapshots().settings.map((settings) => settings.workspace),
+                    expectedRoots.filter((workspace) => workspace !== disabled.uri.toString()),
+                );
+
+                enabled = false;
+                getWorkspaceFolders.returns([root, disabled]);
+                await folderHandler({ added: [disabled], removed: [] });
+                const added = snapshots();
+                assert.deepEqual(added.settings.map((settings) => settings.workspace), expectedRoots);
+                assert.isFalse(added.settings[1]._toolEnabled);
+            } finally {
+                await deactivateServer(toolContext);
+                subscriptions.forEach((subscription) => subscription.dispose());
+            }
+        });
+    }
 });
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import pytest
 from pygls import uris
 from pygls.workspace import TextDocument
 
+from vscode_common_python_lsp.notebook import SyntheticDocument
 from vscode_common_python_lsp.server import ToolServer, ToolServerConfig
 
 from .settings_fixtures import load_settings_fixture
@@ -1440,6 +1441,209 @@ class TestSettingsContract:
         assert fallback["args"] == ["--second"]
         assert "unknownGlobal" not in fallback
         assert ts.get_settings_by_document(None) is workspaces[keys[0]]
+
+
+# ---------------------------------------------------------------------------
+# Opt-in participation
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentParticipation:
+    def test_retained_roots_nested_routing_and_live_updates(self, tmp_path):
+        root = tmp_path / "workspace café"
+        fixture = load_settings_fixture("producer", root)["workspaceEnablement"]
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings=fixture["toolDefaults"],
+            )
+        )
+        options = fixture["initializationOptions"]
+        ts.apply_settings(
+            lsp.InitializeParams(
+                capabilities=lsp.ClientCapabilities(),
+                process_id=None,
+                initialization_options=options,
+            )
+        )
+        assert len(ts.workspace_settings) == 4
+        for setting in options["settings"]:
+            document = TextDocument(setting["workspace"] + "/src/demo.py")
+            routed = ts.get_settings_by_document(document)
+            assert routed["workspace"] == setting["workspace"]
+            assert routed["enabled"] is False
+            assert ts.is_document_enabled(document) is setting["_toolEnabled"]
+
+        notebook = root / "disabled" / "demo.ipynb"
+        synthetic = SyntheticDocument(
+            uri=notebook.as_uri().replace("file:", "vscode-notebook-cell:", 1)
+            + "#cell",
+            path=str(notebook),
+            source="print('cell')",
+        )
+        assert ts.is_document_enabled(synthetic) is False
+        outside = TextDocument((tmp_path / "outside" / "demo.py").as_uri())
+        assert ts.is_document_enabled(outside) is True
+        assert ts.is_document_enabled(None) is True
+        assert ts.is_document_enabled(_make_document(None)) is True
+
+        ts.global_settings["_toolEnabled"] = False
+        assert ts.is_document_enabled(outside) is False
+        assert ts.is_document_enabled(None) is True
+        ts.update_workspace_settings(
+            [{"workspace": (root / "disabled").as_uri(), "_toolEnabled": True}]
+        )
+        assert ts.is_document_enabled(synthetic) is True
+        ts.workspace_settings.clear()
+        assert ts.is_document_enabled(None) is False
+
+    def test_all_disabled_roots_do_not_fall_back_to_enabled_globals(self, tmp_path):
+        roots = [tmp_path / "one", tmp_path / "two"]
+        ts = _make_server()
+        ts.global_settings["_toolEnabled"] = True
+        ts.update_workspace_settings(
+            [{"workspace": root.as_uri(), "_toolEnabled": False} for root in roots]
+        )
+        for root in roots:
+            assert (
+                ts.is_document_enabled(TextDocument((root / "demo.py").as_uri()))
+                is False
+            )
+        assert ts.is_document_enabled(None) is False
+        assert (
+            ts.is_document_enabled(TextDocument((tmp_path / "outside.py").as_uri()))
+            is True
+        )
+
+    def test_opted_in_symlink_routes_to_disabled_nested_root(self, tmp_path):
+        root = tmp_path / "repo"
+        disabled = root / "disabled"
+        target = disabled / "sub"
+        target.mkdir(parents=True)
+        alias = root / "alias"
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+        except (NotImplementedError, OSError):
+            pytest.skip("Unable to create a directory symlink")
+
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                resolve_symlinks=True,
+            )
+        )
+        ts.update_workspace_settings(
+            [
+                {"workspace": root.as_uri(), "_toolEnabled": True},
+                {"workspace": disabled.as_uri(), "_toolEnabled": False},
+            ]
+        )
+        document = TextDocument((alias / "demo.py").as_uri())
+
+        assert ts.get_settings_by_document(document)["workspace"] == disabled.as_uri()
+        assert ts.is_document_enabled(document) is False
+
+    def test_opted_in_filesystem_root_is_not_mistaken_for_global_fallback(
+        self, tmp_path
+    ):
+        ts = _make_server()
+        ts.global_settings["_toolEnabled"] = True
+        root = pathlib.Path(tmp_path.anchor)
+        ts.update_workspace_settings(
+            [{"workspace": root.as_uri(), "_toolEnabled": False}]
+        )
+        assert (
+            ts.is_document_enabled(TextDocument((tmp_path / "demo.py").as_uri()))
+            is False
+        )
+
+    @pytest.mark.parametrize("opted_in", [False, True], ids=["legacy", "opted-in"])
+    def test_relative_document_does_not_inherit_cwd_workspace(
+        self, tmp_path, monkeypatch, opted_in
+    ):
+        monkeypatch.chdir(tmp_path)
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                resolve_symlinks=True,
+            )
+        )
+        ts.global_settings["args"] = ["--global"]
+        workspace = {"workspace": tmp_path.as_uri(), "args": ["--cwd"]}
+        if opted_in:
+            ts.global_settings["_toolEnabled"] = True
+            workspace["_toolEnabled"] = False
+        ts.update_workspace_settings([workspace])
+        document = _make_document("Untitled-1")
+
+        assert ts.get_document_key(document) is None
+        assert ts.get_settings_by_document(document)["args"] == ["--global"]
+        assert ts.is_document_enabled(document) is True
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows paths are case-insensitive")
+    def test_opted_in_windows_casing_matches_but_adjacent_prefix_does_not(
+        self, tmp_path
+    ):
+        root = tmp_path / "MixedRoot"
+        ts = _make_server()
+        ts.global_settings["_toolEnabled"] = True
+        ts.update_workspace_settings(
+            [{"workspace": root.as_uri(), "_toolEnabled": False}]
+        )
+        document = _make_document(str(root / "src" / "demo.py").swapcase())
+        assert ts.get_settings_by_document(document)["workspace"] == root.as_uri()
+        assert ts.is_document_enabled(document) is False
+
+        outside = _make_document(
+            str(root.with_name(root.name + "-other") / "demo.py").swapcase()
+        )
+        assert ts.get_document_key(outside) is None
+        assert ts.is_document_enabled(outside) is True
+        assert (
+            ts.get_settings_by_path(pathlib.Path(outside.path))["_toolEnabled"] is False
+        )
+
+    @pytest.mark.parametrize(
+        ("wire_value", "expected"),
+        [(False, False), (0, True), (None, True), ("false", True)],
+    )
+    def test_only_literal_false_disables_routed_document(
+        self, tmp_path, wire_value, expected
+    ):
+        ts = _make_server()
+        ts.global_settings["_toolEnabled"] = False
+        ts.update_workspace_settings(
+            [{"workspace": tmp_path.as_uri(), "_toolEnabled": wire_value}]
+        )
+        document = TextDocument((tmp_path / "demo.py").as_uri())
+        assert ts.is_document_enabled(document) is expected
+
+    def test_legacy_enabled_policy_and_execution_remain_consumer_owned(self, tmp_path):
+        ts = _make_server(
+            ToolServerConfig(
+                tool_module="testtool",
+                tool_display="Test Tool",
+                default_settings={"enabled": False},
+            )
+        )
+        ts.global_settings["enabled"] = False
+        ts.update_workspace_settings(
+            [{"workspace": tmp_path.as_uri(), "enabled": False}]
+        )
+        assert (
+            ts.is_document_enabled(TextDocument((tmp_path / "demo.py").as_uri()))
+            is True
+        )
+        assert ts.is_document_enabled(None) is True
+        with patch("vscode_common_python_lsp.server.run_path") as run:
+            run.return_value.stderr = ""
+            ts.execute_tool(
+                argv=["tool"], mode="path", settings={"_toolEnabled": False}
+            )
+        run.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

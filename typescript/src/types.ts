@@ -20,6 +20,8 @@ interface ICommonSettings {
     importStrategy: string;
     showNotifications: string;
     extraPaths?: string[];
+    /** Reserved shared wire state; absent unless workspace enablement is opted in. */
+    _toolEnabled?: boolean;
 }
 
 /** Base settings resolved per workspace by the settings module. */
@@ -53,6 +55,18 @@ export interface ToolConfig {
     // Settings
     settingsDefaults: Record<string, unknown>;
     trackedSettings: string[];
+
+    /**
+     * Opt in to per-folder participation using this boolean configuration key
+     * (e.g. 'enabled', 'enable' or 'runTools'), relative to toolId.
+     * Resolvers retain every root and send its value as `_toolEnabled`, defaulting
+     * to true. Common subscriptions track the key automatically.
+     *
+     * Python handlers must call ToolServer.is_document_enabled before tool work;
+     * this does not gate execution or replace consumer-owned settings/hooks.
+     * Unset preserves the existing settings payload and execution behavior.
+     */
+    workspaceEnablementSetting?: string;
 
     // Environment
     extraEnvVars?: Record<string, string>;

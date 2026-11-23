@@ -29,10 +29,12 @@ initialization-options contract. Fixture metadata is separate from
 `initializationOptions`; `__ROOT_URI__`, `__ROOT_FS__`, `__CWD_FS__`, `__PYTHON__`
 and `__SEP__` are test-only substitutions, not supported settings variables.
 Python and TypeScript tests independently consume `producer.json`, including
-host-resolved CWD variables that Python finishes resolving per document.
+host-resolved CWD variables that Python finishes resolving per document and an
+opt-in enablement payload retaining mixed and nested roots.
 
 `python/tests/test_server_stdio.py` starts a test-only ToolServer over real LSP
-stdio and checks initialize/initialized/settings/shutdown/exit. It needs no tool
+stdio and checks initialize/initialized/settings/shutdown/exit plus a test-only
+formatting handler that consults the participation API. It needs no tool
 installation, VS Code host or Node build. Repeated settings application is
 covered separately in-process, not by reinitializing a live LSP session.
 
